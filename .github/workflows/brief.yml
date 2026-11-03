@@ -1,0 +1,98 @@
+name: brief
+on:
+  schedule:
+    # daily, after EDGAR's overnight filings settle (filings land 06:00 to 22:00 ET)
+    - cron: "17 11 * * *"
+  workflow_dispatch:
+    inputs:
+      ticker: {description: "Ticker (default: the watchlist's active names)", required: false}
+      accession: {description: "Brief this one filing again (needs ticker)", required: false}
+      backfill: {description: "Also brief the last N filings with no run record", required: false, default: "0"}
+      send_email: {description: "Send the email", type: boolean, default: true}
+
+permissions:
+  contents: write # commits runs/ back: the run log, and what stops a second email
+
+# serialized: two overlapping runs would email the same filing twice
+concurrency:
+  group: brief
+  cancel-in-progress: false
+
+jobs:
+  brief:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      # main's tip, not the trigger's commit: a re-run or a queued run must see
+      # the records earlier runs pushed, or it emails those filings again.
+      # No stored token: nothing but the commit step below gets push rights.
+      - uses: actions/checkout@v4
+        with: {ref: main, persist-credentials: false}
+      - uses: astral-sh/setup-uv@v6
+        with: {python-version: "3.12", enable-cache: true}
+      - run: uv sync --locked
+      - name: install xerj
+        run: |
+          scripts/install-xerj.sh
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+      - name: install Claude Code CLI
+        # pinned: the guardrails rely on exact flags (--tools "", --strict-mcp-config,
+        # --setting-sources); bump after checking them against the new version
+        run: npm install -g @anthropic-ai/claude-code@2.1.300
+      - name: run
+        env:
+          # dispatch inputs are untrusted text: passed as env, never spliced into the script
+          TICKER: ${{ inputs.ticker }}
+          ACCESSION: ${{ inputs.accession }}
+          BACKFILL: ${{ inputs.backfill }}
+          NO_EMAIL: ${{ github.event_name == 'workflow_dispatch' && !inputs.send_email && '1' || '' }}
+          EDGAR_IDENTITY: ${{ secrets.EDGAR_IDENTITY }}
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          SMTP_USER: ${{ secrets.SMTP_USER }}
+          SMTP_PASS: ${{ secrets.SMTP_PASS }}
+          RECIPIENT_EMAILS: ${{ secrets.RECIPIENT_EMAILS }}
+          LANGFUSE_PUBLIC_KEY: ${{ secrets.LANGFUSE_PUBLIC_KEY }}
+          LANGFUSE_SECRET_KEY: ${{ secrets.LANGFUSE_SECRET_KEY }}
+          LANGFUSE_HOST: ${{ secrets.LANGFUSE_HOST }}
+        run: |
+          args=(--backfill "${BACKFILL:-0}")
+          [ -n "$TICKER" ] && args+=(--ticker "$TICKER")
+          [ -n "$ACCESSION" ] && args+=(--accession "$ACCESSION")
+          [ -n "$NO_EMAIL" ] && args+=(--no-email)
+          uv run --locked python -m tenq.run "${args[@]}"
+      - name: keep run records
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: runs-${{ github.run_id }}
+          path: runs/
+          if-no-files-found: ignore
+          retention-days: 90
+      - name: commit run records
+        if: ${{ always() }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git config user.name tenq-bot
+          git config user.email bot@users.noreply.github.com
+          git remote set-url origin "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          # GitHub disables a public repo's schedule after 60 days with no commits,
+          # and a quarter can pass without a record: leave a heartbeat after 30
+          if [ $(( $(date +%s) - $(git log -1 --format=%ct) )) -gt 2592000 ]; then
+            date -u +%Y-%m-%dT%H:%M:%SZ > runs/heartbeat
+          fi
+          git add runs
+          if git diff --cached --quiet; then
+            echo "no new run records"
+            exit 0
+          fi
+          git commit -m "runs: record $(git diff --cached --name-only | wc -l) run(s)"
+          # a commit landing on main after checkout makes a bare push fail; rebase, retry once
+          for attempt in 1 2; do
+            if git pull --rebase origin main && git push; then
+              exit 0
+            fi
+            git rebase --abort 2>/dev/null || true
+            sleep 5
+          done
+          exit 1
