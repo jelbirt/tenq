@@ -1,0 +1,569 @@
+{
+ "run_id": "c4f6b57c-47c0-48de-b075-466937e38682",
+ "started_at": 1793715734.109028,
+ "ended_at": 1793715773.6562064,
+ "filing": {
+  "ticker": "CRWD",
+  "cik": 1535527,
+  "company": "CrowdStrike Holdings, Inc.",
+  "form": "10-Q",
+  "accession": "0001535527-26-000031",
+  "filed": "2026-08-27",
+  "period": "2026-07-31",
+  "url": "https://www.sec.gov/Archives/edgar/data/1535527/000153552726000031/0001535527-26-000031-index.html"
+ },
+ "mode": "brief",
+ "model": "opus",
+ "prompt_version": "brief-v2",
+ "prompt_input": "Write the brief for CrowdStrike Holdings, Inc. (CRWD), 10-Q for the period ended 2026-07-31, accession 0001535527-26-000031.",
+ "metrics": {
+  "ticker": "CRWD",
+  "company": "CrowdStrike Holdings, Inc.",
+  "form": "10-Q",
+  "accession": "0001535527-26-000031",
+  "period": "2026-07-31",
+  "prior_period": "2026-04-30",
+  "year_ago_period": "2025-07-31",
+  "metrics": {
+   "revenue": {
+    "label": "Revenue",
+    "unit": "usd",
+    "current": 1470897000.0,
+    "prior_quarter": 1385629000.0,
+    "year_ago": 1168952000.0,
+    "qoq_change": 85268000.0,
+    "qoq_pct": 0.06153739565208292,
+    "yoy_change": 301945000.0,
+    "yoy_pct": 0.25830401932671315
+   },
+   "gross_profit": {
+    "label": "Gross profit",
+    "unit": "usd",
+    "current": 1096895000.0,
+    "prior_quarter": 1043352000.0,
+    "year_ago": 860401000.0,
+    "qoq_change": 53543000.0,
+    "qoq_pct": 0.05131825117505885,
+    "yoy_change": 236494000.0,
+    "yoy_pct": 0.274864859524803
+   },
+   "operating_income": {
+    "label": "Operating income",
+    "unit": "usd",
+    "current": -33232000.0,
+    "prior_quarter": -30600000.0,
+    "year_ago": -105457000.0,
+    "qoq_change": -2632000.0,
+    "qoq_pct": null,
+    "yoy_change": 72225000.0,
+    "yoy_pct": null
+   },
+   "net_income": {
+    "label": "Net income",
+    "unit": "usd",
+    "current": 5306000.0,
+    "prior_quarter": 27774000.0,
+    "year_ago": -70153000.0,
+    "qoq_change": -22468000.0,
+    "qoq_pct": -0.8089580182904875,
+    "yoy_change": 75459000.0,
+    "yoy_pct": null
+   },
+   "operating_cash_flow": {
+    "label": "Operating cash flow",
+    "unit": "usd",
+    "current": 530268000.0,
+    "prior_quarter": 590937000.0,
+    "year_ago": 332832000.0,
+    "qoq_change": -60669000.0,
+    "qoq_pct": -0.10266576640149458,
+    "yoy_change": 197436000.0,
+    "yoy_pct": 0.5932001730602827
+   },
+   "capex": {
+    "label": "Capital expenditures",
+    "unit": "usd",
+    "current": 124413000.0,
+    "prior_quarter": 97624000.0,
+    "year_ago": 30497000.0,
+    "qoq_change": 26789000.0,
+    "qoq_pct": 0.2744099811521757,
+    "yoy_change": 93916000.0,
+    "yoy_pct": 3.0795160179689804
+   },
+   "deferred_revenue_current": {
+    "label": "Deferred revenue, current",
+    "unit": "usd",
+    "current": 3497144000.0,
+    "prior_quarter": 3370233000.0,
+    "year_ago": 2781196000.0,
+    "qoq_change": 126911000.0,
+    "qoq_pct": 0.03765644689847853,
+    "yoy_change": 715948000.0,
+    "yoy_pct": 0.2574245037027236
+   },
+   "deferred_revenue_noncurrent": {
+    "label": "Deferred revenue, noncurrent",
+    "unit": "usd",
+    "current": 1345066000.0,
+    "prior_quarter": 1351960000.0,
+    "year_ago": 1053661000.0,
+    "qoq_change": -6894000.0,
+    "qoq_pct": -0.0050992632918133675,
+    "yoy_change": 291405000.0,
+    "yoy_pct": 0.2765642839585028
+   },
+   "cash": {
+    "label": "Cash and cash equivalents",
+    "unit": "usd",
+    "current": 5013847000.0,
+    "prior_quarter": 4552801000.0,
+    "year_ago": 4972436000.0,
+    "qoq_change": 461046000.0,
+    "qoq_pct": 0.10126645113634442,
+    "yoy_change": 41411000.0,
+    "yoy_pct": 0.008328111211486683
+   },
+   "free_cash_flow": {
+    "label": "Free cash flow (operating cash flow less capex)",
+    "unit": "usd",
+    "current": 405855000.0,
+    "prior_quarter": 493313000.0,
+    "year_ago": 302335000.0,
+    "qoq_change": -87458000.0,
+    "qoq_pct": -0.17728703683057206,
+    "yoy_change": 103520000.0,
+    "yoy_pct": 0.34240164056427475
+   },
+   "deferred_revenue": {
+    "label": "Deferred revenue, total",
+    "unit": "usd",
+    "current": 4842210000.0,
+    "prior_quarter": 4722193000.0,
+    "year_ago": 3834857000.0,
+    "qoq_change": 120017000.0,
+    "qoq_pct": 0.025415521983112508,
+    "yoy_change": 1007353000.0,
+    "yoy_pct": 0.2626833282179753
+   },
+   "gross_margin": {
+    "label": "Gross margin",
+    "unit": "ratio",
+    "current": 0.7457320261037993,
+    "prior_quarter": 0.7529807762395273,
+    "year_ago": 0.736044764883417,
+    "qoq_change": -0.00724875013572801,
+    "qoq_pct": null,
+    "yoy_change": 0.009687261220382326,
+    "yoy_pct": null
+   },
+   "operating_margin": {
+    "label": "Operating margin",
+    "unit": "ratio",
+    "current": -0.022593016370282895,
+    "prior_quarter": -0.022083833407066395,
+    "year_ago": -0.09021499599641389,
+    "qoq_change": -0.0005091829632165,
+    "qoq_pct": null,
+    "yoy_change": 0.06762197962613099,
+    "yoy_pct": null
+   }
+  }
+ },
+ "agent": {
+  "model": "opus",
+  "text": "Need revenue drivers in the newest filing.I've finished the research and am writing the brief: five changes, each tied to an explanation in the filing. I left deferred revenue out because the filing only defines it and gives no reason for its growth.\n\nThe cash-flow and capital-spending explanations come from the filing's six-month discussion, since it gives no reason for these two figures for the quarter alone. Those passages contain no numbers in the claims, but they explain the half year rather than the quarter.\n\n{\"claims\": [{\"claim\": \"Revenue rose 26% from a year earlier to about $1.47 billion in the quarter. Management attributes the subscription growth mainly to new customers and to selling more sensors and modules to existing customers.\", \"passage_id\": \"CRWD-0001535527-26-000031:1497\", \"numbers\": [{\"metric\": \"revenue\", \"field\": \"yoy_pct\", \"value\": 0.25830401932671315}, {\"metric\": \"revenue\", \"field\": \"current\", \"value\": 1470897000}]}, {\"claim\": \"Gross margin was 74.6% in the quarter, compared with 73.6% a year earlier, an improvement of about 1.0 percentage points. Management says the subscription gross margin improvement came mainly from hiring efficiencies.\", \"passage_id\": \"CRWD-0001535527-26-000031:1538\", \"numbers\": [{\"metric\": \"gross_margin\", \"field\": \"current\", \"value\": 0.7457320261037993}, {\"metric\": \"gross_margin\", \"field\": \"year_ago\", \"value\": 0.736044764883417}, {\"metric\": \"gross_margin\", \"field\": \"yoy_change\", \"value\": 0.009687261220382326}]}, {\"claim\": \"The operating loss narrowed to $33.2 million in the quarter from a loss of $105.5 million a year earlier. General and administrative expenses stayed largely flat because lower costs tied to the Falcon sensor outage and smaller charges under the restructuring plan offset higher stock-based compensation.\", \"passage_id\": \"CRWD-0001535527-26-000031:1581\", \"numbers\": [{\"metric\": \"operating_income\", \"field\": \"current\", \"value\": -33232000}, {\"metric\": \"operating_income\", \"field\": \"year_ago\", \"value\": -105457000}]}, {\"claim\": \"Operating cash flow was $530.3 million in the quarter, up 59% from a year earlier. For the first half of the year, the filing describes operating cash as net income plus large non-cash charges, led by stock-based compensation, along with a decline in accounts receivable.\", \"passage_id\": \"CRWD-0001535527-26-000031:1776\", \"numbers\": [{\"metric\": \"operating_cash_flow\", \"field\": \"current\", \"value\": 530268000}, {\"metric\": \"operating_cash_flow\", \"field\": \"yoy_pct\", \"value\": 0.5932001730602827}]}, {\"claim\": \"Capital expenditures were $124.4 million in the quarter, compared with $30.5 million a year earlier. For the first half of the year, the filing lists purchases of property and equipment as a major investing outflow, alongside the Seraphic and SGNL acquisitions.\", \"passage_id\": \"CRWD-0001535527-26-000031:1780\", \"numbers\": [{\"metric\": \"capex\", \"field\": \"current\", \"value\": 124413000}, {\"metric\": \"capex\", \"field\": \"year_ago\", \"value\": 30497000}]}]}",
+  "error": null,
+  "tools_offered": [
+   "mcp__tenq__get_metrics",
+   "mcp__tenq__read_passage",
+   "mcp__tenq__search_filing"
+  ],
+  "tool_calls": [
+   {
+    "id": "toolu_01AHGBzScMaYkv5BGwyRVvxu",
+    "name": "mcp__tenq__get_metrics",
+    "input": {},
+    "output": "{\"ticker\":\"CRWD\",\"company\":\"CrowdStrike Holdings, Inc.\",\"form\":\"10-Q\",\"accession\":\"0001535527-26-000031\",\"period\":\"2026-07-31\",\"prior_period\":\"2026-04-30\",\"year_ago_period\":\"2025-07-31\",\"metrics\":{\"revenue\":{\"label\":\"Revenue\",\"unit\":\"usd\",\"current\":1470897000,\"prior_quarter\":1385629000,\"year_ago\":1168952000,\"qoq_change\":85268000,\"qoq_pct\":0.06153739565208292,\"yoy_change\":301945000,\"yoy_pct\":0.25830401932671315},\"gross_profit\":{\"label\":\"Gross profit\",\"unit\":\"usd\",\"current\":1096895000,\"prior_quarter\":1043352000,\"year_ago\":860401000,\"qoq_change\":53543000,\"qoq_pct\":0.05131825117505885,\"yoy_change\":236494000,\"yoy_pct\":0.274864859524803},\"operating_income\":{\"label\":\"Operating income\",\"unit\":\"usd\",\"current\":-33232000,\"prior_quarter\":-30600000,\"year_ago\":-105457000,\"qoq_change\":-2632000,\"qoq_pct\":null,\"yoy_change\":72225000,\"yoy_pct\":null},\"net_income\":{\"label\":\"Net income\",\"unit\":\"usd\",\"current\":5306000,\"prior_quarter\":27774000,\"year_ago\":-70153000,\"qoq_change\":-22468000,\"qoq_pct\":-0.8089580182904875,\"yoy_change\":75459000,\"yoy_pct\":null},\"operating_cash_flow\":{\"label\":\"Operating cash flow\",\"unit\":\"usd\",\"current\":530268000,\"prior_quarter\":590937000,\"year_ago\":332832000,\"qoq_change\":-60669000,\"qoq_pct\":-0.10266576640149458,\"yoy_change\":197436000,\"yoy_pct\":0.5932001730602827},\"capex\":{\"label\":\"Capital expenditures\",\"unit\":\"usd\",\"current\":124413000,\"prior_quarter\":97624000,\"year_ago\":30497000,\"qoq_change\":26789000,\"qoq_pct\":0.2744099811521757,\"yoy_change\":93916000,\"yoy_pct\":3.0795160179689804},\"deferred_revenue_current\":{\"label\":\"Deferred revenue, current\",\"unit\":\"usd\",\"current\":3497144000,\"prior_quarter\":3370233000,\"year_ago\":2781196000,\"qoq_change\":126911000,\"qoq_pct\":0.03765644689847853,\"yoy_change\":715948000,\"yoy_pct\":0.2574245037027236},\"deferred_revenue_noncurrent\":{\"label\":\"Deferred revenue, noncurrent\",\"unit\":\"usd\",\"current\":1345066000,\"prior_quarter\":1351960000,\"year_ago\":1053661000,\"qoq_change\":-6894000,\"qoq_pct\":-0.0050992632918133675,\"yoy_change\":291405000,\"yoy_pct\"",
+    "is_error": false,
+    "at": 1793715736.5920427,
+    "done_at": 1793715736.6316102
+   },
+   {
+    "id": "toolu_01KGwDnqWvLS3QtFdQS2djmA",
+    "name": "mcp__tenq__search_filing",
+    "input": {
+     "query": "subscription revenue increased primarily due to new customers"
+    },
+    "output": "{\"result\":[{\"passage_id\":\"CRWD-0001535527-26-000010:1465\",\"score\":15.774,\"text\":\"As new customers subscribe to our platform and existing subscription customers increase the number of endpoints on our Falcon platform, our cost of revenue will increase due to greater cloud hosting costs related to powering new cloud modules and the incremental costs for storing additional data collected for such cloud modules and employee-related costs. We intend to continue to invest additional resources in our cloud platform and our customer support organizations as we grow our business. The level and timing of investment in these areas could affect our cost of revenue in the future.\"},{\"passage_id\":\"CRWD-0001535527-26-000025:1283\",\"score\":15.161,\"text\":\"As new customers subscribe to our platform and existing subscription customers increase the number of endpoints on our Falcon platform, our cost of revenue will increase due to greater cloud hosting costs related to powering new cloud modules and the incremental costs for storing additional data collected for such cloud modules and employee-related costs. We intend to continue to invest additional resources in our cloud platform and our customer support organizations as we grow our business. The level and timing of investment in these areas could affect our cost of revenue in the future.\"},{\"passage_id\":\"CRWD-0001535527-25-000025:1244\",\"score\":15.161,\"text\":\"As new customers subscribe to our platform and existing subscription customers increase the number of endpoints on our Falcon platform, our cost of revenue will increase due to greater cloud hosting costs related to powering new cloud modules and the incremental costs for storing additional data collected for such cloud modules and employee-related costs. We intend to continue to invest additional resources in our cloud platform and our customer support organizations as we grow our business. The level and timing of investment in these areas could affect our cost of revenue in th",
+    "is_error": false,
+    "at": 1793715738.3958485,
+    "done_at": 1793715738.4459689
+   },
+   {
+    "id": "toolu_01MzauCUjK2sTZpciASd7LhL",
+    "name": "mcp__tenq__search_filing",
+    "input": {
+     "query": "operating loss decreased compared to prior year"
+    },
+    "output": "{\"result\":[{\"passage_id\":\"CRWD-0001535527-26-000010:1664\",\"score\":12.476,\"text\":\"The decrease in interest income during fiscal 2026 compared to fiscal 2025 was driven by lower market rates, partially offset by higher cash balances.\"},{\"passage_id\":\"CRWD-0001535527-26-000010:1614\",\"score\":11.965,\"text\":\"Professional services gross margin decreased by 1% in fiscal 2026, as compared to fiscal 2025. The decrease in professional services gross margin was primarily due to an increase in consulting expense and an increase in stock-based compensation expense during fiscal 2026, as compared to fiscal 2025.\"},{\"passage_id\":\"CRWD-0001535527-26-000010:2907\",\"score\":11.432,\"text\":\"Total gross unrecognized tax benefits as of January 31, 2026, January 31, 2025, and January 31, 2024 were $ 137.8 million, $ 117.5 million, and $ 58.9 million, respectively. As of January 31, 2026, the Company had $ 41.0 million of unrecognized tax benefits, which, if recognized, would affect the Company\u2019s effective tax rate due to the full valuation allowance. The Company\u2019s policy is to classify interest and penalties related to unrecognized tax benefits as part of the income tax provision in the consolidated statements of operations. Cumulatively, the Company had incurred $ 6.6 million of in\"},{\"passage_id\":\"CRWD-0001535527-26-000031:1596\",\"score\":11.039,\"text\":\"The decrease in interest expense for the three months ended July 31, 2026 compared to the three months ended July 31, 2025 was primarily due to no amortization of debt issuance costs in the current period related to our secured revolving credit facility, which expired in January 2026.\"},{\"passage_id\":\"CRWD-0001535527-25-000033:1634\",\"score\":10.038,\"text\":\"The decrease in interest income for the nine months ended October 31, 2025 compared to the nine months ended October 31, 2024 was driven by lower market rates, partially offset by higher cash balance.\"}]}",
+    "is_error": false,
+    "at": 1793715738.795678,
+    "done_at": 1793715738.8422263
+   },
+   {
+    "id": "toolu_01ChEoYKYZSXkp6eTGN2e7E6",
+    "name": "mcp__tenq__search_filing",
+    "input": {
+     "query": "net cash provided by operating activities increased"
+    },
+    "output": "{\"result\":[{\"passage_id\":\"CRWD-0001535527-26-000010:1695\",\"score\":16.33,\"text\":\"                                                                   Year Ended January 31,\\n                                                                   2026                                       2025                     2024\\n \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\\n  Net cash provided by operating activities                        $                           1,612,349      $         1,381,727      $         1,166,207\\n  Net cash used in investing activities                  \"},{\"passage_id\":\"CRWD-0001535527-26-000031:1776\",\"score\":14.823,\"text\":\"Net cash provided by operating activities during the six months ended July 31, 2026 was $1.1 billion, which resulted from net income of $51.3 million, adjusted for non-cash charges of $1.0 billion and a net cash inflow of $37.1 million from changes in operating assets and liabilities. Non-cash charges primarily consisted of $674.6 million in stock-based compensation expense, $207.1 million of amortization of deferred contract acquisition costs, $157.6 million of depreciation and amortization, $25.7 million of amortization of intangible assets, $10.4 million of non-cash operating lease costs, a\"},{\"passage_id\":\"CRWD-0001535527-25-000033:1677\",\"score\":14.762,\"text\":\"Net cash provided by operating activities during the nine months ended October 31, 2025 was $1.1 billion, which resulted from net loss of $222.6 million, adjusted for non-cash charges of $1.4 billion and net cash outflow of $27.4 million from changes in operating assets and liabilities. Non-cash charges primarily consisted of $822.7 million in stock-based compensation expense, $325.4 million of amortization of deferred contract acquisition costs, $180.9 million of depreciation and amortization, $23.1 million of amortization of intangibles assets, $12.6 million of ",
+    "is_error": false,
+    "at": 1793715739.2012463,
+    "done_at": 1793715739.2479613
+   },
+   {
+    "id": "toolu_011CA8it4UmkSBpeSeRAAZbU",
+    "name": "mcp__tenq__search_filing",
+    "input": {
+     "query": "purchases of property and equipment data center capital expenditures"
+    },
+    "output": "{\"result\":[{\"passage_id\":\"CRWD-0001535527-26-000010:2629\",\"score\":19.972,\"text\":\"                                                                       January 31,\\n                                                                       2026                            2025\\n \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\\n  Data center and other computer equipment                             $                1,058,690      $           755,728\\n  Capitalized internal-use software and website development costs                         383,119                  265,987\\n  Leasehold improvements             \"},{\"passage_id\":\"CRWD-0001535527-25-000033:687\",\"score\":19.809,\"text\":\"                                                                       October 31, 2025                     January 31, 2025\\n \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\\n  Data center and other computer equipment                             $                       969,716      $                       755,728\\n  Capitalized internal-use software and website development costs                              352,415                              265,987\\n  Leasehold improvements                            \"},{\"passage_id\":\"CRWD-0001535527-25-000025:679\",\"score\":19.809,\"text\":\"                                                                       July 31, 2025                     January 31, 2025\\n \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\\n  Data center and other computer equipment                             $                    896,236      $                       755,728\\n  Capitalized internal-use software and website development costs                           327,606                              265,987\\n  Leasehold improvements  ",
+    "is_error": false,
+    "at": 1793715739.5377614,
+    "done_at": 1793715739.6272595
+   },
+   {
+    "id": "toolu_01H5nS49rhN2G9YMyZmRJyYz",
+    "name": "mcp__tenq__search_filing",
+    "input": {
+     "query": "increase in subscription revenue three months ended July 31, 2026",
+     "k": 8
+    },
+    "output": "{\"result\":[{\"passage_id\":\"CRWD-0001535527-26-000031:1495\",\"score\":23.037,\"text\":\"Total revenue increased by $301.9 million, or 26%, for the three months ended July 31, 2026 compared to the three months ended July 31, 2025. Subscription revenue accounted for 95% and 94% of total revenue for the three months ended July 31, 2026 and July 31, 2025, respectively. Professional services revenue accounted for 5% and 6% of our total revenue for the three months ended July 31, 2026 and July 31, 2025, respectively.\"},{\"passage_id\":\"CRWD-0001535527-26-000031:1514\",\"score\":20.956,\"text\":\"Total cost of revenue increased by $65.5 million, or 21%, for the three months ended July 31, 2026 compared to the three months ended July 31, 2025. Subscription cost of revenue increased by $58.2 million, or 23%, for the three months ended July 31, 2026, compared to the three months ended July 31, 2025. The increase in subscription cost of revenue was primarily due to an increase in cloud hosting and related services costs of $13.9 million, an increase in depreciation of data center equipment of $10.4 million, an increase in employee-related expenses of $9.4 million driven by a 9% increase in\"},{\"passage_id\":\"CRWD-0001535527-25-000025:1358\",\"score\":20.747,\"text\":\"Total revenue increased by $205.1 million, or 21%, for the three months ended July 31, 2025 compared to the three months ended July 31, 2024. Subscription revenue accounted for 94% and 95% of total revenue for the three months ended July 31, 2025 and July 31, 2024, respectively. Professional services revenue accounted for 6% and 5% of our total revenue for the three months ended July 31, 2025 and July 31, 2024, respectively.\"},{\"passage_id\":\"CRWD-0001535527-26-000031:1538\",\"score\":20.439,\"text\":\"Subscription gross margin increased by one percentage point for the three months ended July 31, 2026, compared to the three months ended July 31, 2025. The increase in subscription gross margin was primarily attributable to hiring efficiencies.",
+    "is_error": false,
+    "at": 1793715741.558454,
+    "done_at": 1793715741.619379
+   },
+   {
+    "id": "toolu_013r5pfVvwx9udGTtTegfkDs",
+    "name": "mcp__tenq__search_filing",
+    "input": {
+     "query": "subscription gross margin increased three months ended July 31, 2026 cloud hosting"
+    },
+    "output": "{\"result\":[{\"passage_id\":\"CRWD-0001535527-26-000031:1538\",\"score\":31.079,\"text\":\"Subscription gross margin increased by one percentage point for the three months ended July 31, 2026, compared to the three months ended July 31, 2025. The increase in subscription gross margin was primarily attributable to hiring efficiencies.\"},{\"passage_id\":\"CRWD-0001535527-26-000025:1440\",\"score\":29.952,\"text\":\"Subscription gross margin increased by one percentage point for the three months ended April 30, 2026, compared to the three months ended April 30, 2025. The increase in subscription gross margin was primarily attributable to hosting efficiencies.\"},{\"passage_id\":\"CRWD-0001535527-25-000025:1403\",\"score\":28.393,\"text\":\"Subscription gross margin slightly decreased by one percentage point for the three months ended July 31, 2025, compared to the three months ended July 31, 2024. The decrease in subscription gross margin was primarily due to an increase in stock-based compensation expense, and an increase in depreciation of data center equipment during the three months ended July 31, 2025.\"},{\"passage_id\":\"CRWD-0001535527-25-000025:1377\",\"score\":27.761,\"text\":\"Total cost of revenue increased by $72.9 million, or 31%, for the three months ended July 31, 2025 compared to the three months ended July 31, 2024. Subscription cost of revenue increased by $53.7 million, or 27%, for the three months ended July 31, 2025, compared to the three months ended July 31, 2024. The increase in subscription cost of revenue was primarily due to an increase in employee-related expenses of $13.6 million driven by a 19% increase in average headcount, an increase in cloud hosting and related services costs of $12.9 million, an increase in depreciation of data center equipm\"},{\"passage_id\":\"CRWD-0001535527-26-000031:1673\",\"score\":27.684,\"text\":\"Subscription gross margin increased by one percentage point for the six months ended July 31, 2026, compared to the six months ended July 31, 2025. The increase i",
+    "is_error": false,
+    "at": 1793715741.946901,
+    "done_at": 1793715741.9852674
+   },
+   {
+    "id": "toolu_01DwGeKjJjEz1T43YZ4XpZot",
+    "name": "mcp__tenq__search_filing",
+    "input": {
+     "query": "Subscription revenue increased by three months ended July 31, 2026 addition of new customers sale of additional sensors and modules"
+    },
+    "output": "{\"result\":[{\"passage_id\":\"CRWD-0001535527-26-000031:1497\",\"score\":37.793,\"text\":\"Subscription revenue increased by $297.3 million, or 27%, for the three months ended July 31, 2026 compared to the three months ended July 31, 2025, which was primarily driven by a combination of the addition of new customers and the sale of additional sensors and modules to existing customers.\"},{\"passage_id\":\"CRWD-0001535527-25-000025:1360\",\"score\":35.502,\"text\":\"Subscription revenue increased by $184.7 million, or 20%, for the three months ended July 31, 2025 compared to the three months ended July 31, 2024, which was primarily driven by a combination of the addition of new customers and the sale of additional sensors and modules to existing customers.\"},{\"passage_id\":\"CRWD-0001535527-26-000031:1632\",\"score\":35.107,\"text\":\"Subscription revenue increased by $567.4 million, or 26%, for the six months ended July 31, 2026 compared to the six months ended July 31, 2025, which was primarily driven by a combination of the addition of new customers and the sale of additional sensors and modules to existing customers.\"},{\"passage_id\":\"CRWD-0001535527-26-000025:1399\",\"score\":33.126,\"text\":\"Subscription revenue increased by $270.1 million, or 26%, for the three months ended April 30, 2026 compared to the three months ended April 30, 2025, which was primarily driven by a combination of the addition of new customers and the sale of additional sensors and modules to existing customers.\"},{\"passage_id\":\"CRWD-0001535527-25-000033:1398\",\"score\":33.042,\"text\":\"Subscription revenue increased by $206.0 million, or 21%, for the three months ended October 31, 2025 compared to the three months ended October 31, 2024, which was primarily driven by a combination of the addition of new customers and the sale of additional sensors and modules to existing customers.\"}]}",
+    "is_error": false,
+    "at": 1793715744.167858,
+    "done_at": 1793715744.21991
+   },
+   {
+    "id": "toolu_01YT8y6ivKHnx7Yovd9FbEan",
+    "name": "mcp__tenq__search_filing",
+    "input": {
+     "query": "deferred revenue billings remaining performance obligations July 31, 2026"
+    },
+    "output": "{\"result\":[{\"passage_id\":\"CRWD-0001535527-26-000031:1021\",\"score\":22.102,\"text\":\"                                       Three Months Ended July 31,                                                  Six Months Ended July 31,\\n                                       2026                                              2025                       2026                                            2025\\n \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\\n  Beginning balance                    $                                  4,722,193      $          \"},{\"passage_id\":\"CRWD-0001535527-26-000010:3154\",\"score\":20.849,\"text\":\"The Company\u2019s subscription contracts with its customers have a typical term of one to three years, and most subscription contracts are non-cancelable. Customers generally have the right to terminate their contracts for cause as a result of the Company\u2019s failure to perform. As of January 31, 2026, the aggregate amount of the transaction price allocated to remaining performance obligations was $ 9.0 billion. The Company expects to recognize approximately 51 % of the remaining performance obligations in the 12 months following January 31, 2026 and 43 % of the remaining performance obligations bet\"},{\"passage_id\":\"CRWD-0001535527-26-000031:1015\",\"score\":20.343,\"text\":\"Contract liabilities consist of deferred revenue and include payments received in advance of performance under the contract. Such amounts are recognized as revenue over the contractual period. The Company recognized revenue of $ 1.3 billion and $ 1.0 billion for the three months ended July 31, 2026 and July 31, 2025, respectively, and $ 2.2 billion and $ 1.7 billion during the six months ended July 31, 2026 and July 31, 2025, respectively, which was included in the corresponding contract liability balance at the beginning of the period.\"},{\"passage_id\":\"CRWD-00015",
+    "is_error": false,
+    "at": 1793715744.5188184,
+    "done_at": 1793715744.559916
+   },
+   {
+    "id": "toolu_01QLsCBJPLigaYpwK8cD8V4g",
+    "name": "mcp__tenq__read_passage",
+    "input": {
+     "passage_id": "CRWD-0001535527-26-000031:1497"
+    },
+    "output": "{\"passage_id\":\"CRWD-0001535527-26-000031:1497\",\"found\":true,\"text\":\"Subscription revenue increased by $297.3 million, or 27%, for the three months ended July 31, 2026 compared to the three months ended July 31, 2025, which was primarily driven by a combination of the addition of new customers and the sale of additional sensors and modules to existing customers.\"}",
+    "is_error": false,
+    "at": 1793715747.0314605,
+    "done_at": 1793715747.042679
+   },
+   {
+    "id": "toolu_01NmpK3dzFwxXU5iAv5AQ2ro",
+    "name": "mcp__tenq__read_passage",
+    "input": {
+     "passage_id": "CRWD-0001535527-26-000031:1538"
+    },
+    "output": "{\"passage_id\":\"CRWD-0001535527-26-000031:1538\",\"found\":true,\"text\":\"Subscription gross margin increased by one percentage point for the three months ended July 31, 2026, compared to the three months ended July 31, 2025. The increase in subscription gross margin was primarily attributable to hiring efficiencies.\"}",
+    "is_error": false,
+    "at": 1793715747.481693,
+    "done_at": 1793715747.4927006
+   },
+   {
+    "id": "toolu_01DCZrc5Lv7AgGwRgdzAXgdo",
+    "name": "mcp__tenq__read_passage",
+    "input": {
+     "passage_id": "CRWD-0001535527-26-000031:1015"
+    },
+    "output": "{\"passage_id\":\"CRWD-0001535527-26-000031:1015\",\"found\":true,\"text\":\"Contract liabilities consist of deferred revenue and include payments received in advance of performance under the contract. Such amounts are recognized as revenue over the contractual period. The Company recognized revenue of $ 1.3 billion and $ 1.0 billion for the three months ended July 31, 2026 and July 31, 2025, respectively, and $ 2.2 billion and $ 1.7 billion during the six months ended July 31, 2026 and July 31, 2025, respectively, which was included in the corresponding contract liability balance at the beginning of the period.\"}",
+    "is_error": false,
+    "at": 1793715747.9377031,
+    "done_at": 1793715747.9477756
+   },
+   {
+    "id": "toolu_0166eL6vDVp2sjd7175nURiL",
+    "name": "mcp__tenq__search_filing",
+    "input": {
+     "query": "decrease in charges related to the Strategic Plan general and administrative expenses three months ended July 31, 2026"
+    },
+    "output": "{\"result\":[{\"passage_id\":\"CRWD-0001535527-26-000031:1581\",\"score\":38.209,\"text\":\"General and administrative expenses stayed largely flat for the three months ended July 31, 2026 compared to the three months ended July 31, 2025. The net decrease was primarily driven by lower costs associated with the July 19 Incident and related matters and reduced charges related to the Strategic Plan, partially offset by higher stock-based compensation expense.\"},{\"passage_id\":\"CRWD-0001535527-26-000031:1716\",\"score\":37.411,\"text\":\"General and administrative expenses increased by $12.0 million, or 4%, for the six months ended July 31, 2026 compared to the six months ended July 31, 2025. The increase in general and administrative expenses was primarily due to an increase in stock-based compensation expense of $57.1 million, an increase in employee-related expenses of $5.7 million driven by a 10% increase in average headcount, an increase in legal expense of $3.6 million unrelated to the July 19 Incident or related matters, and an increase in allocated overhead costs of $2.7 million, partially offset by a decrease of $44.9\"},{\"passage_id\":\"CRWD-0001535527-26-000025:1483\",\"score\":34.977,\"text\":\"General and administrative expenses increased by $12.8 million, or 8%, for the three months ended April 30, 2026 compared to the three months ended April 30, 2025. The increase in general and administrative expenses was primarily due to an increase in stock-based compensation expense of $23.9 million, an increase in consulting expense of $13.1 million, and an increase in legal expense of $1.8 million unrelated to the July 19 Incident or related matters, partially offset by a decrease in expenses associated with the July 19 Incident and related matters of $20.5 million and a decrease in charges\"},{\"passage_id\":\"CRWD-0001535527-26-000031:1568\",\"score\":34.885,\"text\":\"Research and development expenses increased by $101.7 million, or 30%, for the three months ended July 31, 2026 compared to the thre",
+    "is_error": false,
+    "at": 1793715748.3638897,
+    "done_at": 1793715748.4028165
+   },
+   {
+    "id": "toolu_01StegcBZBDaANvvoQeVrLPF",
+    "name": "mcp__tenq__read_passage",
+    "input": {
+     "passage_id": "CRWD-0001535527-26-000031:1581"
+    },
+    "output": "{\"passage_id\":\"CRWD-0001535527-26-000031:1581\",\"found\":true,\"text\":\"General and administrative expenses stayed largely flat for the three months ended July 31, 2026 compared to the three months ended July 31, 2025. The net decrease was primarily driven by lower costs associated with the July 19 Incident and related matters and reduced charges related to the Strategic Plan, partially offset by higher stock-based compensation expense.\"}",
+    "is_error": false,
+    "at": 1793715752.0993507,
+    "done_at": 1793715752.1104906
+   },
+   {
+    "id": "toolu_01Lkyify6TkYCjrNS69NpM3H",
+    "name": "mcp__tenq__search_filing",
+    "input": {
+     "query": "net cash used in investing activities purchases of property and equipment six months ended July 31, 2026"
+    },
+    "output": "{\"result\":[{\"passage_id\":\"CRWD-0001535527-26-000031:1780\",\"score\":30.258,\"text\":\"Net cash used in investing activities of $1.1 billion during the six months ended July 31, 2026 was primarily due to business acquisitions, net of cash acquired, of $881.4 million, which was related to the Seraphic and SGNL acquisitions, purchases of property and equipment of $222.0 million, capitalized internal-use software and website development costs of $49.1 million, purchases of deferred compensation investments of $4.3 million, purchases of strategic investments of $3.4 million, and purchases of intangible assets of $3.0 million, partially offset by proceeds from sales of strategic inve\"},{\"passage_id\":\"CRWD-0001535527-26-000031:753\",\"score\":30.134,\"text\":\"There was no impairment of property and equipment during the three and six months ended July 31, 2026 and July 31, 2025. The Company capitalized $ 45.4 million and $ 31.0 million in internal-use software and website development costs during the three months ended July 31, 2026 and July 31, 2025, respectively, and $ 81.5 million and $ 60.6 million during the six months ended July 31, 2026 and July 31, 2025, respectively. Amortization expense associated with internal-use software and website development costs totaled $ 25.7 million and $ 19.6 million during the three months ended July 31, 2026 a\"},{\"passage_id\":\"CRWD-0001535527-25-000025:1645\",\"score\":29.627,\"text\":\"Net cash used in investing activities of $150.6 million during the six months ended July 31, 2025 was primarily due to purchases of property and equipment of $116.2 million, capitalized internal-use software and website development costs of $34.7 million, purchases of deferred compensation investments of $2.8 million, and purchases of strategic investments of $1.4 million, partially offset by proceeds from sales of strategic investments of $4.4 million.\"},{\"passage_id\":\"CRWD-0001535527-25-000025:695\",\"score\":27.708,\"text\":\"There was no impairment of property and equip",
+    "is_error": false,
+    "at": 1793715752.4761539,
+    "done_at": 1793715752.5170891
+   },
+   {
+    "id": "toolu_016HYthVmxWSY4VHxSDXbPBz",
+    "name": "mcp__tenq__read_passage",
+    "input": {
+     "passage_id": "CRWD-0001535527-26-000031:1776"
+    },
+    "output": "{\"passage_id\":\"CRWD-0001535527-26-000031:1776\",\"found\":true,\"text\":\"Net cash provided by operating activities during the six months ended July 31, 2026 was $1.1 billion, which resulted from net income of $51.3 million, adjusted for non-cash charges of $1.0 billion and a net cash inflow of $37.1 million from changes in operating assets and liabilities. Non-cash charges primarily consisted of $674.6 million in stock-based compensation expense, $207.1 million of amortization of deferred contract acquisition costs, $157.6 million of depreciation and amortization, $25.7 million of amortization of intangible assets, $10.4 million of non-cash operating lease costs, and $0.9 million of non-cash interest expense, partially offset by $36.4 million of realized gains on strategic investments and $7.1 million of deferred income taxes. The net cash inflow from changes in operating assets and liabilities was primarily due to a $324.2 million decrease in accounts receivable, an $83.3 million increase in deferred revenue, a $28.4 million increase in accrued payroll and benefits, and an $11.9 million increase in accrued expenses and other liabilities, partially offset by a $298.4 million increase in deferred contract acquisition costs, a $95.4 million increase in prepaid expenses and other assets, a $9.1 million decrease in operating lease liabilities, and a $7.7 million decrease in accounts payable.\"}",
+    "is_error": false,
+    "at": 1793715755.7956903,
+    "done_at": 1793715755.806793
+   },
+   {
+    "id": "toolu_016Ug8mF6v4PKRM6xhwPcDQf",
+    "name": "mcp__tenq__read_passage",
+    "input": {
+     "passage_id": "CRWD-0001535527-26-000031:1780"
+    },
+    "output": "{\"passage_id\":\"CRWD-0001535527-26-000031:1780\",\"found\":true,\"text\":\"Net cash used in investing activities of $1.1 billion during the six months ended July 31, 2026 was primarily due to business acquisitions, net of cash acquired, of $881.4 million, which was related to the Seraphic and SGNL acquisitions, purchases of property and equipment of $222.0 million, capitalized internal-use software and website development costs of $49.1 million, purchases of deferred compensation investments of $4.3 million, purchases of strategic investments of $3.4 million, and purchases of intangible assets of $3.0 million, partially offset by proceeds from sales of strategic investments of $17.5 million.\"}",
+    "is_error": false,
+    "at": 1793715757.6536684,
+    "done_at": 1793715757.6638122
+   }
+  ],
+  "usage": {
+   "input_tokens": 18,
+   "cache_creation_input_tokens": 16373,
+   "cache_read_input_tokens": 85353,
+   "output_tokens": 3740,
+   "output_tokens_details": {
+    "thinking_tokens": 1364
+   },
+   "server_tool_use": {
+    "web_search_requests": 0,
+    "web_fetch_requests": 0
+   },
+   "service_tier": "standard",
+   "cache_creation": {
+    "ephemeral_1h_input_tokens": 16373,
+    "ephemeral_5m_input_tokens": 0
+   },
+   "inference_geo": "global",
+   "iterations": [
+    {
+     "input_tokens": 2,
+     "output_tokens": 1918,
+     "cache_read_input_tokens": 16754,
+     "cache_creation_input_tokens": 455,
+     "cache_creation": {
+      "ephemeral_5m_input_tokens": 0,
+      "ephemeral_1h_input_tokens": 455
+     },
+     "type": "message"
+    }
+   ],
+   "speed": "standard",
+   "fallback_credit": null
+  },
+  "num_turns": 18,
+  "duration_ms": 37688,
+  "api_duration_ms": 37559,
+  "resolved_model": "claude-opus-5-5",
+  "started_at": 1793715734.1233034,
+  "ended_at": 1793715773.635969
+ },
+ "draft_error": null,
+ "check": {
+  "kept": [
+   {
+    "claim": "Revenue rose 26% from a year earlier to about $1.47 billion in the quarter. Management attributes the subscription growth mainly to new customers and to selling more sensors and modules to existing customers.",
+    "passage_id": "CRWD-0001535527-26-000031:1497",
+    "numbers": [
+     {
+      "metric": "revenue",
+      "field": "yoy_pct",
+      "value": 0.25830401932671315
+     },
+     {
+      "metric": "revenue",
+      "field": "current",
+      "value": 1470897000.0
+     }
+    ]
+   },
+   {
+    "claim": "Gross margin was 74.6% in the quarter, compared with 73.6% a year earlier, an improvement of about 1.0 percentage points. Management says the subscription gross margin improvement came mainly from hiring efficiencies.",
+    "passage_id": "CRWD-0001535527-26-000031:1538",
+    "numbers": [
+     {
+      "metric": "gross_margin",
+      "field": "current",
+      "value": 0.7457320261037993
+     },
+     {
+      "metric": "gross_margin",
+      "field": "year_ago",
+      "value": 0.736044764883417
+     },
+     {
+      "metric": "gross_margin",
+      "field": "yoy_change",
+      "value": 0.009687261220382326
+     }
+    ]
+   },
+   {
+    "claim": "The operating loss narrowed to $33.2 million in the quarter from a loss of $105.5 million a year earlier. General and administrative expenses stayed largely flat because lower costs tied to the Falcon sensor outage and smaller charges under the restructuring plan offset higher stock-based compensation.",
+    "passage_id": "CRWD-0001535527-26-000031:1581",
+    "numbers": [
+     {
+      "metric": "operating_income",
+      "field": "current",
+      "value": -33232000.0
+     },
+     {
+      "metric": "operating_income",
+      "field": "year_ago",
+      "value": -105457000.0
+     }
+    ]
+   }
+  ],
+  "dropped": [
+   {
+    "claim": "Operating cash flow was $530.3 million in the quarter, up 59% from a year earlier. For the first half of the year, the filing describes operating cash as net income plus large non-cash charges, led by stock-based compensation, along with a decline in accounts receivable.",
+    "passage_id": "CRWD-0001535527-26-000031:1776",
+    "numbers": [
+     {
+      "metric": "operating_cash_flow",
+      "field": "current",
+      "value": 530268000.0
+     },
+     {
+      "metric": "operating_cash_flow",
+      "field": "yoy_pct",
+      "value": 0.5932001730602827
+     }
+    ],
+    "reason": "number 'half' in the text cannot be checked"
+   },
+   {
+    "claim": "Capital expenditures were $124.4 million in the quarter, compared with $30.5 million a year earlier. For the first half of the year, the filing lists purchases of property and equipment as a major investing outflow, alongside the Seraphic and SGNL acquisitions.",
+    "passage_id": "CRWD-0001535527-26-000031:1780",
+    "numbers": [
+     {
+      "metric": "capex",
+      "field": "current",
+      "value": 124413000.0
+     },
+     {
+      "metric": "capex",
+      "field": "year_ago",
+      "value": 30497000.0
+     }
+    ],
+    "reason": "number 'half' in the text cannot be checked"
+   }
+  ]
+ },
+ "email": {
+  "sent": false,
+  "status": "email off for this run",
+  "subject": "tenq: CRWD 10-Q for the quarter ended 2026-07-31: revenue +25.8% YoY"
+ },
+ "steps": [
+  {
+   "name": "fetch",
+   "start": 1793715724.7162824,
+   "end": 1793715732.2808683,
+   "output": {
+    "new": [
+     "0001535527-26-000031",
+     "0001535527-26-000025",
+     "0001535527-26-000010",
+     "0001535527-25-000033",
+     "0001535527-25-000025"
+    ]
+   },
+   "error": null
+  },
+  {
+   "name": "index",
+   "start": 1793715732.2815297,
+   "end": 1793715734.108996,
+   "output": {
+    "url": "http://127.0.0.1:55521"
+   },
+   "error": null
+  },
+  {
+   "name": "claude",
+   "start": 1793715734.1232374,
+   "end": 1793715773.6362746,
+   "output": {
+    "claims": 5
+   },
+   "error": null
+  },
+  {
+   "name": "check",
+   "start": 1793715773.6362758,
+   "end": 1793715773.6491325,
+   "output": {
+    "kept": 3,
+    "dropped": [
+     "number 'half' in the text cannot be checked",
+     "number 'half' in the text cannot be checked"
+    ]
+   },
+   "error": null
+  },
+  {
+   "name": "email",
+   "start": 1793715773.6562045,
+   "end": 1793715773.6562057,
+   "output": "email off for this run",
+   "error": null
+  }
+ ],
+ "trace": {
+  "sent": true,
+  "status": "trace sent"
+ }
+}
