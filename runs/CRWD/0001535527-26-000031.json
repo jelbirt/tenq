@@ -1,7 +1,7 @@
 {
- "run_id": "fb19a401-3f90-4dd0-8318-46455de28aa7",
- "started_at": 1793710932.2540545,
- "ended_at": 1793710936.0881166,
+ "run_id": "7705a2f2-424e-4999-9df4-89fe924adccf",
+ "started_at": 1793711353.8469398,
+ "ended_at": 1793711357.5289087,
  "filing": {
   "ticker": "CRWD",
   "cik": 1535527,
@@ -203,11 +203,11 @@
    "fallback_credit": null
   },
   "num_turns": 1,
-  "duration_ms": 1851,
+  "duration_ms": 1912,
   "api_duration_ms": 0,
   "resolved_model": "claude-opus-5-5",
-  "started_at": 1793710932.2639031,
-  "ended_at": 1793710936.0879009
+  "started_at": 1793711353.856255,
+  "ended_at": 1793711357.5287054
  },
  "draft_error": "error result: Failed to authenticate. API Error: 401 Invalid bearer token",
  "check": {
@@ -222,8 +222,8 @@
  "steps": [
   {
    "name": "fetch",
-   "start": 1793710924.984615,
-   "end": 1793710930.746837,
+   "start": 1793711345.9300406,
+   "end": 1793711351.5937839,
    "output": {
     "new": [
      "0001535527-26-000031",
@@ -237,17 +237,17 @@
   },
   {
    "name": "index",
-   "start": 1793710930.74735,
-   "end": 1793710932.2540176,
+   "start": 1793711351.5942817,
+   "end": 1793711353.8469021,
    "output": {
-    "url": "http://127.0.0.1:33689"
+    "url": "http://127.0.0.1:52765"
    },
    "error": null
   },
   {
    "name": "claude",
-   "start": 1793710932.263835,
-   "end": 1793710936.0879753,
+   "start": 1793711353.856193,
+   "end": 1793711357.5287719,
    "output": {
     "claims": 0
    },
@@ -255,8 +255,8 @@
   },
   {
    "name": "check",
-   "start": 1793710936.0879767,
-   "end": 1793710936.0879834,
+   "start": 1793711357.528773,
+   "end": 1793711357.5287807,
    "output": {
     "kept": 0,
     "dropped": []
@@ -265,14 +265,14 @@
   },
   {
    "name": "email",
-   "start": 1793710936.0881155,
-   "end": 1793710936.0881162,
+   "start": 1793711357.5289075,
+   "end": 1793711357.5289083,
    "output": "email off for this run",
    "error": null
   }
  ],
  "trace": {
-  "sent": false,
-  "status": "trace rejected: HTTP 207, 7 error(s)"
+  "sent": true,
+  "status": "trace sent"
  }
 }
