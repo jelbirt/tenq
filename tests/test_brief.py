@@ -20,7 +20,7 @@ from tenq.filings import FilingStore
 
 def test_the_shipped_prompt_has_a_version_and_names_every_tool() -> None:
     p = load_prompt()
-    assert p.version == "brief-v1"
+    assert p.version == "brief-v2"
     assert "prompt-version" not in p.text
     for tool in ("get_metrics", "search_filing", "read_passage"):
         assert tool in p.text
