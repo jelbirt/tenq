@@ -1,0 +1,380 @@
+[
+ {
+  "concept": "us-gaap:CashAndCashEquivalentsAtCarryingValue",
+  "value": 4323295000.0,
+  "unit": "usd",
+  "start": null,
+  "end": null,
+  "instant": "2025-01-31",
+  "decimals": -3
+ },
+ {
+  "concept": "us-gaap:ContractWithCustomerLiabilityCurrent",
+  "value": 2781196000.0,
+  "unit": "usd",
+  "start": null,
+  "end": null,
+  "instant": "2025-07-31",
+  "decimals": -3
+ },
+ {
+  "concept": "us-gaap:ContractWithCustomerLiabilityCurrent",
+  "value": 2733005000.0,
+  "unit": "usd",
+  "start": null,
+  "end": null,
+  "instant": "2025-01-31",
+  "decimals": -3
+ },
+ {
+  "concept": "us-gaap:ContractWithCustomerLiabilityNoncurrent",
+  "value": 1053661000.0,
+  "unit": "usd",
+  "start": null,
+  "end": null,
+  "instant": "2025-07-31",
+  "decimals": -3
+ },
+ {
+  "concept": "us-gaap:ContractWithCustomerLiabilityNoncurrent",
+  "value": 995672000.0,
+  "unit": "usd",
+  "start": null,
+  "end": null,
+  "instant": "2025-01-31",
+  "decimals": -3
+ },
+ {
+  "concept": "us-gaap:GrossProfit",
+  "value": 858669000.0,
+  "unit": "usd",
+  "start": "2025-05-01",
+  "end": "2025-07-31",
+  "instant": null,
+  "decimals": -3
+ },
+ {
+  "concept": "us-gaap:GrossProfit",
+  "value": 726471000.0,
+  "unit": "usd",
+  "start": "2024-05-01",
+  "end": "2024-07-31",
+  "instant": null,
+  "decimals": -3
+ },
+ {
+  "concept": "us-gaap:GrossProfit",
+  "value": 1672960000.0,
+  "unit": "usd",
+  "start": "2025-02-01",
+  "end": "2025-07-31",
+  "instant": null,
+  "decimals": -3
+ },
+ {
+  "concept": "us-gaap:GrossProfit",
+  "value": 1422504000.0,
+  "unit": "usd",
+  "start": "2024-02-01",
+  "end": "2024-07-31",
+  "instant": null,
+  "decimals": -3
+ },
+ {
+  "concept": "us-gaap:OperatingIncomeLoss",
+  "value": -112979000.0,
+  "unit": "usd",
+  "start": "2025-05-01",
+  "end": "2025-07-31",
+  "instant": null,
+  "decimals": -3
+ },
+ {
+  "concept": "us-gaap:OperatingIncomeLoss",
+  "value": 13658000.0,
+  "unit": "usd",
+  "start": "2024-05-01",
+  "end": "2024-07-31",
+  "instant": null,
+  "decimals": -3
+ },
+ {
+  "concept": "us-gaap:OperatingIncomeLoss",
+  "value": -237635000.0,
+  "unit": "usd",
+  "start": "2025-02-01",
+  "end": "2025-07-31",
+  "instant": null,
+  "decimals": -3
+ },
+ {
+  "concept": "us-gaap:OperatingIncomeLoss",
+  "value": 20594000.0,
+  "unit": "usd",
+  "start": "2024-02-01",
+  "end": "2024-07-31",
+  "instant": null,
+  "decimals": -3
+ },
+ {
+  "concept": "us-gaap:NetIncomeLossAttributableToNoncontrollingInterest",
+  "value": 30000.0,
+  "unit": "usd",
+  "start": "2025-05-01",
+  "end": "2025-07-31",
+  "instant": null,
+  "decimals": -3
+ },
+ {
+  "concept": "us-gaap:NetIncomeLossAttributableToNoncontrollingInterest",
+  "value": -323000.0,
+  "unit": "usd",
+  "start": "2024-05-01",
+  "end": "2024-07-31",
+  "instant": null,
+  "decimals": -3
+ },
+ {
+  "concept": "us-gaap:NetIncomeLossAttributableToNoncontrollingInterest",
+  "value": -756000.0,
+  "unit": "usd",
+  "start": "2025-02-01",
+  "end": "2025-07-31",
+  "instant": null,
+  "decimals": -3
+ },
+ {
+  "concept": "us-gaap:NetIncomeLossAttributableToNoncontrollingInterest",
+  "value": 3121000.0,
+  "unit": "usd",
+  "start": "2024-02-01",
+  "end": "2024-07-31",
+  "instant": null,
+  "decimals": -3
+ },
+ {
+  "concept": "us-gaap:NetCashProvidedByUsedInOperatingActivities",
+  "value": 716939000.0,
+  "unit": "usd",
+  "start": "2025-02-01",
+  "end": "2025-07-31",
+  "instant": null,
+  "decimals": -3
+ },
+ {
+  "concept": "us-gaap:NetCashProvidedByUsedInOperatingActivities",
+  "value": 709869000.0,
+  "unit": "usd",
+  "start": "2024-02-01",
+  "end": "2024-07-31",
+  "instant": null,
+  "decimals": -3
+ },
+ {
+  "concept": "us-gaap:PaymentsToAcquirePropertyPlantAndEquipment",
+  "value": 116248000.0,
+  "unit": "usd",
+  "start": "2025-02-01",
+  "end": "2025-07-31",
+  "instant": null,
+  "decimals": -3
+ },
+ {
+  "concept": "us-gaap:PaymentsToAcquirePropertyPlantAndEquipment",
+  "value": 88937000.0,
+  "unit": "usd",
+  "start": "2024-02-01",
+  "end": "2024-07-31",
+  "instant": null,
+  "decimals": -3
+ },
+ {
+  "concept": "us-gaap:CashAndCashEquivalentsAtCarryingValue",
+  "value": 4972436000.0,
+  "unit": "usd",
+  "start": null,
+  "end": null,
+  "instant": "2025-07-31",
+  "decimals": -3
+ },
+ {
+  "concept": "us-gaap:CashAndCashEquivalentsAtCarryingValue",
+  "value": 4038536000.0,
+  "unit": "usd",
+  "start": null,
+  "end": null,
+  "instant": "2024-07-31",
+  "decimals": -3
+ },
+ {
+  "concept": "us-gaap:RevenueFromContractWithCustomerIncludingAssessedTax",
+  "value": 1168952000.0,
+  "unit": "usd",
+  "start": "2025-05-01",
+  "end": "2025-07-31",
+  "instant": null,
+  "decimals": -3
+ },
+ {
+  "concept": "us-gaap:RevenueFromContractWithCustomerIncludingAssessedTax",
+  "value": 963872000.0,
+  "unit": "usd",
+  "start": "2024-05-01",
+  "end": "2024-07-31",
+  "instant": null,
+  "decimals": -3
+ },
+ {
+  "concept": "us-gaap:RevenueFromContractWithCustomerIncludingAssessedTax",
+  "value": 2272386000.0,
+  "unit": "usd",
+  "start": "2025-02-01",
+  "end": "2025-07-31",
+  "instant": null,
+  "decimals": -3
+ },
+ {
+  "concept": "us-gaap:RevenueFromContractWithCustomerIncludingAssessedTax",
+  "value": 1884908000.0,
+  "unit": "usd",
+  "start": "2024-02-01",
+  "end": "2024-07-31",
+  "instant": null,
+  "decimals": -3
+ },
+ {
+  "concept": "us-gaap:ContractWithCustomerLiabilityRevenueRecognized",
+  "value": 1009800000.0,
+  "unit": "usd",
+  "start": "2025-05-01",
+  "end": "2025-07-31",
+  "instant": null,
+  "decimals": -5
+ },
+ {
+  "concept": "us-gaap:ContractWithCustomerLiabilityRevenueRecognized",
+  "value": 843400000.0,
+  "unit": "usd",
+  "start": "2024-05-01",
+  "end": "2024-07-31",
+  "instant": null,
+  "decimals": -5
+ },
+ {
+  "concept": "us-gaap:ContractWithCustomerLiabilityRevenueRecognized",
+  "value": 1722100000.0,
+  "unit": "usd",
+  "start": "2025-02-01",
+  "end": "2025-07-31",
+  "instant": null,
+  "decimals": -5
+ },
+ {
+  "concept": "us-gaap:ContractWithCustomerLiabilityRevenueRecognized",
+  "value": 1456500000.0,
+  "unit": "usd",
+  "start": "2024-02-01",
+  "end": "2024-07-31",
+  "instant": null,
+  "decimals": -5
+ },
+ {
+  "concept": "us-gaap:ContractWithCustomerLiability",
+  "value": 3771395000.0,
+  "unit": "usd",
+  "start": null,
+  "end": null,
+  "instant": "2025-04-30",
+  "decimals": -3
+ },
+ {
+  "concept": "us-gaap:ContractWithCustomerLiability",
+  "value": 3069379000.0,
+  "unit": "usd",
+  "start": null,
+  "end": null,
+  "instant": "2024-04-30",
+  "decimals": -3
+ },
+ {
+  "concept": "us-gaap:ContractWithCustomerLiability",
+  "value": 3728677000.0,
+  "unit": "usd",
+  "start": null,
+  "end": null,
+  "instant": "2025-01-31",
+  "decimals": -3
+ },
+ {
+  "concept": "us-gaap:ContractWithCustomerLiability",
+  "value": 3054099000.0,
+  "unit": "usd",
+  "start": null,
+  "end": null,
+  "instant": "2024-01-31",
+  "decimals": -3
+ },
+ {
+  "concept": "us-gaap:ContractWithCustomerLiability",
+  "value": 3834857000.0,
+  "unit": "usd",
+  "start": null,
+  "end": null,
+  "instant": "2025-07-31",
+  "decimals": -3
+ },
+ {
+  "concept": "us-gaap:ContractWithCustomerLiability",
+  "value": 3093197000.0,
+  "unit": "usd",
+  "start": null,
+  "end": null,
+  "instant": "2024-07-31",
+  "decimals": -3
+ },
+ {
+  "concept": "us-gaap:RevenueRemainingPerformanceObligation",
+  "value": 7200000000.0,
+  "unit": "usd",
+  "start": null,
+  "end": null,
+  "instant": "2025-07-31",
+  "decimals": -8
+ },
+ {
+  "concept": "us-gaap:NetIncomeLoss",
+  "value": -77675000.0,
+  "unit": "usd",
+  "start": "2025-05-01",
+  "end": "2025-07-31",
+  "instant": null,
+  "decimals": -3
+ },
+ {
+  "concept": "us-gaap:NetIncomeLoss",
+  "value": 47013000.0,
+  "unit": "usd",
+  "start": "2024-05-01",
+  "end": "2024-07-31",
+  "instant": null,
+  "decimals": -3
+ },
+ {
+  "concept": "us-gaap:NetIncomeLoss",
+  "value": -187882000.0,
+  "unit": "usd",
+  "start": "2025-02-01",
+  "end": "2025-07-31",
+  "instant": null,
+  "decimals": -3
+ },
+ {
+  "concept": "us-gaap:NetIncomeLoss",
+  "value": 89833000.0,
+  "unit": "usd",
+  "start": "2024-02-01",
+  "end": "2024-07-31",
+  "instant": null,
+  "decimals": -3
+ }
+]

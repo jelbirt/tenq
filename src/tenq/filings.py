@@ -1,0 +1,175 @@
+"""Saved filings on disk: text with stable passage ids, tagged facts, metadata.
+
+Layout under a data root (default ./data/filings):
+
+    <TICKER>/<accession>/meta.json   form, dates, company
+    <TICKER>/<accession>/facts.json  undimensioned numeric XBRL facts
+    <TICKER>/text/<doc>.txt          normalised filing text, one file per filing
+
+Text files sit together in one folder per ticker so a search index over that
+folder returns paths that name the filing. A passage is a run of non-blank
+lines (capped at MAX_PASSAGE_LINES); its id is "<doc>:<first line>", 1-based,
+so an id is also a file:line a reader can open.
+"""
+
+from __future__ import annotations
+
+import json
+import re
+from dataclasses import asdict, dataclass
+from pathlib import Path
+
+MAX_PASSAGE_LINES = 40
+PASSAGE_ID = re.compile(
+    r"^(?P<doc>[A-Z][A-Z0-9.\-]*-[0-9]{10}-[0-9]{2}-[0-9]{6}):(?P<line>[0-9]+)$", re.ASCII
+)
+
+
+@dataclass(frozen=True)
+class FilingMeta:
+    ticker: str
+    cik: int
+    company: str
+    form: str  # "10-Q" or "10-K"
+    accession: str  # "0001535527-26-000031"
+    filed: str  # ISO date the filing was accepted
+    period: str  # ISO date the reporting period ends
+    url: str
+
+    @property
+    def doc(self) -> str:
+        """The text file stem and passage-id prefix, e.g. CRWD-0001535527-26-000031."""
+        return f"{self.ticker}-{self.accession}"
+
+
+@dataclass(frozen=True)
+class Fact:
+    concept: str  # "us-gaap:NetCashProvidedByUsedInOperatingActivities"
+    value: float
+    unit: str
+    start: str | None  # duration facts carry start and end
+    end: str | None
+    instant: str | None  # instant (balance sheet) facts carry only this
+    decimals: int | None
+
+
+@dataclass(frozen=True)
+class Passage:
+    id: str
+    doc: str
+    line: int  # first line, 1-based
+    text: str
+
+
+def normalise_text(text: str) -> str:
+    """Deterministic line layout: trailing spaces stripped, blank runs collapsed.
+
+    The same filing must always produce the same lines, or passage ids saved in
+    one run would point at different text in the next.
+    """
+    out: list[str] = []
+    for raw in text.replace("\r\n", "\n").replace("\r", "\n").split("\n"):
+        line = raw.rstrip()
+        if not line and (not out or not out[-1]):
+            continue
+        out.append(line)
+    while out and not out[-1]:
+        out.pop()
+    return "\n".join(out) + "\n"
+
+
+def split_passages(doc: str, text: str) -> list[Passage]:
+    passages: list[Passage] = []
+    block: list[str] = []
+    start = 0
+
+    def flush() -> None:
+        if block:
+            passages.append(Passage(f"{doc}:{start}", doc, start, "\n".join(block)))
+            block.clear()
+
+    for n, line in enumerate(text.split("\n"), start=1):
+        if not line.strip():
+            flush()
+            continue
+        if not block or len(block) >= MAX_PASSAGE_LINES:
+            flush()
+            start = n
+        block.append(line)
+    flush()
+    return passages
+
+
+class FilingStore:
+    def __init__(self, root: Path) -> None:
+        self.root = root
+
+    def text_dir(self, ticker: str) -> Path:
+        return self.root / ticker / "text"
+
+    def _dir(self, ticker: str, accession: str) -> Path:
+        return self.root / ticker / accession
+
+    def has(self, ticker: str, accession: str) -> bool:
+        return (self._dir(ticker, accession) / "meta.json").exists()
+
+    def save(self, meta: FilingMeta, text: str, facts: list[Fact]) -> None:
+        d = self._dir(meta.ticker, meta.accession)
+        d.mkdir(parents=True, exist_ok=True)
+        self.text_dir(meta.ticker).mkdir(parents=True, exist_ok=True)
+        (self.text_dir(meta.ticker) / f"{meta.doc}.txt").write_text(normalise_text(text))
+        (d / "facts.json").write_text(json.dumps([asdict(f) for f in facts], indent=1) + "\n")
+        # meta last: has() keys on it, so a crash mid-save leaves no half filing
+        (d / "meta.json").write_text(json.dumps(asdict(meta), indent=1) + "\n")
+
+    def filings(self, ticker: str) -> list[FilingMeta]:
+        """Saved filings for a ticker, newest period first."""
+        metas = [
+            FilingMeta(**json.loads(p.read_text()))
+            for p in (self.root / ticker).glob("*/meta.json")
+        ]
+        return sorted(metas, key=lambda m: (m.period, m.filed), reverse=True)
+
+    def facts(self, meta: FilingMeta) -> list[Fact]:
+        raw = json.loads((self._dir(meta.ticker, meta.accession) / "facts.json").read_text())
+        return [Fact(**r) for r in raw]
+
+    def text(self, meta: FilingMeta) -> str:
+        return (self.text_dir(meta.ticker) / f"{meta.doc}.txt").read_text()
+
+    def passages(self, meta: FilingMeta) -> list[Passage]:
+        return split_passages(meta.doc, self.text(meta))
+
+    def _doc_path(self, doc: str) -> Path | None:
+        """A saved filing's text file, or None. `doc` comes from the model or a
+        search hit, so the resolved path must stay inside the store."""
+        ticker = doc.rsplit("-", 3)[0]
+        path = (self.text_dir(ticker) / f"{doc}.txt").resolve()
+        if not path.is_relative_to(self.root.resolve()) or not path.is_file():
+            return None
+        return path
+
+    def passage(self, passage_id: str) -> Passage | None:
+        """The passage with this exact id, or None. Ids come from the model, so
+        anything that does not parse or does not exist is simply not found."""
+        m = PASSAGE_ID.match(passage_id.strip())
+        if not m:
+            return None
+        doc = m["doc"]
+        path = self._doc_path(doc)
+        if path is None:
+            return None
+        for p in split_passages(doc, path.read_text()):
+            if p.id == passage_id.strip():
+                return p
+        return None
+
+    def passage_at(self, doc: str, line: int) -> Passage | None:
+        """The passage containing a file:line hit, as returned by text search."""
+        path = self._doc_path(doc)
+        if path is None:
+            return None
+        for p in split_passages(doc, path.read_text()):
+            if p.line <= line < p.line + p.text.count("\n") + 1:
+                return p
+        return None
