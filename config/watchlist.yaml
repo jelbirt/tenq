@@ -1,0 +1,25 @@
+# The 20 software names, seeded from ticker-sentinel's config/watchlist.yaml
+# universe on 2026-11-03. Slice 1 briefs only the `active` names; the rest are
+# listed so slice 3 can widen coverage without a config migration.
+active: [CRWD]
+watchlist:
+  - CRWD
+  - DDOG
+  - SNOW
+  - NET
+  - ZS
+  - MDB
+  - TEAM
+  - PANW
+  - SHOP
+  - RBRK
+  - FTNT
+  - OKTA
+  - DT
+  - GTLB
+  - IOT
+  - MNDY
+  - HUBS
+  - NOW
+  - PLTR
+  - ADSK

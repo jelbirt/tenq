@@ -1,0 +1,18 @@
+name: ci
+on:
+  pull_request:
+  push:
+    branches: [main]
+permissions:
+  contents: read
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with: {python-version: "3.12", enable-cache: true}
+      # No extra checks here: the green bar is scripts/checks.sh alone, so a
+      # check added to this file instead would not gate local commits.
+      - name: green bar
+        run: scripts/checks.sh
