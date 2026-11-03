@@ -16,7 +16,7 @@ from tenq.filings import Fact, FilingMeta, FilingStore, Passage
 from tenq.llm import AgentRun, ToolCall
 from tenq.metrics import metrics_for
 from tenq.run import brief_filing, briefed, record_path, run_ticker
-from tenq.trace import build_batch, send_trace
+from tenq.trace import build_payload, send_trace
 
 LATEST = "CRWD-0001535527-26-000031"
 GOOD = Claim(
@@ -133,15 +133,25 @@ def test_trace_batch_has_trace_steps_generation_and_tools(
         meta, store, tmp_path, "http://x", prompt=PROMPT,
         briefer=_briefer([GOOD]), sender=Outbox(), tracer=_no_trace,
     )  # fmt: skip
-    batch = build_batch(rec)
-    kinds = [e["type"] for e in batch]
-    assert kinds[0] == "trace-create" and "generation-create" in kinds
-    gen = next(e["body"] for e in batch if e["type"] == "generation-create")
-    assert gen["usageDetails"]["output_tokens"] == 50
-    assert gen["metadata"]["prompt_version"] == "brief-test"
-    tool = next(e["body"] for e in batch if e["body"].get("name") == "tool mcp__tenq__get_metrics")
-    assert tool["parentObservationId"] == gen["id"]
-    assert {e["body"]["traceId"] for e in batch[1:]} == {rec["run_id"]}
+    spans = build_payload(rec)["resourceSpans"][0]["scopeSpans"][0]["spans"]
+
+    def attrs(span: dict[str, Any]) -> dict[str, Any]:
+        return {a["key"]: next(iter(a["value"].values())) for a in span["attributes"]}
+
+    root = spans[0]
+    assert root["name"] == "brief" and "parentSpanId" not in root
+    assert {s["traceId"] for s in spans} == {root["traceId"]} and len(root["traceId"]) == 32
+    gen = next(s for s in spans if s["name"] == "claude -p")
+    g = attrs(gen)
+    assert g["langfuse.observation.type"] == "generation"
+    assert json.loads(g["langfuse.observation.usage_details"])["output"] == 50
+    assert g["langfuse.observation.metadata.prompt_version"] == "brief-test"
+    assert g["langfuse.trace.name"] == "brief"  # trace attributes on every span
+    assert g["langfuse.trace.metadata.run_id"] == rec["run_id"]  # the dashed form, searchable
+    tool = next(s for s in spans if s["name"] == "tool mcp__tenq__get_metrics")
+    assert tool["parentSpanId"] == gen["spanId"] and gen["parentSpanId"] == root["spanId"]
+    assert attrs(tool)["langfuse.observation.type"] == "tool"
+    assert all(int(s["endTimeUnixNano"]) >= int(s["startTimeUnixNano"]) for s in spans)
 
 
 def _boom(url: str, headers: dict[str, str], body: bytes) -> tuple[int, str]:
@@ -162,7 +172,7 @@ def test_send_trace_fails_open(
     monkeypatch.setenv("LANGFUSE_SECRET_KEY", "sk")
     monkeypatch.setenv("LANGFUSE_HOST", "https://lf.example")
     assert send_trace(rec, post=_boom) == (False, "trace failed: OSError")
-    assert send_trace({"run_id": "r"}, post=_boom) == (False, "trace failed: KeyError")
+    assert send_trace({"run_id": "r"}, post=_boom) == (False, "trace failed: ValueError")
 
 
 SECRETS = {
@@ -185,7 +195,7 @@ def test_no_secret_reaches_the_public_record_or_the_trace(
 
     def post(url: str, headers: dict[str, str], body: bytes) -> tuple[int, str]:
         posted.append(body)
-        return 207, json.dumps({"successes": [], "errors": []})
+        return 200, "{}"
 
     meta = store.filings("CRWD")[0]
     rec = brief_filing(
@@ -234,18 +244,25 @@ def test_send_trace_posts_and_reads_partial_errors(
     seen: dict[str, Any] = {}
 
     def post(url: str, headers: dict[str, str], body: bytes) -> tuple[int, str]:
-        seen.update(url=url, auth=headers["Authorization"], batch=json.loads(body)["batch"])
-        return 207, json.dumps({"successes": [], "errors": [{"id": "x", "status": 400}]})
+        seen.update(url=url, headers=headers, payload=json.loads(body))
+        return 200, json.dumps({"partialSuccess": {"rejectedSpans": 2, "errorMessage": "bad"}})
 
     ok, status = send_trace(rec, post=post)
-    assert seen["url"] == "https://lf.example/api/public/ingestion"
-    assert seen["auth"].startswith("Basic ") and "sk" not in status
-    assert not ok and "1 error" in status
+    assert seen["url"] == "https://lf.example/api/public/otel/v1/traces"
+    assert seen["headers"]["Authorization"].startswith("Basic ") and "sk" not in status
+    assert seen["headers"]["x-langfuse-ingestion-version"] == "4"
+    assert "resourceSpans" in seen["payload"]
+    assert not ok and "2 span(s) rejected" in status
 
     def ok_post(url: str, headers: dict[str, str], body: bytes) -> tuple[int, str]:
-        return 207, json.dumps({"successes": [{"id": "x"}], "errors": []})
+        return 200, "{}"
 
     assert send_trace(rec, post=ok_post)[0] is True
+
+    def http_error(url: str, headers: dict[str, str], body: bytes) -> tuple[int, str]:
+        return 401, "unauthorized"
+
+    assert send_trace(rec, post=http_error)[0] is False
 
 
 @contextmanager
