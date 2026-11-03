@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import re
 import shutil
 import socket
@@ -26,6 +25,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from tenq.env import MODEL_ENV, PRIVATE_ENV, scrubbed
 from tenq.filings import FilingStore
 
 START_TIMEOUT_S = 30
@@ -125,7 +125,7 @@ class Xerj:
             capture_output=True,
             text=True,
             timeout=INDEX_TIMEOUT_S,
-            env={**os.environ, **XERJ_ENV},
+            env={**scrubbed(PRIVATE_ENV + MODEL_ENV), **XERJ_ENV},
         )
         if done.returncode not in INDEX_OK:
             tail = (done.stderr or done.stdout).strip().splitlines()[-5:]
@@ -174,7 +174,7 @@ def xerj_node(port: int | None = None) -> Iterator[str]:
              "--port", str(port)],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
-            env={**os.environ, **XERJ_ENV},
+            env={**scrubbed(PRIVATE_ENV + MODEL_ENV), **XERJ_ENV},
         )  # fmt: skip
         try:
             deadline = time.monotonic() + START_TIMEOUT_S

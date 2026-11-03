@@ -24,21 +24,22 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 import subprocess
 import tempfile
+import threading
 import time
+from collections.abc import Sequence
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
+
+from tenq.env import PRIVATE_ENV, scrubbed
 
 log = logging.getLogger(__name__)
 
 DEFAULT_MODEL = "opus"
 TIMEOUT_S = 900
 MAX_OUTPUT_TOKENS = "16000"
-# the run's other secrets stay out of the model's process and its MCP server
-PRIVATE_ENV = ("SMTP_", "LANGFUSE_", "RECIPIENT_EMAILS", "EDGAR_IDENTITY")
 TOOL_OUTPUT_CHARS = 2000  # per tool result kept in the run record
 
 
@@ -49,6 +50,8 @@ class ToolCall:
     input: dict[str, Any]
     output: str = ""
     is_error: bool = False
+    at: float | None = None  # when the call reached the stream
+    done_at: float | None = None  # when its result did
 
 
 @dataclass
@@ -85,13 +88,18 @@ def _blocks(event: dict[str, Any]) -> list[dict[str, Any]]:
     return [b for b in content if isinstance(b, dict)] if isinstance(content, list) else []
 
 
-def parse_stream(stdout: str, run: AgentRun) -> None:
-    """Fill `run` from claude's stream-json output (one JSON event per line)."""
+def parse_stream(stdout: str, run: AgentRun, times: Sequence[float] | None = None) -> None:
+    """Fill `run` from claude's stream-json output (one JSON event per line).
+
+    `times`, when given, holds the arrival time of each line; tool calls take
+    their start and end times from it.
+    """
     chunks: list[str] = []
     calls: dict[str, ToolCall] = {}
     result: dict[str, Any] | None = None
     saw_init = False
-    for line in stdout.splitlines():
+    for i, line in enumerate(stdout.splitlines()):
+        at = times[i] if times is not None and i < len(times) else None
         try:
             event = json.loads(line)
         except ValueError:
@@ -111,7 +119,9 @@ def parse_stream(stdout: str, run: AgentRun) -> None:
                 if b.get("type") == "text" and b.get("text"):
                     chunks.append(b["text"])
                 elif b.get("type") == "tool_use":
-                    call = ToolCall(str(b.get("id")), str(b.get("name")), b.get("input") or {})
+                    call = ToolCall(
+                        str(b.get("id")), str(b.get("name")), b.get("input") or {}, at=at
+                    )
                     calls[call.id] = call
                     run.tool_calls.append(call)
         elif kind == "user":
@@ -121,6 +131,7 @@ def parse_stream(stdout: str, run: AgentRun) -> None:
                     if done is not None:
                         done.output = _content_text(b.get("content"))[:TOOL_OUTPUT_CHARS]
                         done.is_error = bool(b.get("is_error"))
+                        done.done_at = at
         elif kind == "result":
             result = event
     if result is None:
@@ -141,6 +152,58 @@ def parse_stream(stdout: str, run: AgentRun) -> None:
         run.error = "empty response"
         return
     run.text = text
+
+
+def _run_streaming(
+    cmd: list[str], prompt: str, env: dict[str, str], cwd: str, timeout: int
+) -> tuple[str, list[float], str, int]:
+    """Run `cmd`, timestamping each stdout line as it arrives.
+
+    Returns (stdout, arrival time per line, stderr, exit code); raises
+    TimeoutExpired after killing the process.
+    """
+    proc = subprocess.Popen(
+        cmd,
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        env=env,
+        cwd=cwd,
+    )
+    lines: list[str] = []
+    times: list[float] = []
+    err: list[str] = []
+
+    def read_out() -> None:
+        assert proc.stdout is not None
+        for line in proc.stdout:
+            times.append(time.time())
+            lines.append(line)
+
+    def read_err() -> None:
+        assert proc.stderr is not None
+        err.append(proc.stderr.read())
+
+    readers = [threading.Thread(target=f, daemon=True) for f in (read_out, read_err)]
+    for r in readers:
+        r.start()
+    try:
+        assert proc.stdin is not None
+        try:
+            proc.stdin.write(prompt)
+            proc.stdin.close()
+        except BrokenPipeError:  # it exited before reading; its exit code says why
+            pass
+        code = proc.wait(timeout=timeout)
+    except BaseException:
+        proc.kill()
+        proc.wait()
+        raise
+    finally:
+        for r in readers:
+            r.join(timeout=5)
+    return "".join(lines), times, "".join(err), code
 
 
 def call_claude(
@@ -168,18 +231,11 @@ def call_claude(
             "--no-session-persistence",
             "--system-prompt", system,
         ]  # fmt: skip
-        env = {k: v for k, v in os.environ.items() if not k.startswith(PRIVATE_ENV)}
+        # the run's other secrets stay out of the model's process and its MCP server
+        env = scrubbed(PRIVATE_ENV)
         env["CLAUDE_CODE_MAX_OUTPUT_TOKENS"] = MAX_OUTPUT_TOKENS
         try:
-            done = subprocess.run(
-                cmd,
-                input=prompt,
-                capture_output=True,
-                text=True,
-                timeout=timeout,
-                env=env,
-                cwd=cwd,
-            )
+            stdout, times, stderr, code = _run_streaming(cmd, prompt, env, cwd, timeout)
         except FileNotFoundError:
             run.error = "claude CLI not installed"
         except subprocess.TimeoutExpired:
@@ -188,16 +244,14 @@ def call_claude(
             run.error = f"{type(exc).__name__}: {exc}"
         else:
             try:
-                parse_stream(done.stdout, run)
+                parse_stream(stdout, run, times)
             except Exception as exc:  # an unexpected stream shape must not break a run
                 run.error = f"unreadable stream: {type(exc).__name__}"
-            if done.returncode != 0 and run.error is None:
-                run.error = f"exit {done.returncode}"
-            if run.error and done.returncode != 0:
+            if code != 0 and run.error is None:
+                run.error = f"exit {code}"
+            if run.error and code != 0:
                 # the CLI prints auth/config errors on stdout as well as stderr
-                log.warning(
-                    "claude exit %s: stderr=%r", done.returncode, (done.stderr or "")[-300:]
-                )
+                log.warning("claude exit %s: stderr=%r", code, stderr[-300:])
     run.ended_at = time.time()
     used = {c.name for c in run.tool_calls}
     extra = sorted((set(run.tools_offered) | used) - set(allowed_tools))

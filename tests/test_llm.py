@@ -164,3 +164,30 @@ def test_failures_fail_open(fake_claude: Path, monkeypatch: pytest.MonkeyPatch) 
     monkeypatch.setenv("PATH", "/nonexistent")
     run = _call()
     assert run.text is None and run.error == "claude CLI not installed"
+
+
+def test_tool_calls_take_their_times_from_the_stream() -> None:
+    run = AgentRun(model="opus")
+    lines = _events().splitlines()
+    parse_stream("\n".join(lines), run, [10.0 + i for i in range(len(lines))])
+    (call,) = run.tool_calls
+    assert (call.at, call.done_at) == (11.0, 12.0)
+
+
+def test_streamed_lines_are_timestamped_as_they_arrive(fake_claude: Path) -> None:
+    fake_claude.write_text(_events())
+    run = _call()
+    (call,) = run.tool_calls
+    assert call.at is not None and call.done_at is not None
+    assert run.started_at <= call.at <= call.done_at <= run.ended_at
+
+
+def test_xerj_sees_none_of_the_run_secrets(monkeypatch: pytest.MonkeyPatch) -> None:
+    from tenq.env import MODEL_ENV, PRIVATE_ENV, scrubbed
+
+    for k in ("SMTP_PASS", "LANGFUSE_SECRET_KEY", "RECIPIENT_EMAILS", "CLAUDE_CODE_OAUTH_TOKEN"):
+        monkeypatch.setenv(k, "x")
+    env = scrubbed(PRIVATE_ENV + MODEL_ENV)
+    assert "PATH" in env
+    assert not {"SMTP_PASS", "LANGFUSE_SECRET_KEY", "RECIPIENT_EMAILS"} & env.keys()
+    assert "CLAUDE_CODE_OAUTH_TOKEN" not in env
