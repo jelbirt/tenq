@@ -164,6 +164,17 @@ class FilingStore:
                 return p
         return None
 
+    def passages_between(self, doc: str, first: int, last: int) -> list[Passage]:
+        """Passages overlapping lines first..last (inclusive), in file order."""
+        path = self._doc_path(doc)
+        if path is None:
+            return []
+        return [
+            p
+            for p in split_passages(doc, path.read_text())
+            if p.line <= last and first < p.line + p.text.count("\n") + 1
+        ]
+
     def passage_at(self, doc: str, line: int) -> Passage | None:
         """The passage containing a file:line hit, as returned by text search."""
         path = self._doc_path(doc)
