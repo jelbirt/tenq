@@ -4,7 +4,7 @@ Personal SEC filings analyst: on each new 10-Q/10-K from the watchlist it emails
 what-changed brief, every claim cited to a filing passage and every number checked in code
 against tagged XBRL data. Public repo; credentials and recipients live only in Actions secrets.
 Not investment advice. The approved spec and plan live outside the repo, in
-`~/projects/tenq-plan/` (SPEC.md, PLAN.md revision 1).
+`~/projects/tenq-plan/` (SPEC.md, PLAN.md revision 2).
 
 ## Commands
 - Install: `uv sync` (the committed `uv.lock` is the pin set; `--locked` everywhere else)

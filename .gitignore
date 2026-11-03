@@ -219,3 +219,5 @@ __marimo__/
 # Streamlit
 .streamlit/secrets.toml
 /data/
+# FinanceBench is CC BY-NC: never commit a copy, wherever it was downloaded
+**/data/financebench/
