@@ -4,9 +4,10 @@
     python -m tenq.run --backfill 4         # also brief the last 4 filings without a record
     python -m tenq.run --accession <acc>    # brief one filing (again)
 
-A filing counts as briefed once runs/<TICKER>/<accession>.json exists; the
-daily workflow commits those records, so they are both the permanent run log
-and the state that stops a filing being emailed twice.
+A filing counts as briefed once runs/<TICKER>/<accession>.json records a sent
+email; a re-run that sends nothing writes <accession>.rerun-<run_id>.json
+beside it instead. The daily workflow commits those records, so they are both
+the permanent run log and the state that stops a filing being emailed twice.
 
 Every step degrades instead of crashing: no xerj or no Claude gives a
 numbers-only email; a failed email or trace is recorded and the exit code is
@@ -137,6 +138,10 @@ def brief_filing(
     # still leave the record that stops the next run sending it again
     record["trace"] = {"sent": False, "status": "trace pending"}
     path = record_path(runs, meta)
+    if not record["email"]["sent"] and briefed(path):
+        # a re-run that sent nothing (email off, or SMTP down) must not replace the
+        # record of an email that went out, or the next run would send it again
+        path = path.with_name(f"{meta.accession}.rerun-{run_id}.json")
     _write(path, record)
     traced, trace_status = tracer(record)
     record["trace"] = {"sent": traced, "status": trace_status}

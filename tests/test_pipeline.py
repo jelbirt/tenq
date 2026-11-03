@@ -323,6 +323,29 @@ def test_a_filing_whose_email_did_not_go_out_is_tried_again(
     assert briefed(record_path(tmp_path, store.filings("CRWD")[0]))
 
 
+@pytest.mark.parametrize("email_on, ok", [(False, True), (True, False)])
+def test_a_rerun_that_sent_nothing_keeps_the_sent_record(
+    store: FilingStore, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, email_on: bool, ok: bool
+) -> None:
+    monkeypatch.setattr("tenq.run.Xerj.index", lambda self, ticker, state: None)
+    kw: dict[str, Any] = dict(prompt=PROMPT, briefer=_briefer([GOOD]), tracer=_no_trace)
+    (first,) = run_ticker("CRWD", StoreSource(store), store, tmp_path, node=_fake_node,
+                          sender=Outbox(), **kw)  # fmt: skip
+    meta = store.filings("CRWD")[0]
+    (rerun,) = run_ticker(
+        "CRWD", StoreSource(store), store, tmp_path, node=_fake_node, accession=meta.accession,
+        sender=Outbox(ok=ok), email=email_on, **kw,
+    )  # fmt: skip
+    assert rerun["email"]["sent"] is False
+    saved = json.loads(record_path(tmp_path, meta).read_text())
+    assert saved["run_id"] == first["run_id"] and briefed(record_path(tmp_path, meta))
+    side = tmp_path / "CRWD" / f"{meta.accession}.rerun-{rerun['run_id']}.json"
+    assert json.loads(side.read_text())["run_id"] == rerun["run_id"]
+    outbox = Outbox()
+    assert run_ticker("CRWD", StoreSource(store), store, tmp_path, node=_fake_node,
+                      sender=outbox, **kw) == [] and outbox.sent == []  # fmt: skip
+
+
 def test_an_unreadable_record_does_not_count_as_briefed(tmp_path: Path) -> None:
     (tmp_path / "r.json").write_text("{not json")
     (tmp_path / "s.json").write_text('{"email": "sent"}')
