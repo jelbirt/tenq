@@ -35,6 +35,9 @@ def _rev(text: str, *refs: NumberRef, pid: str = PID) -> Claim:
         "Revenue grew 25.8% from a year earlier.",
         "Revenue grew 25.83 percent year over year.",
         "Revenue rose about 26% in fiscal 2027, as the 10-Q describes.",
+        # period labels are wording, not figures (the first live brief lost a claim to this)
+        "Revenue grew 26%; over the six-month period cash came from customers.",
+        "Revenue grew 26%, as it did over the nine months ended last quarter.",
     ],
 )
 def test_a_true_rounded_claim_passes(store: FilingStore, table: MetricsTable, text: str) -> None:
@@ -143,6 +146,10 @@ def test_forms_are_not_figures_but_quarter_labels_are() -> None:
         # numbers in words or non-ASCII digit characters
         ("Revenue grew twenty-six percent; it doubled.", None),
         ("Revenue tripled, a threefold rise.", None),
+        ("Revenue grew 26%, six times the market's rate.", None),
+        ("Revenue doubled in six months.", None),
+        ("Revenue grew 26%; cash covers eighteen months of spending.", None),
+        ("Revenue grew 26% after six month-over-month gains.", None),
         ("Revenue grew 26% and \u00bd of it came from \u2460\u2461.", None),
         ("Revenue grew 26% \uff12\uff16.", None),
         ("Revenue grew 26% and topped a billion dollars.", None),

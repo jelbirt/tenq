@@ -70,6 +70,12 @@ YEAR_SPAN = 2  # bare years allowed within this many of the filing's year
 # a rounding this coarse ("$1 billion" for $1.47B) must still be close
 COARSE_REL_TOL = 0.05
 FORM_NAME = re.compile(r"\b10-[QK]\b", re.IGNORECASE)
+# a filing's own period wording ("the six-month period", "nine months ended") is
+# not a figure; other month counts ("a runway of eighteen months") still are
+PERIOD_LABEL = re.compile(
+    r"\b(?:three|six|nine|twelve)(?:-month|\s+months)\s+(?:periods?|ended|ending)\b",
+    re.IGNORECASE,
+)
 
 
 @dataclass(frozen=True)
@@ -197,7 +203,7 @@ def check_claim(
         why = check_declared(table, ref)
         if why:
             return why
-    odd = _uncheckable(FORM_NAME.sub(" ", claim.claim))
+    odd = _uncheckable(PERIOD_LABEL.sub(" ", FORM_NAME.sub(" ", claim.claim)))
     if odd is not None:
         return f"number {odd!r} in the text cannot be checked"
     # the text is checked against the tagged value, not the declared copy of it
