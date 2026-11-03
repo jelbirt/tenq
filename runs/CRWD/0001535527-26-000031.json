@@ -1,0 +1,278 @@
+{
+ "run_id": "fb19a401-3f90-4dd0-8318-46455de28aa7",
+ "started_at": 1793710932.2540545,
+ "ended_at": 1793710936.0881166,
+ "filing": {
+  "ticker": "CRWD",
+  "cik": 1535527,
+  "company": "CrowdStrike Holdings, Inc.",
+  "form": "10-Q",
+  "accession": "0001535527-26-000031",
+  "filed": "2026-08-27",
+  "period": "2026-07-31",
+  "url": "https://www.sec.gov/Archives/edgar/data/1535527/000153552726000031/0001535527-26-000031-index.html"
+ },
+ "mode": "numbers-only",
+ "model": "opus",
+ "prompt_version": "brief-v1",
+ "prompt_input": "Write the brief for CrowdStrike Holdings, Inc. (CRWD), 10-Q for the period ended 2026-07-31, accession 0001535527-26-000031.",
+ "metrics": {
+  "ticker": "CRWD",
+  "company": "CrowdStrike Holdings, Inc.",
+  "form": "10-Q",
+  "accession": "0001535527-26-000031",
+  "period": "2026-07-31",
+  "prior_period": "2026-04-30",
+  "year_ago_period": "2025-07-31",
+  "metrics": {
+   "revenue": {
+    "label": "Revenue",
+    "unit": "usd",
+    "current": 1470897000.0,
+    "prior_quarter": 1385629000.0,
+    "year_ago": 1168952000.0,
+    "qoq_change": 85268000.0,
+    "qoq_pct": 0.06153739565208292,
+    "yoy_change": 301945000.0,
+    "yoy_pct": 0.25830401932671315
+   },
+   "gross_profit": {
+    "label": "Gross profit",
+    "unit": "usd",
+    "current": 1096895000.0,
+    "prior_quarter": 1043352000.0,
+    "year_ago": 860401000.0,
+    "qoq_change": 53543000.0,
+    "qoq_pct": 0.05131825117505885,
+    "yoy_change": 236494000.0,
+    "yoy_pct": 0.274864859524803
+   },
+   "operating_income": {
+    "label": "Operating income",
+    "unit": "usd",
+    "current": -33232000.0,
+    "prior_quarter": -30600000.0,
+    "year_ago": -105457000.0,
+    "qoq_change": -2632000.0,
+    "qoq_pct": null,
+    "yoy_change": 72225000.0,
+    "yoy_pct": null
+   },
+   "net_income": {
+    "label": "Net income",
+    "unit": "usd",
+    "current": 5306000.0,
+    "prior_quarter": 27774000.0,
+    "year_ago": -70153000.0,
+    "qoq_change": -22468000.0,
+    "qoq_pct": -0.8089580182904875,
+    "yoy_change": 75459000.0,
+    "yoy_pct": null
+   },
+   "operating_cash_flow": {
+    "label": "Operating cash flow",
+    "unit": "usd",
+    "current": 530268000.0,
+    "prior_quarter": 590937000.0,
+    "year_ago": 332832000.0,
+    "qoq_change": -60669000.0,
+    "qoq_pct": -0.10266576640149458,
+    "yoy_change": 197436000.0,
+    "yoy_pct": 0.5932001730602827
+   },
+   "capex": {
+    "label": "Capital expenditures",
+    "unit": "usd",
+    "current": 124413000.0,
+    "prior_quarter": 97624000.0,
+    "year_ago": 30497000.0,
+    "qoq_change": 26789000.0,
+    "qoq_pct": 0.2744099811521757,
+    "yoy_change": 93916000.0,
+    "yoy_pct": 3.0795160179689804
+   },
+   "deferred_revenue_current": {
+    "label": "Deferred revenue, current",
+    "unit": "usd",
+    "current": 3497144000.0,
+    "prior_quarter": 3370233000.0,
+    "year_ago": 2781196000.0,
+    "qoq_change": 126911000.0,
+    "qoq_pct": 0.03765644689847853,
+    "yoy_change": 715948000.0,
+    "yoy_pct": 0.2574245037027236
+   },
+   "deferred_revenue_noncurrent": {
+    "label": "Deferred revenue, noncurrent",
+    "unit": "usd",
+    "current": 1345066000.0,
+    "prior_quarter": 1351960000.0,
+    "year_ago": 1053661000.0,
+    "qoq_change": -6894000.0,
+    "qoq_pct": -0.0050992632918133675,
+    "yoy_change": 291405000.0,
+    "yoy_pct": 0.2765642839585028
+   },
+   "cash": {
+    "label": "Cash and cash equivalents",
+    "unit": "usd",
+    "current": 5013847000.0,
+    "prior_quarter": 4552801000.0,
+    "year_ago": 4972436000.0,
+    "qoq_change": 461046000.0,
+    "qoq_pct": 0.10126645113634442,
+    "yoy_change": 41411000.0,
+    "yoy_pct": 0.008328111211486683
+   },
+   "free_cash_flow": {
+    "label": "Free cash flow (operating cash flow less capex)",
+    "unit": "usd",
+    "current": 405855000.0,
+    "prior_quarter": 493313000.0,
+    "year_ago": 302335000.0,
+    "qoq_change": -87458000.0,
+    "qoq_pct": -0.17728703683057206,
+    "yoy_change": 103520000.0,
+    "yoy_pct": 0.34240164056427475
+   },
+   "deferred_revenue": {
+    "label": "Deferred revenue, total",
+    "unit": "usd",
+    "current": 4842210000.0,
+    "prior_quarter": 4722193000.0,
+    "year_ago": 3834857000.0,
+    "qoq_change": 120017000.0,
+    "qoq_pct": 0.025415521983112508,
+    "yoy_change": 1007353000.0,
+    "yoy_pct": 0.2626833282179753
+   },
+   "gross_margin": {
+    "label": "Gross margin",
+    "unit": "ratio",
+    "current": 0.7457320261037993,
+    "prior_quarter": 0.7529807762395273,
+    "year_ago": 0.736044764883417,
+    "qoq_change": -0.00724875013572801,
+    "qoq_pct": null,
+    "yoy_change": 0.009687261220382326,
+    "yoy_pct": null
+   },
+   "operating_margin": {
+    "label": "Operating margin",
+    "unit": "ratio",
+    "current": -0.022593016370282895,
+    "prior_quarter": -0.022083833407066395,
+    "year_ago": -0.09021499599641389,
+    "qoq_change": -0.0005091829632165,
+    "qoq_pct": null,
+    "yoy_change": 0.06762197962613099,
+    "yoy_pct": null
+   }
+  }
+ },
+ "agent": {
+  "model": "opus",
+  "text": null,
+  "error": "error result: Failed to authenticate. API Error: 401 Invalid bearer token",
+  "tools_offered": [
+   "mcp__tenq__get_metrics",
+   "mcp__tenq__read_passage",
+   "mcp__tenq__search_filing"
+  ],
+  "tool_calls": [],
+  "usage": {
+   "output_tokens_details": {
+    "thinking_tokens": 0
+   },
+   "input_tokens": 0,
+   "cache_creation_input_tokens": 0,
+   "cache_read_input_tokens": 0,
+   "output_tokens": 0,
+   "server_tool_use": {
+    "web_search_requests": 0,
+    "web_fetch_requests": 0
+   },
+   "service_tier": "standard",
+   "cache_creation": {
+    "ephemeral_1h_input_tokens": 0,
+    "ephemeral_5m_input_tokens": 0
+   },
+   "inference_geo": "",
+   "iterations": [],
+   "speed": "standard",
+   "fallback_credit": null
+  },
+  "num_turns": 1,
+  "duration_ms": 1851,
+  "api_duration_ms": 0,
+  "resolved_model": "claude-opus-5-5",
+  "started_at": 1793710932.2639031,
+  "ended_at": 1793710936.0879009
+ },
+ "draft_error": "error result: Failed to authenticate. API Error: 401 Invalid bearer token",
+ "check": {
+  "kept": [],
+  "dropped": []
+ },
+ "email": {
+  "sent": false,
+  "status": "email off for this run",
+  "subject": "tenq: CRWD 10-Q for the quarter ended 2026-07-31: revenue +25.8% YoY"
+ },
+ "steps": [
+  {
+   "name": "fetch",
+   "start": 1793710924.984615,
+   "end": 1793710930.746837,
+   "output": {
+    "new": [
+     "0001535527-26-000031",
+     "0001535527-26-000025",
+     "0001535527-26-000010",
+     "0001535527-25-000033",
+     "0001535527-25-000025"
+    ]
+   },
+   "error": null
+  },
+  {
+   "name": "index",
+   "start": 1793710930.74735,
+   "end": 1793710932.2540176,
+   "output": {
+    "url": "http://127.0.0.1:33689"
+   },
+   "error": null
+  },
+  {
+   "name": "claude",
+   "start": 1793710932.263835,
+   "end": 1793710936.0879753,
+   "output": {
+    "claims": 0
+   },
+   "error": "error result: Failed to authenticate. API Error: 401 Invalid bearer token"
+  },
+  {
+   "name": "check",
+   "start": 1793710936.0879767,
+   "end": 1793710936.0879834,
+   "output": {
+    "kept": 0,
+    "dropped": []
+   },
+   "error": null
+  },
+  {
+   "name": "email",
+   "start": 1793710936.0881155,
+   "end": 1793710936.0881162,
+   "output": "email off for this run",
+   "error": null
+  }
+ ],
+ "trace": {
+  "sent": false,
+  "status": "trace rejected: HTTP 207, 7 error(s)"
+ }
+}
