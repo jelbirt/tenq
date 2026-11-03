@@ -38,6 +38,8 @@ def _rev(text: str, *refs: NumberRef, pid: str = PID) -> Claim:
         # period labels are wording, not figures (the first live brief lost a claim to this)
         "Revenue grew 26%; over the six-month period cash came from customers.",
         "Revenue grew 26%, as it did over the nine months ended last quarter.",
+        "Revenue grew 26%; for the first half of the year cash came from customers.",
+        "Revenue grew 26%, as it did in the second half of fiscal 2026.",
     ],
 )
 def test_a_true_rounded_claim_passes(store: FilingStore, table: MetricsTable, text: str) -> None:
@@ -150,6 +152,9 @@ def test_forms_are_not_figures_but_quarter_labels_are() -> None:
         ("Revenue doubled in six months.", None),
         ("Revenue grew 26%; cash covers eighteen months of spending.", None),
         ("Revenue grew 26% after six month-over-month gains.", None),
+        ("Revenue grew 26%; half of revenue came from new customers.", None),
+        ("Revenue grew 26% in the first half of the new regions.", None),
+        ("Revenue grew 26%; the first half of the year-over-year gain was new.", None),
         ("Revenue grew 26% and \u00bd of it came from \u2460\u2461.", None),
         ("Revenue grew 26% \uff12\uff16.", None),
         ("Revenue grew 26% and topped a billion dollars.", None),

@@ -70,10 +70,12 @@ YEAR_SPAN = 2  # bare years allowed within this many of the filing's year
 # a rounding this coarse ("$1 billion" for $1.47B) must still be close
 COARSE_REL_TOL = 0.05
 FORM_NAME = re.compile(r"\b10-[QK]\b", re.IGNORECASE)
-# a filing's own period wording ("the six-month period", "nine months ended") is
-# not a figure; other month counts ("a runway of eighteen months") still are
+# a filing's own period wording ("the six-month period", "nine months ended",
+# "the first half of the year") is not a figure; other month counts ("a runway
+# of eighteen months") and halves ("half of revenue") still are
 PERIOD_LABEL = re.compile(
-    r"\b(?:three|six|nine|twelve)(?:-month|\s+months)\s+(?:periods?|ended|ending)\b",
+    r"\b(?:three|six|nine|twelve)(?:-month|\s+months)\s+(?:periods?|ended|ending)\b"
+    r"|\b(?:first|second)\s+half\s+of\s+(?:the\s+)?(?:fiscal\s+)?(?:year\b(?!-)|20[0-9]{2}\b)",
     re.IGNORECASE,
 )
 
