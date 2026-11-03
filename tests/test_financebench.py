@@ -4,12 +4,15 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from pathlib import Path
+from typing import cast
 
 import pytest
 
 from tenq.financebench import (
     DOCUMENTS,
+    MANIFEST,
     QUESTIONS,
     Manifest,
     download,
@@ -181,9 +184,14 @@ def test_pdf_paths_round_trip_and_odd_ones_are_refused() -> None:
         {"commit": COMMIT, "files": {QUESTIONS: "A" * 64, DOCUMENTS: "a" * 64}},
         {"commit": COMMIT, "files": {DOCUMENTS: "a" * 64}},
         {"commit": COMMIT, "files": {QUESTIONS: "a" * 64, DOCUMENTS: "a" * 64, "x.pdf": "a" * 64}},
+        {"commit": COMMIT, "files": {QUESTIONS: "a" * 64, DOCUMENTS: 7}},
+        {"commit": COMMIT, "files": [QUESTIONS, DOCUMENTS]},
+        {"files": {QUESTIONS: "a" * 64, DOCUMENTS: "a" * 64}},
+        {"commit": COMMIT, "files": {QUESTIONS: "a" * 64, DOCUMENTS: "a" * 64}, "questions": []},
+        [COMMIT],
     ],
 )
-def test_a_malformed_manifest_is_refused(tmp_path: Path, raw: dict[str, object]) -> None:
+def test_a_malformed_manifest_is_refused(tmp_path: Path, raw: object) -> None:
     path = tmp_path / "m.json"
     path.write_text(json.dumps(raw))
     with pytest.raises(ValueError):
@@ -192,6 +200,43 @@ def test_a_malformed_manifest_is_refused(tmp_path: Path, raw: dict[str, object])
 
 def test_the_committed_manifest_pins_cc39aeb_and_the_84_documents() -> None:
     manifest = load_manifest()
-    assert manifest.commit.startswith("cc39aeb")
+    assert manifest.commit == "cc39aeb4afdf33909ee1412188bf89035950c2eb"
     assert len(manifest.pdfs) == 84
     assert "3M_2018_10K" in manifest.pdfs
+
+
+def test_the_committed_manifest_holds_only_names_and_hashes() -> None:
+    raw = json.loads(MANIFEST.read_text(encoding="utf-8"))
+    assert set(raw) == {"commit", "files"}
+    assert all(re.fullmatch(r"[0-9a-f]{64}", v) for v in raw["files"].values())
+
+
+@pytest.mark.parametrize("name", [QUESTIONS, DOCUMENTS])
+def test_a_tampered_question_or_document_file_is_refused(
+    tmp_path: Path, remote: Remote, name: str
+) -> None:
+    manifest = remote.manifest()
+    remote.files[name] = remote.files[name] + b"\n"
+    with pytest.raises(ValueError, match="sha256"):
+        download(tmp_path, manifest, remote)
+    assert not (tmp_path / name).exists()
+
+
+def test_a_manifest_pinning_a_pdf_no_question_uses_is_refused(
+    tmp_path: Path, remote: Remote
+) -> None:
+    remote.files["pdfs/ACME_2019_10K.pdf"] = b"%PDF unused"
+    with pytest.raises(ValueError, match="extra"):
+        download(tmp_path, remote.manifest(), remote)
+
+
+def test_evidence_on_another_document_fetches_that_document_too(
+    tmp_path: Path, remote: Remote
+) -> None:
+    row = _question("q1", "1ACME_2020_10K", 3)
+    other = {"doc_name": "ACME_2021Q2_10Q", "evidence_page_num": 1, "evidence_text": "made-up"}
+    row["evidence"] = [*cast(list[object], row["evidence"]), other]
+    remote.files[QUESTIONS] = _jsonl([row])
+    ds = download(tmp_path, remote.manifest(), remote)
+    assert sorted(ds.documents) == ["1ACME_2020_10K", "ACME_2021Q2_10Q"]
+    assert [e.doc_name for e in ds.questions[0].evidence] == ["1ACME_2020_10K", "ACME_2021Q2_10Q"]

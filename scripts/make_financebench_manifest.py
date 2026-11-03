@@ -4,7 +4,7 @@ Each download is first checked against the git blob id the dataset repo's tree
 gives for it at the pinned commit, so the manifest is tied to that commit and
 not to whatever the network returned. Only file names and hashes are written.
 
-    uv run python scripts/make_financebench_manifest.py <download root>
+    uv run python scripts/make_financebench_manifest.py [root, default data/financebench]
 """
 
 from __future__ import annotations
@@ -15,6 +15,7 @@ import sys
 from pathlib import Path
 
 from tenq.financebench import (
+    DEFAULT_ROOT,
     DOCUMENTS,
     MANIFEST,
     QUESTIONS,
@@ -61,4 +62,4 @@ def main(root: Path) -> None:
 
 
 if __name__ == "__main__":
-    main(Path(sys.argv[1]))
+    main(Path(sys.argv[1]) if len(sys.argv) > 1 else DEFAULT_ROOT)

@@ -7,7 +7,7 @@ PatronusAI/financebench; the GitHub repo carries no licence file). Files land
 in the gitignored data/ and are never committed. A file already on disk with
 the right hash is not fetched again.
 
-    uv run python -m tenq.financebench [--root data/financebench]
+    uv run python -m tenq.financebench [--root <dir>]   (default: data/financebench)
 """
 
 from __future__ import annotations
@@ -23,10 +23,14 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from tenq.config import REPO_ROOT
+
 log = logging.getLogger(__name__)
 
 REPO = "patronus-ai/financebench"
-MANIFEST = Path(__file__).resolve().parents[2] / "config" / "financebench.json"
+MANIFEST = REPO_ROOT / "config" / "financebench.json"
+# tied to the repo root, not the working directory: .gitignore covers /data/ only there
+DEFAULT_ROOT = REPO_ROOT / "data" / "financebench"
 QUESTIONS = "data/financebench_open_source.jsonl"
 DOCUMENTS = "data/financebench_document_information.jsonl"
 # names such as 3M_2018_10K or AMCOR_2023Q4_EARNINGS; nothing that could leave pdfs/
@@ -89,14 +93,19 @@ def pdf_doc(path: str) -> str:
 
 
 def load_manifest(path: Path = MANIFEST) -> Manifest:
-    raw = json.loads(path.read_text())
+    raw = json.loads(path.read_text(encoding="utf-8"))
+    # only a commit and hashes: the dataset's own text must never be committed
+    if not isinstance(raw, dict) or set(raw) != {"commit", "files"}:
+        raise ValueError("manifest must hold exactly commit and files")
     commit, files = raw["commit"], raw["files"]
+    if not isinstance(commit, str) or not isinstance(files, dict):
+        raise ValueError("manifest is malformed")
     if not re.fullmatch(r"[0-9a-f]{40}", commit):
         raise ValueError(f"manifest commit is not a full sha: {commit!r}")
     for name, digest in files.items():
         if name not in (QUESTIONS, DOCUMENTS):
             pdf_doc(name)
-        if not SHA256.fullmatch(digest):
+        if not isinstance(digest, str) or not SHA256.fullmatch(digest):
             raise ValueError(f"manifest sha256 for {name} is malformed")
     if QUESTIONS not in files or DOCUMENTS not in files:
         raise ValueError("manifest must pin the questions and document information")
@@ -140,7 +149,9 @@ def ensure(root: Path, manifest: Manifest, name: str, fetch: Fetch) -> tuple[Pat
 
 
 def _jsonl(path: Path) -> list[dict[str, Any]]:
-    return [json.loads(line) for line in path.read_text().splitlines() if line.strip()]
+    return [
+        json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()
+    ]
 
 
 def parse_questions(rows: list[dict[str, Any]]) -> list[Question]:
@@ -219,7 +230,7 @@ def main(argv: list[str] | None = None) -> None:
     ap = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
-    ap.add_argument("--root", type=Path, default=Path("data/financebench"))
+    ap.add_argument("--root", type=Path, default=DEFAULT_ROOT)
     args = ap.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
     ds = download(args.root)
