@@ -11,6 +11,7 @@ license = "MIT"
 requires-python = ">=3.12"
 dependencies = [
     "edgartools>=5.62.1",
+    "feedparser>=6.0",
     "mcp>=2.3",
     "pyyaml>=6.0",
     "yfinance>=1.8",
@@ -46,6 +47,6 @@ testpaths = ["tests"]
 addopts = "-q"
 
 [[tool.mypy.overrides]]
-# untyped: yfinance ships no types; pandas is only touched as a duck-typed frame
-module = ["yfinance", "pandas"]
+# untyped: yfinance and feedparser ship no types; pandas is only a duck-typed frame
+module = ["yfinance", "pandas", "feedparser"]
 ignore_missing_imports = true

@@ -39,3 +39,31 @@ def test_malformed_watchlist_rejected(tmp_path: Path, body: str) -> None:
     p.write_text(body)
     with pytest.raises(ValueError):
         load_watchlist(p)
+
+
+def test_repo_watchlist_names_every_company() -> None:
+    wl = load_watchlist()
+    assert set(wl.names) == set(wl.tickers)
+    assert wl.names["CRWD"] == "CrowdStrike"
+
+
+@pytest.mark.parametrize(
+    "names",
+    [
+        "names: {ZZZZ: Nobody}\n",  # not on the watchlist
+        "names: [CrowdStrike]\n",  # a list, not a mapping
+        "names: {CRWD: ''}\n",  # blank name
+        "names: {CRWD: 7}\n",
+    ],
+)
+def test_malformed_names_rejected(tmp_path: Path, names: str) -> None:
+    p = tmp_path / "w.yaml"
+    p.write_text("watchlist: [CRWD]\n" + names)
+    with pytest.raises(ValueError):
+        load_watchlist(p)
+
+
+def test_names_keys_are_upper_cased(tmp_path: Path) -> None:
+    p = tmp_path / "w.yaml"
+    p.write_text("watchlist: [CRWD]\nnames: {crwd: CrowdStrike}\n")
+    assert load_watchlist(p).names == {"CRWD": "CrowdStrike"}

@@ -14,7 +14,21 @@ from typing import Any, Protocol
 
 from tenq.filings import Fact, FilingMeta
 
+log = logging.getLogger(__name__)
+
 FORMS = ("10-Q", "10-K")
+CURRENT = "8-K"
+EXHIBIT_PREFIX = "EX-99"  # press releases and other material an 8-K furnishes
+
+
+class CurrentSource(Protocol):
+    def list_current(self, ticker: str, limit: int) -> list[FilingMeta]:
+        """Most recent 8-K filings for a ticker, newest first."""
+        ...
+
+    def fetch_current(self, meta: FilingMeta) -> str:
+        """The 8-K's text followed by its EX-99 exhibits' text."""
+        ...
 
 
 class FilingSource(Protocol):
@@ -92,14 +106,22 @@ class EdgarSource:
         self._by_accession: dict[str, Any] = {}
 
     def list_filings(self, ticker: str, limit: int) -> list[FilingMeta]:
+        # amendments (10-Q/A) are skipped in slice 1
+        return self._list(ticker, FORMS, limit)
+
+    def list_current(self, ticker: str, limit: int) -> list[FilingMeta]:
+        # 8-K/A amendments are skipped like 10-Q/A: a correction worth a call is
+        # usually re-reported in an 8-K or the next 10-Q
+        return self._list(ticker, (CURRENT,), limit)
+
+    def _list(self, ticker: str, forms: tuple[str, ...], limit: int) -> list[FilingMeta]:
         from edgar import Company
 
         company = Company(ticker)
-        # amendments (10-Q/A) are skipped in slice 1
-        filings = company.get_filings(form=list(FORMS), amendments=False)
+        filings = company.get_filings(form=list(forms), amendments=False)
         out: list[FilingMeta] = []
         for f in filings:
-            if f.form not in FORMS:
+            if f.form not in forms:
                 continue
             self._by_accession[str(f.accession_no)] = f
             out.append(
@@ -112,6 +134,7 @@ class EdgarSource:
                     filed=str(f.filing_date),
                     period=str(f.period_of_report),
                     url=str(f.homepage_url),
+                    items=(_opt_str(getattr(f, "items", None)) or "") if f.form == CURRENT else "",
                 )
             )
             if len(out) == limit:
@@ -140,3 +163,19 @@ class EdgarSource:
         frame = xbrl.facts.to_dataframe()
         facts = facts_from_frame(r for r in frame.to_dict("records"))
         return text, facts
+
+    def fetch_current(self, meta: FilingMeta) -> str:
+        filing = self._filing(meta)
+        parts = [str(filing.text())]
+        for att in filing.attachments:
+            kind = str(getattr(att, "document_type", "") or "")
+            if not kind.startswith(EXHIBIT_PREFIX):
+                continue
+            try:  # one unreadable exhibit must not cost the 8-K's own text
+                body = att.text()
+            except Exception as exc:
+                log.warning("8-K exhibit %s unreadable (%s)", kind, type(exc).__name__)
+                continue
+            if body:  # a PDF or binary exhibit has no text
+                parts.append(f"EXHIBIT {kind.removeprefix('EX-')}\n\n{body}")
+        return "\n\n".join(parts)
