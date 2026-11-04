@@ -31,6 +31,7 @@ PROMPT_PATH = REPO_ROOT / "prompts" / "qa.md"
 SERVER = "tenq"
 TOOLS = ("search_filing", "read_passage")
 ALLOWED_TOOLS = [f"mcp__{SERVER}__{t}" for t in TOOLS]
+SEARCH_TOOL = f"mcp__{SERVER}__search_filing"
 MAX_ANSWER_CHARS = 2000
 MAX_CITATIONS = 10
 ANSWERED = "answered"
@@ -45,6 +46,7 @@ class Answer:
     passage_ids: list[str] = field(default_factory=list)
     pages: list[int] = field(default_factory=list)  # zero-indexed, sorted, distinct
     dropped_ids: int = 0  # cited ids that are not passages of the document
+    over_cap: int = 0  # valid citations past MAX_CITATIONS, not kept
     error: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
@@ -62,15 +64,18 @@ def parse_answer(text: str | None, store: DocStore, doc: str) -> Answer:
     cited = [r.strip() for r in raw if isinstance(r, str)] if isinstance(raw, list) else []
     answer = Answer(ANSWERED, " ".join(obj["answer"].split())[:MAX_ANSWER_CHARS])
     pages: set[int] = set()
+    passages = {p.id: p for p in store.passages(doc)}  # one read of the document
     for pid in dict.fromkeys(cited):  # distinct, in order
         m = DOC_PASSAGE_ID.match(pid)
-        p = store.passage(pid) if m and m["doc"] == doc else None
+        p = passages.get(pid) if m and m["doc"] == doc else None
         page = store.page_of(doc, p.line) if p is not None else None
-        if p is None or page is None or len(answer.passage_ids) >= MAX_CITATIONS:
+        if p is None or page is None:
             answer.dropped_ids += 1
-            continue
-        answer.passage_ids.append(p.id)
-        pages.add(page)
+        elif len(answer.passage_ids) >= MAX_CITATIONS:
+            answer.over_cap += 1
+        else:
+            answer.passage_ids.append(p.id)
+            pages.add(page)
     answer.pages = sorted(pages)
     return answer
 
@@ -104,6 +109,10 @@ def outcome(run: AgentRun, store: DocStore, doc: str) -> Answer:
     if run.error is not None:
         status = INFRA_FAILURE if run.failure == INFRA else MODEL_FAILURE
         return Answer(status, error=run.error)
+    searches = [c for c in run.tool_calls if c.name == SEARCH_TOOL]
+    if searches and all(c.is_error for c in searches):
+        # search was down (xerj): whatever the model said, it never saw the document
+        return Answer(INFRA_FAILURE, error="every search_filing call failed")
     return parse_answer(run.text, store, doc)
 
 

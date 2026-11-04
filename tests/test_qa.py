@@ -11,7 +11,7 @@ from tenq import qa
 from tenq.brief import load_prompt
 from tenq.docstore import DocStore
 from tenq.financebench import Document, Evidence, Question
-from tenq.llm import INFRA, MODEL, AgentRun
+from tenq.llm import INFRA, MODEL, AgentRun, ToolCall
 from tenq.qa import ANSWERED, INFRA_FAILURE, MODEL_FAILURE, ask, outcome, parse_answer
 
 QUESTION = Question(
@@ -72,12 +72,14 @@ def test_an_answer_with_no_citations_is_still_an_answer(docs: DocStore) -> None:
     assert parse_answer(_json("x", "not a list"), docs, QA_DOC).passage_ids == []
 
 
-def test_citations_are_capped(docs: DocStore) -> None:
+def test_citations_are_capped_and_counted_apart(
+    docs: DocStore, monkeypatch: pytest.MonkeyPatch
+) -> None:
     ids = [p.id for p in docs.passages(QA_DOC)]
-    got = parse_answer(_json("x", ids * 5), docs, QA_DOC)
-    assert len(got.passage_ids) == len(set(ids)) <= qa.MAX_CITATIONS
-    many = parse_answer(_json("x", [ids[0]] + [f"{QA_DOC}:{n}" for n in range(500)]), docs, QA_DOC)
-    assert len(many.passage_ids) <= qa.MAX_CITATIONS
+    assert len(ids) == 3
+    monkeypatch.setattr(qa, "MAX_CITATIONS", 1)
+    got = parse_answer(_json("x", [*ids, f"{QA_DOC}:9999"]), docs, QA_DOC)
+    assert got.passage_ids == ids[:1] and got.over_cap == 2 and got.dropped_ids == 1
 
 
 @pytest.mark.parametrize(
@@ -127,3 +129,19 @@ def test_the_qa_prompt_is_versioned_and_tells_the_model_the_tools() -> None:
         assert tool in prompt.text
     assert '"answer"' in prompt.text and '"passage_ids"' in prompt.text
     assert "—" not in Path(qa.PROMPT_PATH).read_text(encoding="utf-8")
+
+
+def _searched(*errors: bool) -> AgentRun:
+    run = AgentRun(model="opus", text=_json("not in the document", []))
+    run.tool_calls = [
+        ToolCall(f"t{i}", qa.SEARCH_TOOL, {"query": "x"}, is_error=e) for i, e in enumerate(errors)
+    ]
+    return run
+
+
+def test_an_answer_when_every_search_failed_is_infrastructure(docs: DocStore) -> None:
+    assert outcome(_searched(True, True), docs, QA_DOC).status == INFRA_FAILURE
+    assert outcome(_searched(True, False), docs, QA_DOC).status == ANSWERED
+    assert (
+        outcome(_searched(), docs, QA_DOC).status == ANSWERED
+    )  # no search at all is the model's call
