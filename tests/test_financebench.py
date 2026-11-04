@@ -16,6 +16,7 @@ from tenq.financebench import (
     QUESTIONS,
     Manifest,
     download,
+    download_results,
     load_manifest,
     pdf_doc,
     pdf_path,
@@ -100,13 +101,29 @@ def remote() -> Remote:
             ),
             "pdfs/1ACME_2020_10K.pdf": b"%PDF made up one",
             "pdfs/ACME_2021Q2_10Q.pdf": b"%PDF made up two",
+            "results/m1_singleStore.jsonl": _jsonl(
+                [_result("q1", "Correct Answer"), _result("q2", "Refusal", None)]
+            ),
         }
     )
 
 
+def _result(qid: str, label: str, answer: str | None = "made-up answer") -> dict[str, object]:
+    return {
+        "financebench_id": qid,
+        "model_name": "m1",
+        "eval_mode": "singleStore",
+        "temp": "0",
+        "question": f"made-up question {qid}",
+        "gold_answer": "$1.00",
+        "model_answer": answer,
+        "label": label,
+    }
+
+
 def test_download_fetches_and_checks_every_file(tmp_path: Path, remote: Remote) -> None:
     ds = download(tmp_path, remote.manifest(), remote)
-    assert len(remote.fetched) == 4
+    assert len(remote.fetched) == 4  # result files are fetched only when asked for
     assert [q.id for q in ds.questions] == ["q1", "q2"]
     q1, q2 = ds.questions
     assert (q1.evidence[0].doc_name, q1.evidence[0].page) == ("1ACME_2020_10K", 3)
@@ -186,6 +203,14 @@ def test_pdf_paths_round_trip_and_odd_ones_are_refused() -> None:
         {"commit": COMMIT, "files": {QUESTIONS: "a" * 64, DOCUMENTS: "a" * 64, "x.pdf": "a" * 64}},
         {"commit": COMMIT, "files": {QUESTIONS: "a" * 64, DOCUMENTS: 7}},
         {"commit": COMMIT, "files": [QUESTIONS, DOCUMENTS]},
+        {
+            "commit": COMMIT,
+            "files": {QUESTIONS: "a" * 64, DOCUMENTS: "a" * 64, "results/../x.jsonl": "a" * 64},
+        },
+        {
+            "commit": COMMIT,
+            "files": {QUESTIONS: "a" * 64, DOCUMENTS: "a" * 64, "results/x.json": "a" * 64},
+        },
         {"files": {QUESTIONS: "a" * 64, DOCUMENTS: "a" * 64}},
         {"commit": COMMIT, "files": {QUESTIONS: "a" * 64, DOCUMENTS: "a" * 64}, "questions": []},
         [COMMIT],
@@ -203,6 +228,10 @@ def test_the_committed_manifest_pins_cc39aeb_and_the_84_documents() -> None:
     assert manifest.commit == "cc39aeb4afdf33909ee1412188bf89035950c2eb"
     assert len(manifest.pdfs) == 84
     assert "3M_2018_10K" in manifest.pdfs
+    assert len(manifest.results) == 16
+    assert {"gpt-4-1106-preview_singleStore", "gpt-4_singleStore", "llama2_singleStore"} <= (
+        manifest.results
+    )
 
 
 def test_the_committed_manifest_holds_only_names_and_hashes() -> None:
@@ -240,3 +269,36 @@ def test_evidence_on_another_document_fetches_that_document_too(
     ds = download(tmp_path, remote.manifest(), remote)
     assert sorted(ds.documents) == ["1ACME_2020_10K", "ACME_2021Q2_10Q"]
     assert [e.doc_name for e in ds.questions[0].evidence] == ["1ACME_2020_10K", "ACME_2021Q2_10Q"]
+
+
+def test_result_files_are_fetched_checked_and_parsed(tmp_path: Path, remote: Remote) -> None:
+    results = download_results(tmp_path, remote.manifest(), remote)
+    (a1, a2) = results["m1_singleStore"]
+    assert (a1.key, a1.label, a1.model_answer) == (
+        "m1_singleStore:q1",
+        "Correct Answer",
+        "made-up answer",
+    )
+    assert (a2.label, a2.model_answer) == ("Refusal", "")  # a null answer reads as empty
+
+
+def test_a_tampered_result_file_is_refused(tmp_path: Path, remote: Remote) -> None:
+    manifest = remote.manifest()
+    remote.files["results/m1_singleStore.jsonl"] += b"\n"
+    with pytest.raises(ValueError):
+        download_results(tmp_path, manifest, remote)
+
+
+@pytest.mark.parametrize(
+    "rows",
+    [
+        [_result("q1", "Partly Right")],
+        [_result("q1", "Refusal"), _result("q1", "Correct Answer")],
+    ],
+)
+def test_a_result_file_with_an_unknown_label_or_a_repeat_is_refused(
+    tmp_path: Path, remote: Remote, rows: list[dict[str, object]]
+) -> None:
+    remote.files["results/m1_singleStore.jsonl"] = _jsonl(rows)
+    with pytest.raises(ValueError):
+        download_results(tmp_path, remote.manifest(), remote)

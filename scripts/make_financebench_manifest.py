@@ -1,4 +1,5 @@
-"""Write config/financebench.json: a sha256 for each FinanceBench file tenq uses.
+"""Write config/financebench.json: a sha256 for each FinanceBench file tenq uses
+(the questions, document information, needed PDFs and every result file).
 
 Each download is first checked against the git blob id the dataset repo's tree
 gives for it at the pinned commit, so the manifest is tied to that commit and
@@ -26,6 +27,8 @@ from tenq.financebench import (
     parse_questions,
     pdf_path,
     raw_url,
+    result_path,
+    result_source,
 )
 
 COMMIT = "cc39aeb4afdf33909ee1412188bf89035950c2eb"
@@ -57,6 +60,8 @@ def main(root: Path) -> None:
     for i, doc in enumerate(docs, 1):
         files[pdf_path(doc)] = hashlib.sha256(get(pdf_path(doc))).hexdigest()
         print(f"{i}/{len(docs)} {doc}", flush=True)
+    for path in sorted(p for p in blobs if p.startswith("results/") and p.endswith(".jsonl")):
+        files[result_path(result_source(path))] = hashlib.sha256(get(path)).hexdigest()
     MANIFEST.write_text(json.dumps({"commit": COMMIT, "files": files}, indent=1) + "\n")
     print(f"wrote {MANIFEST} ({len(files)} files)")
 

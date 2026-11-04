@@ -1,4 +1,5 @@
-"""FinanceBench, pinned: the questions, document information and the PDFs they need.
+"""FinanceBench, pinned: the questions, document information, the PDFs they need
+and the paper's human-graded result files.
 
 Everything comes from the dataset repo at one commit and is checked against
 config/financebench.json, which holds a sha256 for each file and nothing from
@@ -37,6 +38,7 @@ DOCUMENTS = "data/financebench_document_information.jsonl"
 DOC_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9_\-]{0,79}")
 SHA256 = re.compile(r"[0-9a-f]{64}")
 FETCH_TIMEOUT_S = 120
+PAPER_LABELS = ("Correct Answer", "Incorrect Answer", "Refusal")
 
 Fetch = Callable[[str], bytes]
 
@@ -78,6 +80,10 @@ class Manifest:
     def pdfs(self) -> set[str]:
         return {pdf_doc(p) for p in self.files if p.startswith("pdfs/")}
 
+    @property
+    def results(self) -> set[str]:
+        return {result_source(p) for p in self.files if p.startswith("results/")}
+
 
 def pdf_path(doc_name: str) -> str:
     if not DOC_NAME.fullmatch(doc_name):
@@ -92,6 +98,19 @@ def pdf_doc(path: str) -> str:
     return name
 
 
+def result_path(source: str) -> str:
+    if not DOC_NAME.fullmatch(source):
+        raise ValueError(f"not a FinanceBench result file name: {source!r}")
+    return f"results/{source}.jsonl"
+
+
+def result_source(path: str) -> str:
+    name = path.removeprefix("results/").removesuffix(".jsonl")
+    if result_path(name) != path:
+        raise ValueError(f"not a FinanceBench result path: {path!r}")
+    return name
+
+
 def load_manifest(path: Path = MANIFEST) -> Manifest:
     raw = json.loads(path.read_text(encoding="utf-8"))
     # only a commit and hashes: the dataset's own text must never be committed
@@ -103,7 +122,9 @@ def load_manifest(path: Path = MANIFEST) -> Manifest:
     if not re.fullmatch(r"[0-9a-f]{40}", commit):
         raise ValueError(f"manifest commit is not a full sha: {commit!r}")
     for name, digest in files.items():
-        if name not in (QUESTIONS, DOCUMENTS):
+        if name.startswith("results/"):
+            result_source(name)
+        elif name not in (QUESTIONS, DOCUMENTS):
             pdf_doc(name)
         if not isinstance(digest, str) or not SHA256.fullmatch(digest):
             raise ValueError(f"manifest sha256 for {name} is malformed")
@@ -224,6 +245,43 @@ def download(root: Path, manifest: Manifest | None = None, fetch: Fetch = http_f
     total = len(docs) + 2
     log.info("financebench: %s file(s) fetched, %s already on disk", fetched, total - fetched)
     return Dataset(root, questions, {d: all_docs[d] for d in sorted(docs)})
+
+
+@dataclass(frozen=True)
+class GradedAnswer:
+    """One answer from the paper's result files, with the label people gave it."""
+
+    source: str  # result file name, e.g. gpt-4_singleStore
+    question_id: str
+    model_answer: str
+    label: str  # Correct Answer, Incorrect Answer or Refusal
+
+    @property
+    def key(self) -> str:
+        return f"{self.source}:{self.question_id}"
+
+
+def parse_results(rows: list[dict[str, Any]], source: str) -> list[GradedAnswer]:
+    out = []
+    for r in rows:
+        if r["label"] not in PAPER_LABELS:
+            raise ValueError(f"{source}: unknown label {r['label']!r}")
+        out.append(GradedAnswer(source, r["financebench_id"], r["model_answer"] or "", r["label"]))
+    if len({a.question_id for a in out}) != len(out):
+        raise ValueError(f"{source}: a question is answered twice")
+    return out
+
+
+def download_results(
+    root: Path, manifest: Manifest | None = None, fetch: Fetch = http_fetch
+) -> dict[str, list[GradedAnswer]]:
+    """Every pinned result file, checked like the rest, keyed by its name."""
+    manifest = manifest or load_manifest()
+    out = {}
+    for source in sorted(manifest.results):
+        path, _ = ensure(root, manifest, result_path(source), fetch)
+        out[source] = parse_results(_jsonl(path), source)
+    return out
 
 
 def main(argv: list[str] | None = None) -> None:
