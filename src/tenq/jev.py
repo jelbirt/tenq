@@ -3,14 +3,20 @@
 Jev (TypeSafe's decision model, served through OpenRouter's System One API)
 returns probabilities, not text. The questions live in prompts/jev.yaml; the
 state is the pack's rendered text, whose numbers were all computed in code.
-Each request is repeated (REPEATS) and the answers averaged, because Jev's
-answers vary between identical calls; the spread across repeats is kept, so
-the rules and the scorecard can see how settled an answer was.
+Each question is asked over several rounds and the answers averaged, because
+Jev's answers vary between identical calls and lean toward options listed
+earlier. The rounds are balanced so that lean cancels: a choice is asked once
+per label, with each label shown first exactly once; a score is asked as
+often with its levels reversed as in file order; a true/false question has no
+order and is asked REPEATS times against noise. Each answer keeps its spread,
+how many rounds agreed, and the measured lean toward whichever option was
+listed first (`first_lift`), so the rules and the scorecard can see how
+settled an answer was and how strong the lean is.
 
 Never raises: a missing key, an HTTP error or an unreadable answer is an error
 on the result, and the brief goes out with Opus's call alone. A request that
 fails for good (a bad key, no credit, a service still down after one retry)
-ends the repeats, so an outage costs about one minute per stock, not three. Logs carry only
+ends the rounds, so an outage costs about one minute per stock, not six. Logs carry only
 status codes and exception types, never the state or an answer.
 
 Env: OPENROUTER_API_KEY (the only secret), JEV_MODEL (default jev-latest; the
@@ -27,7 +33,7 @@ import re
 import time
 import urllib.error
 import urllib.request
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from statistics import fmean
@@ -42,7 +48,9 @@ log = logging.getLogger(__name__)
 URL = "https://openrouter.ai/api/v1/systemone"
 DEFAULT_MODEL = "jev-latest"
 QUESTIONS_PATH = REPO_ROOT / "prompts" / "jev.yaml"
-REPEATS = 3
+REPEATS = 3  # true/false questions: asked this often, averaged against noise
+SCORE_ROUNDS = 4  # scores: twice in file order, twice reversed
+MAX_LABELS = 8  # a choice is asked once per label, so its size sets the request count
 TIMEOUT_S = 30
 ATTEMPTS = 2  # per repeat: one retry on a rate limit, an upstream failure or a timeout
 RETRY_CODES = {429, 500, 502, 503, 524, 529}
@@ -70,12 +78,28 @@ class Question:
             return [str(i) for i in range(len(self.criteria))]
         return []
 
-    def to_request(self, repeat: int = 0) -> dict[str, Any]:
-        """The question as sent on one repeat, with its options moved to cancel position bias.
+    def rounds(self) -> int:
+        """How many rounds ask this question: enough to show every option first equally."""
+        if self.type == "choice":
+            return len(self.criteria)
+        if self.type == "score":
+            return SCORE_ROUNDS
+        return REPEATS
 
-        Jev leans toward earlier options, so each repeat starts a choice's
-        labels at a different place, and odd repeats list a score's levels in
-        reverse (`unflip` maps those answers back).
+    def first(self, repeat: int) -> str:
+        """The option shown first in a round: a choice label, or a score level."""
+        if self.type == "choice":
+            return self.labels()[repeat % len(self.criteria)]
+        if self.type == "score":
+            return str(len(self.criteria) - 1) if repeat % 2 else "0"
+        return ""
+
+    def to_request(self, repeat: int = 0) -> dict[str, Any]:
+        """The question as sent in one round, its options moved to cancel position bias.
+
+        Round r starts a choice's labels at label r, so over `rounds()` rounds
+        each label sits in each position exactly once; odd rounds list a
+        score's levels in reverse (`unflip` maps those answers back).
         """
         body: dict[str, Any] = {"type": self.type, "instructions": self.instructions}
         criteria = self.criteria
@@ -112,8 +136,12 @@ class QuestionSet:
     version: str
     questions: tuple[Question, ...]
 
+    def rounds(self) -> int:
+        return max(q.rounds() for q in self.questions)
+
     def to_request(self, repeat: int = 0) -> dict[str, Any]:
-        return {q.key: q.to_request(repeat) for q in self.questions}
+        """The questions still asked in this round (a 4-label choice sits out rounds 4 and 5)."""
+        return {q.key: q.to_request(repeat) for q in self.questions if repeat < q.rounds()}
 
     def unflip(self, answers: Mapping[str, Any], repeat: int) -> dict[str, Any]:
         by_key = {q.key: q for q in self.questions}
@@ -154,6 +182,8 @@ def load_questions(path: Path = QUESTIONS_PATH) -> QuestionSet:
                 or not all(isinstance(v, str) for v in criteria.values())
             ):
                 raise ValueError(f"question {key}: choice needs two or more labels")
+            if len(criteria) > MAX_LABELS:
+                raise ValueError(f"question {key}: more than {MAX_LABELS} labels")
         elif kind == "score":
             if (
                 not isinstance(criteria, list)
@@ -169,18 +199,27 @@ def load_questions(path: Path = QUESTIONS_PATH) -> QuestionSet:
 
 @dataclass
 class Answer:
-    """One question's answer averaged over the repeats that returned it.
+    """One question's answer averaged over the rounds that returned it.
 
     value: noul, the mean probability; choice, the label with the highest mean
     probability; score, the mean level (0 is the first criterion).
     probabilities: choice and score, the mean per label (levels as "0".."n-1").
-    spread: max minus min across repeats of the headline number (noul
+    spread: max minus min across rounds of the headline number (noul
     probability, choice top-label probability, score level); 0 for one repeat.
     margin: choice only, the winning label's mean probability less the
     runner-up's (how decisive the average is); None for noul and score.
-    agreed: repeats whose own answer matches `value` (choice: the same top
+    agreed: rounds whose own answer matches `value` (choice: the same top
     label; score: the same level when rounded half up; noul: the same side
     of 0.5).
+    balanced: every round was answered, so each option was shown first
+    equally often and the position lean cancels in `value`.
+    first_lift: the measured lean, set only when balanced. Choice: the mean
+    probability Jev gave whichever label was listed first, less the mean of
+    all labels' probabilities (0 means no lean; 0.25 on a four-way choice
+    means first place alone is worth as much as an option's fair share).
+    Score: half the gap in mean level between reversed and file-order rounds
+    (positive means answers drift toward whichever end is listed first).
+    None for true/false questions, which have no order.
     """
 
     key: str
@@ -188,9 +227,11 @@ class Answer:
     value: float | str
     probabilities: dict[str, float]
     spread: float
-    repeats: int
+    repeats: int  # rounds that returned this question
     margin: float | None = None
     agreed: int = 0
+    balanced: bool = False
+    first_lift: float | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return vars(self).copy()
@@ -202,7 +243,7 @@ class Result:
     model: str  # requested
     answers: dict[str, Answer] = field(default_factory=dict)
     resolved_model: str = ""
-    repeats: int = 0  # requests that returned usable answers
+    rounds: int = 0  # requests that returned usable answers
     input_tokens: int = 0
     output_tokens: int = 0
     cost: float = 0.0
@@ -276,15 +317,24 @@ def _one(q: Question, raw: Any) -> tuple[float, dict[str, float]] | None:
     return level, {label: probs.get(label, 0.0) for label in labels} if probs else {}
 
 
-def average(questions: QuestionSet, responses: list[Mapping[str, Any]]) -> dict[str, Answer]:
-    """Each question's answers across the repeats' `answers` maps, averaged.
+def average(
+    questions: QuestionSet,
+    responses: Sequence[Mapping[str, Any]],
+    rounds: Sequence[int] | None = None,
+) -> dict[str, Answer]:
+    """Each question's answers across the rounds' `answers` maps, averaged.
 
-    A question missing or unreadable in one repeat is averaged over the rest;
-    a question no repeat answered is left out.
+    `rounds` names the round each response came from (default 0, 1, 2...),
+    which says which option was listed first. A question missing or unreadable
+    in one round is averaged over the rest, and its answer is not balanced; a
+    question no round answered is left out.
     """
+    order = rounds if rounds is not None else list(range(len(responses)))
     out: dict[str, Answer] = {}
     for q in questions.questions:
-        got = [a for a in (_one(q, r.get(q.key)) for r in responses) if a is not None]
+        pairs = [(i, _one(q, r.get(q.key))) for i, r in zip(order, responses, strict=True)]
+        answered = [(i, a) for i, a in pairs if a is not None]
+        got = [a for _, a in answered]
         if not got:
             continue
         heads = [h for h, _ in got]
@@ -314,10 +364,37 @@ def average(questions: QuestionSet, responses: list[Mapping[str, Any]]) -> dict[
         else:
             # half up, not Python's half-to-even, so 0.5 and 1.5 round alike
             agreed = sum(math.floor(h + 0.5) == math.floor(float(value) + 0.5) for h in heads)
+        balanced = {i for i, _ in answered} == set(range(q.rounds()))
         out[q.key] = Answer(
-            q.key, q.type, value, probs, max(heads) - min(heads), len(got), margin, agreed
+            q.key,
+            q.type,
+            value,
+            probs,
+            max(heads) - min(heads),
+            len(got),
+            margin,
+            agreed,
+            balanced,
+            _first_lift(q, answered) if balanced else None,
         )
     return out
+
+
+def _first_lift(
+    q: Question, answered: list[tuple[int, tuple[float, dict[str, float]]]]
+) -> float | None:
+    """How far answers lean toward whichever option was listed first (see Answer)."""
+    if q.type == "choice":
+        if not all(p for _, (_, p) in answered):
+            return None
+        shown_first = fmean(p[q.first(i)] for i, (_, p) in answered)
+        fair = fmean(fmean(p.values()) for _, (_, p) in answered)
+        return shown_first - fair
+    if q.type == "score":
+        reversed_rounds = [h for i, (h, _) in answered if i % 2]
+        file_order = [h for i, (h, _) in answered if not i % 2]
+        return (fmean(reversed_rounds) - fmean(file_order)) / 2
+    return None
 
 
 def ask(
@@ -325,12 +402,16 @@ def ask(
     questions: QuestionSet,
     *,
     model: str | None = None,
-    repeats: int = REPEATS,
+    rounds: int | None = None,
     session_id: str = "",
     post: Post = _post,
     sleep: Callable[[float], None] = time.sleep,
 ) -> Result:
-    """Ask every question about `state`, `repeats` times, and average. Never raises."""
+    """Ask every question about `state` over balanced rounds and average. Never raises.
+
+    `rounds` caps the round count (default: as many as the largest question
+    needs); a capped run's answers are not balanced.
+    """
     model = model or os.environ.get("JEV_MODEL") or DEFAULT_MODEL
     result = Result(questions.version, model)
     key = os.environ.get("OPENROUTER_API_KEY") or ""
@@ -342,8 +423,9 @@ def ask(
         result.notes.append(f"state cut to {MAX_STATE_CHARS} characters")
     headers = {"Authorization": f"Bearer {key}", "Content-Type": "application/json"}
     responses: list[Mapping[str, Any]] = []
+    answered: list[int] = []
     started = time.monotonic()
-    for i in range(repeats):
+    for i in range(min(questions.rounds(), rounds or questions.rounds())):
         body: dict[str, Any] = {
             "model": model,
             "state": state,
@@ -368,7 +450,10 @@ def ask(
                 result.down = status in {0, 401, 402, 403} or status >= 500
                 break
             continue
-        responses.append(questions.unflip(parsed["answers"], i))
+        # an answer to a question this round did not ask would unbalance it
+        asked = {k: v for k, v in parsed["answers"].items() if k in body["questions"]}
+        responses.append(questions.unflip(asked, i))
+        answered.append(i)
         model_name = parsed.get("model")
         if isinstance(model_name, str) and MODEL_NAME.fullmatch(model_name):
             result.resolved_model = model_name
@@ -378,9 +463,9 @@ def ask(
             result.output_tokens += int(_finite(usage.get("output_tokens")) or 0)
             result.cost += _finite(usage.get("cost")) or 0.0
     result.duration_ms = int((time.monotonic() - started) * 1000)
-    result.repeats = len(responses)
+    result.rounds = len(responses)
     try:
-        result.answers = average(questions, responses)
+        result.answers = average(questions, responses, answered)
     except Exception as exc:  # the never-raises backstop: a reply nothing above foresaw
         result.errors.append(f"unreadable response ({type(exc).__name__})")
         result.answers = {}

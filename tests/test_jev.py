@@ -157,7 +157,7 @@ def test_no_key_is_no_call(questions: QuestionSet, monkeypatch: pytest.MonkeyPat
     assert result.error == "Jev skipped: OPENROUTER_API_KEY not set"
 
 
-def test_each_question_is_asked_three_times_and_averaged(questions: QuestionSet) -> None:
+def test_each_question_is_asked_in_balanced_rounds_and_averaged(questions: QuestionSet) -> None:
     server = Server(
         _ok(_answers(0.9, "good", {"good": 0.8, "bad": 0.1, "neutral": 0.1}, 2.0)),
         # repeat 2 saw the levels reversed: its 0.5 is the file's 1.5
@@ -171,9 +171,11 @@ def test_each_question_is_asked_three_times_and_averaged(questions: QuestionSet)
             )
         ),
         _ok(_answers(0.6, "bad", {"good": 0.4, "bad": 0.5, "neutral": 0.1}, 1.0)),
+        # round 4 asks only the score (reversed); its other answers are ignored
+        _ok(_answers(0.0, "bad", {"bad": 1.0}, 0.5, {"0": 0.7, "1": 0.2, "2": 0.1})),
     )
     result = _ask(questions, server, session_id="run-1")
-    assert len(server.calls) == 3 and result.repeats == 3 and result.errors == []
+    assert len(server.calls) == 4 and result.rounds == 4 and result.errors == []
     url, headers, body = server.calls[0]
     assert url == "https://openrouter.ai/api/v1/systemone"
     assert headers["Authorization"] == "Bearer sk-or-test-key"
@@ -184,12 +186,13 @@ def test_each_question_is_asked_three_times_and_averaged(questions: QuestionSet)
         "session_id": "run-1",
     }
     sent = [c[2]["questions"] for c in server.calls]
-    assert [list(q["direction"]["criteria"]) for q in sent] == [
+    assert [list(q["direction"]["criteria"]) for q in sent[:3]] == [
         ["good", "bad", "neutral"],
         ["bad", "neutral", "good"],
         ["neutral", "good", "bad"],
     ]
-    assert [q["trend"]["criteria"][0] for q in sent] == ["Worse.", "Better.", "Worse."]
+    assert "direction" not in sent[3] and "material" not in sent[3]
+    assert [q["trend"]["criteria"][0] for q in sent] == ["Worse.", "Better.", "Worse.", "Better."]
     material = result.answers["material"]
     assert material.value == pytest.approx(0.7) and material.spread == pytest.approx(0.3)
     direction = result.answers["direction"]
@@ -199,29 +202,33 @@ def test_each_question_is_asked_three_times_and_averaged(questions: QuestionSet)
     assert direction.margin == pytest.approx(0.3)  # good 0.6 against bad 0.3
     assert direction.agreed == 2  # the third repeat picked bad
     assert material.margin is None and material.agreed == 3
+    assert material.balanced and material.first_lift is None  # true/false has no order
+    # first shown: good 0.8, bad 0.3, neutral 0.1; a fair share is 1/3
+    assert direction.balanced and direction.first_lift == pytest.approx(0.4 - 1 / 3)
     trend = result.answers["trend"]
     assert trend.value == pytest.approx(1.5) and trend.spread == pytest.approx(1.0)
     assert trend.probabilities == pytest.approx({"0": 0.1, "1": 0.2, "2": 0.7})
-    assert trend.agreed == 2  # levels 2, 1.5 and 1 round half up to 2, 2, 1; the mean 1.5 to 2
+    assert trend.agreed == 3  # levels 2, 1.5, 1, 1.5 round half up to 2, 2, 1, 2; the mean to 2
+    assert trend.balanced and trend.first_lift == pytest.approx(0.0)  # 1.5 either way
     assert result.resolved_model == "typesafe/jev-1.13-20260917"
-    assert (result.input_tokens, result.output_tokens) == (1500, 210)
-    assert result.cost == pytest.approx(0.00006)
+    assert (result.input_tokens, result.output_tokens) == (2000, 280)
+    assert result.cost == pytest.approx(0.00008)
     assert result.error is None
 
 
 def test_the_model_is_a_setting(questions: QuestionSet, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("JEV_MODEL", "typesafe/jev-1.13")
     server = Server(_ok(_answers(0.5, "good", {}, 1.0)))
-    result = _ask(questions, server, repeats=1)
+    result = _ask(questions, server, rounds=1)
     assert server.calls[0][2]["model"] == "typesafe/jev-1.13" == result.model
 
 
 def test_a_rate_limit_is_retried_once(questions: QuestionSet) -> None:
     slept: list[float] = []
     server = Server((429, "{}"), _ok(_answers(0.5, "good", {}, 1.0)))
-    result = ask("s", questions, repeats=1, post=server, sleep=slept.append)
+    result = ask("s", questions, rounds=1, post=server, sleep=slept.append)
     assert len(server.calls) == 2 and slept == [2.0]
-    assert result.repeats == 1 and result.errors == []
+    assert result.rounds == 1 and result.errors == []
 
 
 def test_a_failed_repeat_is_left_out_of_the_average(questions: QuestionSet) -> None:
@@ -230,12 +237,15 @@ def test_a_failed_repeat_is_left_out_of_the_average(questions: QuestionSet) -> N
         (429, "slow down"),
         (429, "slow down"),
         _ok(_answers(0.5, "good", {}, 2.0)),
+        _ok(_answers(0.5, "good", {}, 0.0)),
     )
     result = _ask(questions, server)
-    assert len(server.calls) == 4 and result.repeats == 2
+    assert len(server.calls) == 5 and result.rounds == 3
     assert result.errors == ["HTTP 429"]
     assert result.answers["material"].value == pytest.approx(0.7)
     assert result.answers["material"].spread == pytest.approx(0.4)
+    direction = result.answers["direction"]
+    assert not direction.balanced and direction.first_lift is None  # "bad" never led
     assert result.error is None
 
 
@@ -284,7 +294,7 @@ def test_a_bad_key_or_no_credit_stops_at_once(questions: QuestionSet, status: in
 def test_an_unreadable_response_is_an_error(
     questions: QuestionSet, reply: tuple[int, str], error: str | None
 ) -> None:
-    result = _ask(questions, Server(reply), repeats=1)
+    result = _ask(questions, Server(reply), rounds=1)
     assert result.answers == {}
     assert result.error == "Jev gave no usable answer" + (f" ({error})" if error else "")
 
@@ -330,7 +340,7 @@ def test_a_tied_choice_goes_to_the_earlier_label(questions: QuestionSet) -> None
 
 def test_a_long_state_is_cut_and_noted(questions: QuestionSet) -> None:
     server = Server(_ok(_answers(0.5, "good", {}, 1.0)))
-    result = ask("x" * (jev.MAX_STATE_CHARS + 10), questions, repeats=1, post=server)
+    result = ask("x" * (jev.MAX_STATE_CHARS + 10), questions, rounds=1, post=server)
     assert len(server.calls[0][2]["state"]) == jev.MAX_STATE_CHARS
     assert result.notes == [f"state cut to {jev.MAX_STATE_CHARS} characters"]
     assert result.errors == []
@@ -392,7 +402,7 @@ def test_an_unforeseen_failure_in_averaging_is_an_error(
         raise KeyError("x")
 
     monkeypatch.setattr(jev, "average", boom)
-    result = _ask(questions, Server(_ok(_answers(0.5, "good", {}, 1.0))), repeats=1)
+    result = _ask(questions, Server(_ok(_answers(0.5, "good", {}, 1.0))), rounds=1)
     assert result.answers == {}
     assert result.errors == ["unreadable response (KeyError)"]
     assert result.error == "Jev gave no usable answer (unreadable response (KeyError))"
@@ -410,7 +420,7 @@ def test_a_score_outside_the_levels_is_dropped(
 
 def test_the_result_is_saved_as_plain_json(questions: QuestionSet) -> None:
     server = Server(_ok(_answers(0.9, "good", {"good": 1.0}, 2.0)))
-    saved = json.loads(json.dumps(_ask(questions, server, repeats=1).to_dict()))
+    saved = json.loads(json.dumps(_ask(questions, server, rounds=1).to_dict()))
     assert saved["version"] == "test-q1"
     assert saved["answers"]["direction"]["value"] == "good"
     assert saved["answers"]["material"]["probabilities"] == {}
@@ -459,3 +469,61 @@ def test_a_redirect_is_never_followed_with_the_key(monkeypatch: pytest.MonkeyPat
         if isinstance(h, urllib.request.HTTPRedirectHandler)
     ]
     assert [type(h) for h in redirects] == [jev._NoRedirect]
+
+
+def test_every_option_leads_exactly_once_in_the_committed_file() -> None:
+    q = load_questions()
+    assert q.rounds() == 6  # guidance's six labels set the request count
+    for question in q.questions:
+        sent = [q.to_request(r).get(question.key) for r in range(q.rounds())]
+        asked = [s for s in sent if s is not None]
+        assert len(asked) == question.rounds()
+        if question.type == "choice":
+            firsts = [next(iter(s["criteria"])) for s in asked]
+            assert sorted(firsts) == sorted(question.labels())
+            for position in range(len(question.labels())):
+                at = [list(s["criteria"])[position] for s in asked]
+                assert sorted(at) == sorted(question.labels())
+        if question.type == "score":
+            heads = [s["criteria"][0] for s in asked]
+            assert heads.count(question.criteria[0]) == heads.count(question.criteria[-1])
+
+
+def test_a_lean_toward_the_first_option_is_measured() -> None:
+    q = load_questions()
+    (direction,) = [x for x in q.questions if x.key == "direction"]
+    (trend,) = [x for x in q.questions if x.key == "fundamentals"]
+    labels = direction.labels()
+    # a model that gives whichever label is shown first 0.55 and the rest 0.15
+    replies = [
+        {
+            "direction": {
+                "choice": direction.first(r),
+                "probabilities": {
+                    lab: 0.55 if lab == direction.first(r) else 0.15 for lab in labels
+                },
+            }
+        }
+        for r in range(direction.rounds())
+    ]
+    out = average(q, replies)
+    answer = out["direction"]
+    assert answer.balanced and answer.first_lift == pytest.approx(0.55 - 0.25)
+    assert answer.probabilities == pytest.approx({lab: 0.25 for lab in labels})  # cancelled
+    # a score that always lands on the first-listed level: 0 in file order, top reversed
+    top = len(trend.criteria) - 1
+    raw = [{"fundamentals": {"score": 0.0}} for _ in range(trend.rounds())]
+    flipped = [q.unflip(r, i) for i, r in enumerate(raw)]
+    lean = average(q, flipped)["fundamentals"]
+    assert lean.balanced and lean.first_lift == pytest.approx(top / 2)
+    assert lean.value == pytest.approx(top / 2)  # the middle, as a fair answer would be
+
+
+def test_a_choice_too_large_to_balance_is_refused(tmp_path: Path) -> None:
+    labels = ", ".join(f"l{i}: x" for i in range(jev.MAX_LABELS + 1))
+    path = tmp_path / "q.yaml"
+    path.write_text(
+        f"version: v\nquestions: {{a: {{type: choice, instructions: x, criteria: {{{labels}}}}}}}\n"
+    )
+    with pytest.raises(ValueError, match="more than"):
+        load_questions(path)
