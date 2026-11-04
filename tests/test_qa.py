@@ -128,7 +128,7 @@ def test_the_qa_prompt_is_versioned_and_tells_the_model_the_tools() -> None:
     for tool in qa.TOOLS:
         assert tool in prompt.text
     assert '"answer"' in prompt.text and '"passage_ids"' in prompt.text
-    assert "—" not in Path(qa.PROMPT_PATH).read_text(encoding="utf-8")
+    assert "\u2014" not in Path(qa.PROMPT_PATH).read_text(encoding="utf-8")
 
 
 def _searched(*errors: bool) -> AgentRun:
