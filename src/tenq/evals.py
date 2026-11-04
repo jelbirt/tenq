@@ -71,7 +71,7 @@ from tenq.qa import (
     ask_closed,
 )
 from tenq.qa import PROMPT_PATH as QA_PROMPT
-from tenq.search import Xerj, xerj_node
+from tenq.search import INDEX_TIMEOUT_S, Xerj, xerj_node
 
 log = logging.getLogger(__name__)
 
@@ -84,6 +84,14 @@ NIGHT_ONE_PER_MODEL = 10
 PER_MODEL = 30
 CALIBRATION_PER_NIGHT = 150
 HOURS = 4.5
+# no new item starts this close to the deadline: one item can still take an
+# index (search.INDEX_TIMEOUT_S) plus an answer (llm's default timeout)
+RESERVE_S = INDEX_TIMEOUT_S + 900
+INDEX_FAILURES = 3  # this many documents in a row failing to index: search is down
+
+
+class SearchDown(RuntimeError):
+    """The search node will not start, or fails on document after document."""
 
 
 @dataclass
@@ -237,6 +245,8 @@ class Documents:
         self.stack = contextlib.ExitStack()
         self.url: str | None = None
         self.ready: set[str] = set()
+        self.failed: set[str] = set()
+        self.index_failures = 0  # in a row
 
     def __enter__(self) -> Documents:
         return self
@@ -245,14 +255,36 @@ class Documents:
         self.stack.close()
 
     def prepare(self, doc: str) -> str:
-        """The xerj url with `doc` indexed; raises if it cannot be made ready."""
-        if not self.store.has(doc, self.shas[doc]):
-            pages, seconds = extract_pages(self.ds.pdf(doc))
-            self.store.save(doc, self.shas[doc], pages, seconds)
+        """The xerj url with `doc` indexed.
+
+        Raises SearchDown when the node will not start or several documents
+        in a row fail to index (infrastructure: the night stops), and any
+        other exception for this document alone (its questions are skipped).
+        """
+        if doc in self.failed:
+            raise LookupError("document failed earlier tonight")
+        try:
+            if not self.store.has(doc, self.shas[doc]):
+                pages, seconds = extract_pages(self.ds.pdf(doc))
+                self.store.save(doc, self.shas[doc], pages, seconds)
+        except Exception:
+            self.failed.add(doc)
+            raise
         if self.url is None:
-            self.url = self.stack.enter_context(self.node())
+            try:
+                self.url = self.stack.enter_context(self.node())
+            except Exception as e:
+                raise SearchDown(type(e).__name__) from e
         if doc not in self.ready:
-            Xerj(self.url, self.store).index(doc, self.work / "xerj-state" / doc)
+            try:
+                Xerj(self.url, self.store).index(doc, self.work / "xerj-state" / doc)
+            except Exception as e:
+                self.failed.add(doc)
+                self.index_failures += 1
+                if self.index_failures >= INDEX_FAILURES:
+                    raise SearchDown(type(e).__name__) from e
+                raise
+            self.index_failures = 0
             self.ready.add(doc)
         return self.url
 
@@ -286,10 +318,16 @@ def answer_phase(
             if mode == SINGLE_STORE:
                 try:
                     url = docs.prepare(q.doc_name)
+                except SearchDown:
+                    night.stopped = "infrastructure"
+                    return False
                 except Exception as e:
                     log.warning("document not ready (%s)", type(e).__name__)
                     night.counts["document_not_ready"] += 1
                     break  # the other model would hit the same document
+                if stop():  # preparing can take minutes
+                    night.stopped = "deadline"
+                    return True
                 run, a = asker(
                     q, docs.store, url, prompt, document=ds.documents.get(q.doc_name), model=model
                 )
@@ -331,7 +369,10 @@ def grade_phase(
         if stop():
             night.stopped = "deadline"
             return True
-        q = questions[rec["question_id"]]
+        q = questions.get(rec.get("question_id", ""))
+        if q is None:  # its question left the dataset: nothing to grade against
+            night.counts["answer_without_question"] += 1
+            continue
         if rec["status"] == MODEL_FAILURE:
             g_status, label, reason = GRADED, REFUSAL, "model failure"
         else:
@@ -432,8 +473,10 @@ def run_night(
     closed_asker: Asker = ask_closed,
     grader: Grader = grade_one,
     clock: Callable[[], float] = time.monotonic,
+    started: float | None = None,
 ) -> Night:
-    t0 = clock()
+    """One night; the deadline counts from `started` (the process start), if given."""
+    t0 = clock() if started is None else started
     night = Night(started_at=_now())
     nights = load_lines(state.nights)
     if last_hit_a_limit(nights):
@@ -442,7 +485,7 @@ def run_night(
         return night
 
     def stop() -> bool:
-        return clock() - t0 >= hours * 3600
+        return clock() - t0 >= hours * 3600 - RESERVE_S
 
     qa_prompt, closed_prompt = load_prompt(QA_PROMPT), load_prompt(CLOSED_PROMPT_PATH)
     grade_prompt = load_prompt(GRADE_PROMPT)
@@ -489,8 +532,11 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--state", type=Path, default=DEFAULT_STATE, help="private evals checkout")
     ap.add_argument("--root", type=Path, default=DEFAULT_ROOT, help="FinanceBench download")
     ap.add_argument("--docs", type=Path, default=None, help="default: <root>/docs")
-    ap.add_argument("--hours", type=float, default=HOURS, help="stop starting work after this")
+    ap.add_argument(
+        "--hours", type=float, default=HOURS, help="all work done by then, downloads included"
+    )
     args = ap.parse_args(argv)
+    started = time.monotonic()  # the deadline counts the downloads too
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
     try:
         if not args.state.is_dir():
@@ -500,7 +546,9 @@ def main(argv: list[str] | None = None) -> int:
         results = download_results(args.root, manifest)
         store = DocStore(args.docs or args.root / "docs")
         shas = {d: manifest.files[pdf_path(d)] for d in ds.documents}
-        night = run_night(State(args.state), ds, results, store, shas, hours=args.hours)
+        night = run_night(
+            State(args.state), ds, results, store, shas, hours=args.hours, started=started
+        )
     except Exception as e:
         # the type only: a message could quote a question, an answer or a grade
         log.error("eval night failed: %s", type(e).__name__)

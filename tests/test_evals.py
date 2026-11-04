@@ -6,6 +6,7 @@ import contextlib
 import json
 import logging
 from collections.abc import Iterator
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -105,6 +106,9 @@ class Models:
         self.infra_after: int | None = None
         self.usage_limit = False
         self.grade_label: str | None = None  # None: agree with the people
+        self.grade_calls: list[tuple[Question, str, dict[str, Any]]] = []
+        self.grade_infra_at: int | None = None  # this grader call fails, infrastructure
+        self.grade_limit_at: int | None = None  # this grader call hits a usage limit
 
     def _run(self, model: str) -> AgentRun:
         run = AgentRun(model=model, duration_ms=1000, usage={"input_tokens": 10})
@@ -131,8 +135,15 @@ class Models:
 
     def grade(self, q: Question, answer: str, prompt: Prompt, **kw: Any) -> Any:
         self.graded.append(answer)
+        self.grade_calls.append((q, answer, kw))
+        n = len(self.graded)
+        run = AgentRun(model=DEFAULT_MODEL, duration_ms=10)
+        if n == self.grade_limit_at:
+            run.usage_limit = True
+        if n in (self.grade_infra_at, self.grade_limit_at):
+            return run, Grade(INFRA_FAILURE, error="api error: rate_limit")
         label = self.grade_label or HUMAN.get(answer, CORRECT)
-        return AgentRun(model=DEFAULT_MODEL, duration_ms=10), Grade(GRADED, label, "why")
+        return run, Grade(GRADED, label, "why")
 
 
 def _night(state: State, ds: Dataset, docs: DocStore, m: Models, **kw: Any) -> Night:
@@ -186,7 +197,14 @@ def test_the_grader_never_sees_which_model_answered(
 ) -> None:
     m = Models()
     _night(state, ds, docs, m)
-    assert m.graded and not any("opus" in a or "haiku" in a for a in m.graded)
+    answers = load_records(state.answers)
+    calls = m.grade_calls[12:]  # past calibration: tenq's own answers
+    assert len(calls) == 16
+    for q, answer, kw in calls:
+        assert kw == {"model": DEFAULT_MODEL}  # the grader's model, nothing about the author
+        assert q in QUESTIONS  # the dataset's question, untouched
+        assert answer == "the figure was $1"  # byte for byte what both models said
+    assert {r["answer"] for r in answers.values()} == {"the figure was $1"}
 
 
 def test_a_second_night_resumes_and_redoes_nothing(
@@ -269,9 +287,123 @@ def test_a_model_failure_is_a_refusal_with_no_grader_call(
     assert len(grades) == 16 and {g["label"] for g in grades.values()} == {REFUSAL}
 
 
-def test_a_changed_answer_or_grader_is_graded_again(
+def test_an_answer_from_an_older_prompt_is_answered_again(
     state: State, ds: Dataset, docs: DocStore
 ) -> None:
+    _night(state, ds, docs, Models())
+    key = answer_key(SINGLE, "opus", "q0")
+    append(state.answers, {**load_records(state.answers)[key], "prompt_version": "qa-v0"})
+    m = Models()
+    _night(state, ds, docs, m)
+    assert m.asked == [(SINGLE, "opus")]
+
+
+def test_a_new_grader_version_grades_every_answer_again(
+    state: State, ds: Dataset, docs: DocStore
+) -> None:
+    _night(state, ds, docs, Models())
+    for rec in load_records(state.grades).values():
+        append(state.grades, {**rec, "prompt_version": "grade-v0"})
+    m = Models()
+    night = _night(state, ds, docs, m)
+    assert night.counts["graded"] == 16 and len(m.graded) == 16
+
+
+def test_an_answer_whose_question_left_the_dataset_is_skipped(
+    state: State, ds: Dataset, docs: DocStore
+) -> None:
+    _night(state, ds, docs, Models())
+    rec = load_records(state.answers)[answer_key(SINGLE, "opus", "q0")]
+    append(state.answers, {**rec, "key": "singlestore:opus:gone", "question_id": "gone"})
+    night = _night(state, ds, docs, Models())
+    assert night.counts["answer_without_question"] == 1 and night.stopped is None
+
+
+@pytest.mark.parametrize("at", [3, 14])  # in calibration, then grading tenq's answers
+def test_a_usage_limit_while_grading_stops_and_skips_the_next_night(
+    state: State, ds: Dataset, docs: DocStore, at: int
+) -> None:
+    m = Models()
+    m.grade_limit_at = at
+    night = _night(state, ds, docs, m)
+    assert night.stopped == "infrastructure"
+    assert load_lines(state.nights)[-1]["usage"]["usage_limit"]
+    m = Models()
+    assert _night(state, ds, docs, m).stopped == "skipped after a usage limit"
+    assert m.graded == [] and m.asked == []
+
+
+@pytest.mark.parametrize("at", [3, 14])
+def test_an_infrastructure_failure_while_grading_records_nothing_for_it(
+    state: State, ds: Dataset, docs: DocStore, at: int
+) -> None:
+    m = Models()
+    m.grade_infra_at = at
+    night = _night(state, ds, docs, m)
+    assert night.stopped == "infrastructure"
+    recorded = len(load_records(state.calibration)) + len(load_records(state.grades))
+    assert recorded == at - 1
+    assert not load_lines(state.nights)[-1]["usage"]["usage_limit"]
+
+
+def test_the_deadline_counts_from_the_process_start_less_a_reserve(
+    state: State, ds: Dataset, docs: DocStore
+) -> None:
+    m = Models()
+    limit = evals.HOURS * 3600 - evals.RESERVE_S
+    # inside the reserve before the hours are up: nothing new starts
+    night = _night(state, ds, docs, m, clock=lambda: limit + 1, started=0.0)
+    assert night.stopped == "deadline" and m.asked == [] and m.graded == []
+    m = Models()
+    night = _night(state, ds, docs, m, clock=lambda: limit - 1, started=0.0)
+    assert night.stopped is None and m.asked
+
+
+def test_a_search_node_that_will_not_start_stops_the_night(
+    state: State, ds: Dataset, docs: DocStore
+) -> None:
+    @contextlib.contextmanager
+    def dead() -> Iterator[str]:
+        raise RuntimeError("xerj did not start")
+        yield ""
+
+    m = Models()
+    night = run_night(
+        state, ds, RESULTS, docs, {QA_DOC: SHA}, node=dead,
+        asker=m.ask, closed_asker=m.ask_closed, grader=m.grade,
+    )  # fmt: skip
+    assert night.stopped == "infrastructure"
+    assert m.asked == [] and load_records(state.answers) == {}
+
+
+def test_documents_failing_to_index_in_a_row_mean_search_is_down(
+    state: State, docs: DocStore, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    names = [f"ACME{i}_2020_10K" for i in range(4)]
+    for name in names:
+        docs.save(name, SHA, ["one", "two"], 0.1)
+    qs = [replace(_q(i), doc_name=name) for i, name in enumerate(names)]
+    many = Dataset(tmp_path / "fb", qs, {n: Document(n, "Acme", "10k", 2020) for n in names})
+
+    class Broken:
+        def __init__(self, url: str, store: DocStore) -> None:
+            pass
+
+        def index(self, key: str, state_dir: Path) -> None:
+            raise RuntimeError("xerj autoindex failed")
+
+    monkeypatch.setattr(evals, "Xerj", Broken)
+    m = Models()
+    night = run_night(
+        state, many, RESULTS, docs, dict.fromkeys(names, SHA), node=_node,
+        asker=m.ask, closed_asker=m.ask_closed, grader=m.grade,
+    )  # fmt: skip
+    assert night.stopped == "infrastructure"
+    assert night.counts["document_not_ready"] == evals.INDEX_FAILURES - 1
+    assert m.asked == []
+
+
+def test_a_changed_answer_is_graded_again(state: State, ds: Dataset, docs: DocStore) -> None:
     _night(state, ds, docs, Models())
     key = answer_key(SINGLE, "opus", "q0")
     rec = load_records(state.answers)[key]

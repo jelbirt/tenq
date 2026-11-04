@@ -315,3 +315,16 @@ def test_a_line_left_open_by_a_crash_loses_no_later_record(tmp_path: Path, cut: 
     graded, _ = grade_items(items, QUESTIONS, records, PROMPT, grader=_grader({}, []))
     assert graded == (11 if cut else 10)
     assert len(load_records(records)) == 12
+
+
+def test_grading_stops_when_asked_and_reports_every_call(tmp_path: Path) -> None:
+    items = calibration_set(RESULTS)
+    records = tmp_path / "cal.jsonl"
+    runs: list[AgentRun | None] = []
+    seen: list[str] = []
+    count, stopped = grade_items(
+        items, QUESTIONS, records, PROMPT, grader=_grader({}, seen),
+        stop=lambda: len(seen) >= 2, on_run=runs.append,
+    )  # fmt: skip
+    assert (count, stopped) == (2, False)
+    assert len(runs) == 2 and all(r is not None and r.usage for r in runs)
