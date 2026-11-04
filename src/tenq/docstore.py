@@ -22,10 +22,11 @@ from __future__ import annotations
 import argparse
 import bisect
 import json
+import os
 import re
 import time
-from collections.abc import Iterable
-from concurrent.futures import ProcessPoolExecutor
+from collections.abc import Callable, Iterable
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
@@ -40,6 +41,7 @@ EVIDENCE_GRAM = 4
 EVIDENCE_HIT = 0.5  # share of the evidence text's word 4-grams (or figures) found on the page
 FIGURE = re.compile(r"[0-9][0-9,.]*[0-9]")
 MIN_FIGURES = 5  # below this a passage is prose, and its words decide
+YEAR = re.compile(r"(?:19|20)[0-9]{2}")  # column years are on every page: not evidence
 TOKEN = re.compile(r"[a-z0-9]+")
 
 
@@ -117,7 +119,10 @@ class DocStore:
         path = self.root / doc / "meta.json"
         if not path.is_file():
             return None
-        return DocMeta(**json.loads(path.read_text(encoding="utf-8")))
+        try:
+            return DocMeta(**json.loads(path.read_text(encoding="utf-8")))
+        except (ValueError, TypeError):
+            return None  # unreadable: treated as not saved, so it is extracted again
 
     def has(self, doc: str, pdf_sha256: str) -> bool:
         """Saved from this exact PDF by this extractor version."""
@@ -128,9 +133,12 @@ class DocStore:
         text, starts, empty = page_marked_text(pages)
         meta = DocMeta(doc, pdf_sha256, extractor_version(), starts, empty, round(seconds, 2))
         self.text_dir(doc).mkdir(parents=True, exist_ok=True)
-        (self.text_dir(doc) / f"{doc}.txt").write_text(text, encoding="utf-8")
-        # meta last: has() keys on it, so a crash mid-save leaves no half document
-        (self.root / doc / "meta.json").write_text(json.dumps(asdict(meta), indent=1) + "\n")
+        meta_path = self.root / doc / "meta.json"
+        # has() keys on meta: drop the old one first and write the new one last,
+        # each file whole or not at all, so a crash never pairs old meta with new text
+        meta_path.unlink(missing_ok=True)
+        _write_whole(self.text_dir(doc) / f"{doc}.txt", text)
+        _write_whole(meta_path, json.dumps(asdict(meta), indent=1) + "\n")
         return meta
 
     def _text(self, doc: str) -> tuple[DocMeta, str] | None:
@@ -155,12 +163,25 @@ class DocStore:
     def page_of(self, doc: str, line: int) -> int | None:
         """The zero-indexed page a line falls on."""
         m = self.meta(doc)
-        if m is None or not m.page_lines or line < m.page_lines[0]:
-            return None
-        return bisect.bisect_right(m.page_lines, line) - 1
+        return None if m is None else _page(m, line)
+
+    def page_texts(self, doc: str) -> list[str]:
+        """Every page's passage text, page 0 first; one read of the document."""
+        saved = self._text(doc)
+        if saved is None:
+            return []
+        m, text = saved
+        out: list[list[str]] = [[] for _ in m.page_lines]
+        markers = set(m.page_lines)
+        for p in split_passages(doc, text):
+            page = _page(m, p.line)
+            if page is not None and p.line not in markers:
+                out[page].append(p.text)
+        return ["\n".join(t) for t in out]
 
     def page_text(self, doc: str, page: int) -> str:
-        return "\n".join(p.text for p in self.passages(doc) if self.page_of(doc, p.line) == page)
+        texts = self.page_texts(doc)
+        return texts[page] if 0 <= page < len(texts) else ""
 
     def passage(self, passage_id: str) -> Passage | None:
         """The passage with this exact id, or None; ids come from the model."""
@@ -178,27 +199,48 @@ class DocStore:
         ]
 
 
+def _write_whole(path: Path, text: str) -> None:
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(text, encoding="utf-8")
+    os.replace(tmp, path)
+
+
+def _page(m: DocMeta, line: int) -> int | None:
+    if not m.page_lines or line < m.page_lines[0]:
+        return None
+    return bisect.bisect_right(m.page_lines, line) - 1
+
+
 def _grams(text: str) -> set[tuple[str, ...]]:
     words = TOKEN.findall(text.lower())
     return {tuple(words[i : i + EVIDENCE_GRAM]) for i in range(len(words) - EVIDENCE_GRAM + 1)}
 
 
 def _figures(text: str) -> set[str]:
-    return {f.replace(",", "") for f in FIGURE.findall(text) if sum(c.isdigit() for c in f) >= 3}
+    return {
+        f.replace(",", "")
+        for f in FIGURE.findall(text)
+        if sum(c.isdigit() for c in f) >= 3 and not YEAR.fullmatch(f)
+    }
 
 
-def evidence_share(evidence: str, page: str) -> float:
-    """Share of the evidence text's word 4-grams that appear on the page, or of
-    its figures when it has at least MIN_FIGURES, whichever is higher. Word
-    grams, not exact text: FinanceBench's own extraction splits lines and words
-    differently ("Cash Flow s"), and in tables runs words together
-    ("Cashandcashequivalents"), where only the figures still line up."""
+def evidence_shares(evidence: str, page: str) -> tuple[float, float]:
+    """(words, figures): the share of the evidence text's word 4-grams that
+    appear on the page, and of its figures (years aside) when it has at least
+    MIN_FIGURES, else 0. Word grams, not exact text: FinanceBench's own
+    extraction splits lines and words differently ("Cash Flow s"), and in
+    tables runs words together ("Cashandcashequivalents"), where only the
+    figures still line up."""
     want = _grams(evidence)
     words = len(want & _grams(page)) / len(want) if want else 0.0
     figures = _figures(evidence)
     if len(figures) < MIN_FIGURES:
-        return words
-    return max(words, len(figures & _figures(page)) / len(figures))
+        return words, 0.0
+    return words, len(figures & _figures(page)) / len(figures)
+
+
+def evidence_share(evidence: str, page: str) -> float:
+    return max(evidence_shares(evidence, page))
 
 
 @dataclass(frozen=True)
@@ -206,13 +248,23 @@ class EvidenceCheck:
     question_id: str
     doc_name: str
     page: int
-    share: float
+    words: float  # on the gold page
+    figures: float
     best_page: int
     best_share: float
 
     @property
+    def share(self) -> float:
+        return max(self.words, self.figures)
+
+    @property
     def hit(self) -> bool:
         return self.share >= EVIDENCE_HIT
+
+    @property
+    def figures_only(self) -> bool:
+        """A hit the words alone would not make: worth a look by hand."""
+        return self.hit and self.words < EVIDENCE_HIT
 
 
 def check_evidence(store: DocStore, questions: Iterable[Question]) -> list[EvidenceCheck]:
@@ -223,15 +275,12 @@ def check_evidence(store: DocStore, questions: Iterable[Question]) -> list[Evide
     for q in questions:
         for e in q.evidence:
             if e.doc_name not in pages:
-                m = store.meta(e.doc_name)
-                n = m.pages if m else 0
-                pages[e.doc_name] = [store.page_text(e.doc_name, i) for i in range(n)]
-            texts = pages[e.doc_name]
-            shares = [evidence_share(e.text, t) for t in texts]
-            share = shares[e.page] if 0 <= e.page < len(shares) else 0.0
-            best = max(range(len(shares)), key=lambda i: shares[i], default=-1)
-            top = shares[best] if shares else 0.0
-            out.append(EvidenceCheck(q.id, e.doc_name, e.page, share, best, top))
+                pages[e.doc_name] = store.page_texts(e.doc_name)
+            each = [evidence_shares(e.text, t) for t in pages[e.doc_name]]
+            words, figures = each[e.page] if 0 <= e.page < len(each) else (0.0, 0.0)
+            best = max(range(len(each)), key=lambda i: max(each[i]), default=-1)
+            top = max(each[best]) if each else 0.0
+            out.append(EvidenceCheck(q.id, e.doc_name, e.page, words, figures, best, top))
     return out
 
 
@@ -239,21 +288,49 @@ def _extract(pdf: Path) -> tuple[list[str], float]:
     return extract_pages(pdf)
 
 
-def extract_all(ds: Dataset, store: DocStore, shas: dict[str, str], jobs: int) -> list[DocMeta]:
-    """Extract every document not already saved from the same PDF; return all metas."""
+Extractor = Callable[[Path], tuple[list[str], float]]
+
+
+def extract_all(
+    ds: Dataset, store: DocStore, shas: dict[str, str], jobs: int, extract: Extractor = _extract
+) -> tuple[list[DocMeta], dict[str, str]]:
+    """Extract every document not already saved from the same PDF, saving each
+    as it finishes. Returns all saved metas and, for documents that failed, the
+    error type: one bad PDF degrades the run, it does not stop it."""
     todo = [d for d in ds.documents if not store.has(d, shas[d])]
+    failed: dict[str, str] = {}
     if todo:
         with ProcessPoolExecutor(max_workers=jobs) as pool:
-            for doc, (pages, seconds) in zip(
-                todo, pool.map(_extract, [ds.pdf(d) for d in todo]), strict=True
-            ):
+            futures = {pool.submit(extract, ds.pdf(d)): d for d in todo}
+            for f in as_completed(futures):
+                doc = futures[f]
+                try:
+                    pages, seconds = f.result()
+                except Exception as e:  # any PDF failure is reported, not raised
+                    failed[doc] = type(e).__name__
+                    print(f"failed {doc}: {failed[doc]}", flush=True)
+                    continue
                 meta = store.save(doc, shas[doc], pages, seconds)
                 print(f"extracted {doc}: {meta.pages} pages in {seconds:.1f}s", flush=True)
     metas = [store.meta(d) for d in ds.documents]
-    return [m for m in metas if m is not None]
+    return [m for m in metas if m is not None], dict(sorted(failed.items()))
 
 
-def report(metas: list[DocMeta], checks: list[EvidenceCheck]) -> dict[str, Any]:
+def _item(c: EvidenceCheck) -> dict[str, Any]:
+    return {
+        "question": c.question_id,
+        "doc": c.doc_name,
+        "gold_page": c.page,
+        "words": round(c.words, 2),
+        "figures": round(c.figures, 2),
+        "best_page": c.best_page,
+        "best_share": round(c.best_share, 2),
+    }
+
+
+def report(
+    metas: list[DocMeta], checks: list[EvidenceCheck], failed: dict[str, str] | None = None
+) -> dict[str, Any]:
     """Counts, page numbers and document names only: no dataset text, so the
     report can be pasted into a public PR."""
     misses = [c for c in checks if not c.hit]
@@ -265,19 +342,11 @@ def report(metas: list[DocMeta], checks: list[EvidenceCheck]) -> dict[str, Any]:
             {"doc": m.doc_name, "pages": m.pages, "seconds": m.seconds, "empty": m.empty_pages}
             for m in metas
         ],
+        "failed": failed or {},
         "evidence_items": len(checks),
         "evidence_on_gold_page": len(checks) - len(misses),
-        "evidence_misses": [
-            {
-                "question": c.question_id,
-                "doc": c.doc_name,
-                "gold_page": c.page,
-                "share": round(c.share, 2),
-                "best_page": c.best_page,
-                "best_share": round(c.best_share, 2),
-            }
-            for c in misses
-        ],
+        "evidence_misses": [_item(c) for c in misses],
+        "evidence_on_figures_only": [_item(c) for c in checks if c.figures_only],
     }
 
 
@@ -296,18 +365,23 @@ def main(argv: list[str] | None = None) -> None:
     ds = download(args.root, manifest)
     store = DocStore(args.docs or args.root / "docs")
     shas = {d: manifest.files[pdf_path(d)] for d in ds.documents}
-    metas = extract_all(ds, store, shas, args.jobs)
-    rep = report(metas, check_evidence(store, ds.questions))
+    metas, failed = extract_all(ds, store, shas, args.jobs)
+    rep = report(metas, check_evidence(store, ds.questions), failed)
     if args.report:
         args.report.write_text(json.dumps(rep, indent=1) + "\n")
     no_text = sum(len(m.empty_pages) for m in metas)
     print(
         f"{rep['documents']} documents, {rep['pages']} pages ({no_text} with no text), "
         f"{rep['extract_seconds']}s extracting; gold evidence found on its page for "
-        f"{rep['evidence_on_gold_page']} of {rep['evidence_items']} items"
+        f"{rep['evidence_on_gold_page']} of {rep['evidence_items']} items "
+        f"({len(rep['evidence_on_figures_only'])} on figures only)"
     )
+    for doc, err in rep["failed"].items():
+        print("failed", doc, err)
     for miss in rep["evidence_misses"]:
         print("miss", json.dumps(miss))
+    for item in rep["evidence_on_figures_only"]:
+        print("figures only", json.dumps(item))
 
 
 if __name__ == "__main__":

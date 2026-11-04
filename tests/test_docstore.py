@@ -2,20 +2,24 @@
 
 from __future__ import annotations
 
+import json
 import shutil
 from pathlib import Path
 
 import pytest
 
+import tenq.docstore as docstore
 from tenq.docstore import (
     DocStore,
     check_evidence,
     evidence_share,
+    evidence_shares,
+    extract_all,
     extract_pages,
     page_marked_text,
     report,
 )
-from tenq.financebench import Evidence, Question
+from tenq.financebench import Dataset, Document, Evidence, Question
 from tenq.search import Xerj, hits_from_response, xerj_node
 
 DOC = "3ACME_2020_10K"  # starts with a digit, as 3M_2018_10K does
@@ -155,6 +159,13 @@ def test_a_few_figures_do_not_outvote_the_words() -> None:
     )
 
 
+def test_column_years_are_not_figures() -> None:
+    # every 10-K page has the column years: they must not make a page a match
+    evidence = "Revenue | 2022 | 2021 | 2020 | 81,462 | 53,823 | 31,536 | 24,578"
+    page = "Selected data for fiscal 2022 2021 2020 shown in other notes 1,111 2,222"
+    assert evidence_shares(evidence, page) == (0.0, 0.0)  # four figures: under MIN_FIGURES
+
+
 def test_evidence_share_tolerates_line_breaks_but_not_other_text() -> None:
     page = "Purchases of property, plant and equipment (PP&E) (1,577) (1,373)"
     assert evidence_share("Purchases of property, \nplant and \nequipment (PP&E)", page) == 1.0
@@ -176,6 +187,74 @@ def test_evidence_check_finds_the_gold_page_and_names_the_best_page_on_a_miss(
     assert not miss.hit and miss.best_page == 2 and miss.best_share == 1.0
     (gone,) = check_evidence(store, [_question(40, text)])
     assert gone.share == 0.0 and not gone.hit
+
+
+def test_a_hit_on_figures_alone_is_reported_for_a_look(store: DocStore) -> None:
+    # same figures, other words between them: no word 4-gram survives
+    pages = ["North 111,111 South 222,222 East 333,333 West 444,444 Other 555,555"]
+    s = DocStore(store.root.parent / "fig")
+    s.save(DOC, "b" * 64, pages, 0.0)
+    q = _question(0, "Totalsrow | 111,111 | 222,222 | 333,333 | 444,444 | 555,555")
+    (c,) = check_evidence(s, [q])
+    assert c.hit and c.figures_only and c.words < c.figures
+    meta = s.meta(DOC)
+    assert meta is not None
+    rep = report([meta], [c])
+    assert rep["evidence_misses"] == []
+    assert [i["question"] for i in rep["evidence_on_figures_only"]] == ["q1"]
+
+
+def test_page_texts_reads_the_document_once_and_matches_page_text(tmp_path: Path) -> None:
+    pages = [f"Page {i} heading\n\nBody text of page {i}\n\nMore of page {i}" for i in range(60)]
+    s = DocStore(tmp_path / "many")
+    meta = s.save(DOC, "c" * 64, pages, 0.0)
+    texts = s.page_texts(DOC)
+    assert len(texts) == 60 and texts[37] == s.page_text(DOC, 37)
+    assert "Body text of page 37" in texts[37] and "page 38" not in texts[37]
+    assert s.page_text(DOC, 60) == "" and s.page_text(DOC, -1) == ""
+    assert s.page_of(DOC, meta.page_lines[5]) == 5  # a marker line opens its page
+    assert s.page_of(DOC, meta.page_lines[0] - 1) is None
+    assert s.page_of(DOC, 10**6) == 59
+
+
+def test_a_re_extract_that_dies_mid_save_leaves_no_stale_meta(
+    store: DocStore, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def die(path: Path, text: str) -> None:
+        raise OSError("disk full")
+
+    monkeypatch.setattr(docstore, "_write_whole", die)
+    with pytest.raises(OSError):
+        store.save(DOC, "d" * 64, ["New text"], 0.0)
+    assert store.meta(DOC) is None and store.passages(DOC) == []
+
+
+def test_unreadable_meta_counts_as_not_saved(store: DocStore) -> None:
+    (store.root / DOC / "meta.json").write_text('{"doc_name": "3ACME', encoding="utf-8")
+    assert store.meta(DOC) is None and not store.has(DOC, "a" * 64)
+    (store.root / DOC / "meta.json").write_text(json.dumps({"doc_name": DOC}), encoding="utf-8")
+    assert store.meta(DOC) is None
+
+
+def _fake_extract(pdf: Path) -> tuple[list[str], float]:
+    if pdf.stem == "BROKEN_2020_10K":
+        raise ValueError("not a PDF")
+    return [f"Text of {pdf.stem}"], 0.5
+
+
+def test_extract_all_skips_saved_documents_and_survives_a_bad_pdf(tmp_path: Path) -> None:
+    names = ["GOOD_2020_10K", "BROKEN_2020_10K", "SAVED_2020_10K"]
+    ds = Dataset(tmp_path, [], {n: Document(n, "x", "10k", 2020) for n in names})
+    s = DocStore(tmp_path / "docs")
+    s.save("SAVED_2020_10K", "e" * 64, ["Already here"], 9.0)
+    shas = {n: "e" * 64 for n in names}
+    metas, failed = extract_all(ds, s, shas, jobs=2, extract=_fake_extract)
+    assert failed == {"BROKEN_2020_10K": "ValueError"}
+    assert sorted(m.doc_name for m in metas) == ["GOOD_2020_10K", "SAVED_2020_10K"]
+    saved = s.meta("SAVED_2020_10K")
+    assert saved is not None and saved.seconds == 9.0  # not extracted again
+    assert "Text of GOOD_2020_10K" in s.page_text("GOOD_2020_10K", 0)
+    assert report(metas, [], failed)["failed"] == failed
 
 
 def test_the_report_carries_no_document_text(store: DocStore) -> None:
