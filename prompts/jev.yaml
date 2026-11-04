@@ -1,7 +1,12 @@
 # Jev's questions about one stock's facts pack. Each is narrow on purpose:
 # Jev answers typed questions well and open "what should I do" questions
-# badly, and it is weak at arithmetic, so every number it sees was computed
-# in code. Rules (task 6) combine the answers into the call.
+# badly, and it is weak at arithmetic and dates, so every number and every
+# item's age was computed in code. Rules (task 6) combine the answers into
+# the call; anything that needs a threshold (how big a move is, whether news
+# is already in the price) is decided there, in code, not asked here.
+#
+# "Recent" means an 8-K or headline whose printed age is 7 days old or less;
+# the pack keeps 8-Ks for 30 days, so older items are context only.
 #
 # Types (OpenRouter System One): noul is the probability a statement is
 # true; choice picks one label from criteria; score picks a level from an
@@ -11,33 +16,36 @@ questions:
   material:
     type: noul
     instructions: >-
-      Does any headline or 8-K in the facts report something that could change
-      the company's revenue, profit or risk by more than a routine amount
-      (results, guidance, a large deal, an acquisition, a security incident,
-      a lawsuit, an executive departure, an index change)?
+      Does any recent headline or 8-K (7 days old or less, by its printed age)
+      report something that could change the company's revenue, profit or risk
+      by more than a routine amount (results, guidance, a large deal, an
+      acquisition, a security incident, a lawsuit, an executive departure, an
+      index change)?
     criteria:
-      "true": At least one item is material news about this company.
-      "false": Only routine items, opinion pieces, or nothing new.
+      "true": At least one recent item is material news about this company.
+      "false": Only routine items, opinion pieces, older items, or nothing.
   direction:
     type: choice
     instructions: >-
-      Taken together, is the new information in the headlines and 8-Ks good or
-      bad for this company's business (not for its stock price)?
+      Taken together, is the information in the recent headlines and 8-Ks
+      (7 days old or less) good or bad for this company's business (not for
+      its stock price)?
     criteria:
       good: Mostly good for the business.
       bad: Mostly bad for the business.
       mixed: Real good and bad items that roughly offset.
-      neutral: Nothing that moves the business either way.
+      neutral: Nothing recent that moves the business either way.
   source:
     type: choice
     instructions: >-
-      What is the strongest kind of evidence behind the most important new item?
+      What is the strongest kind of evidence behind the most important recent
+      item (7 days old or less)?
     criteria:
       reported: Reported results or a filed document (10-Q, 10-K, 8-K).
       company: A company announcement or guidance.
       reporting: News reporting of a specific event.
       opinion: Analyst or columnist opinion, previews, or speculation.
-      none: There is no new item.
+      none: There is no recent item.
   guidance:
     type: choice
     instructions: >-
@@ -48,6 +56,7 @@ questions:
       kept: Guidance was reaffirmed.
       none: No guidance appears in the facts.
   fundamentals:
+    # Rules ignore this answer when the pack has no fin: numbers.
     type: score
     instructions: >-
       From the latest 10-Q or 10-K numbers (growth from a year ago, margins,
@@ -58,30 +67,21 @@ questions:
       - Steady.
       - Somewhat improving.
       - Clearly improving.
-  priced_in:
-    type: noul
-    instructions: >-
-      Has the stock already moved strongly against QQQ in the direction the news
-      points (the excess return lines over 5 and 20 sessions), so that the news
-      is likely already in the price?
-    criteria:
-      "true": The stock has already moved strongly with the news.
-      "false": The move is small, opposite, or there is no clear news.
   risk:
     type: noul
     instructions: >-
-      Is there a new risk event for this company in the facts: a lawsuit,
-      investigation, outage or breach, a downgrade, an executive leaving, or a
-      customer loss?
+      Is there a recent risk event for this company (7 days old or less, by
+      its printed age): a lawsuit, investigation, outage or breach, a
+      downgrade, an executive leaving, or a customer loss?
     criteria:
-      "true": A new risk event appears.
-      "false": No new risk event appears.
+      "true": A recent risk event appears.
+      "false": No recent risk event appears.
   catalyst:
     type: noul
     instructions: >-
-      Do the facts name a specific company event expected within the next four
-      weeks (an earnings date, an investor day, a product launch, an index
-      change taking effect)?
+      Do the facts name a specific upcoming company event with a date (an
+      earnings date, an investor day, a product launch, an index change taking
+      effect)?
     criteria:
-      "true": A dated event in the next four weeks is named.
-      "false": No such event is named.
+      "true": An upcoming dated company event is named.
+      "false": No upcoming dated event is named.

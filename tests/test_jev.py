@@ -86,7 +86,7 @@ def _ask(questions: QuestionSet, server: Server, **kw: Any) -> jev.Result:
 def test_the_committed_question_file_loads() -> None:
     q = load_questions()
     assert q.version == "jev-q1"
-    assert len(q.questions) == 8
+    assert len(q.questions) == 7
     assert {x.type for x in q.questions} == {"noul", "choice", "score"}
     assert "\u2014" not in jev.QUESTIONS_PATH.read_text(encoding="utf-8")
 
@@ -195,16 +195,38 @@ def test_a_rate_limit_is_retried_once(questions: QuestionSet) -> None:
 def test_a_failed_repeat_is_left_out_of_the_average(questions: QuestionSet) -> None:
     server = Server(
         _ok(_answers(0.9, "good", {}, 2.0)),
-        (503, "busy"),
-        (503, "still busy"),
-        TimeoutError("slow"),
-        TimeoutError("slow"),
+        (429, "slow down"),
+        (429, "slow down"),
+        _ok(_answers(0.5, "good", {}, 2.0)),
     )
     result = _ask(questions, server)
-    assert result.repeats == 1
-    assert result.errors == ["HTTP 503", "request error TimeoutError"]
-    assert result.answers["material"].value == 0.9 and result.answers["material"].spread == 0
+    assert len(server.calls) == 4 and result.repeats == 2
+    assert result.errors == ["HTTP 429"]
+    assert result.answers["material"].value == pytest.approx(0.7)
+    assert result.answers["material"].spread == pytest.approx(0.4)
     assert result.error is None
+
+
+@pytest.mark.parametrize(
+    ("first", "error"),
+    [((503, "down"), "HTTP 503"), (TimeoutError("slow"), "request error TimeoutError")],
+)
+def test_a_service_still_down_after_its_retry_ends_the_repeats(
+    questions: QuestionSet, first: tuple[int, str] | Exception, error: str
+) -> None:
+    slept: list[float] = []
+    server = Server(first, first)
+    result = ask("s", questions, post=server, sleep=slept.append)
+    assert len(server.calls) == 2 and slept == [2.0]  # one retry, no sleep after the last
+    assert result.errors == [error]
+    assert result.error == f"Jev gave no usable answer ({error})"
+
+
+@pytest.mark.parametrize("status", [400, 404, 413])
+def test_a_request_the_service_refuses_is_not_repeated(questions: QuestionSet, status: int) -> None:
+    server = Server((status, "{}"))
+    result = _ask(questions, server)
+    assert len(server.calls) == 1 and result.errors == [f"HTTP {status}"]
 
 
 @pytest.mark.parametrize("status", [401, 402, 403])
@@ -275,7 +297,8 @@ def test_a_long_state_is_cut_and_noted(questions: QuestionSet) -> None:
     server = Server(_ok(_answers(0.5, "good", {}, 1.0)))
     result = ask("x" * (jev.MAX_STATE_CHARS + 10), questions, repeats=1, post=server)
     assert len(server.calls[0][2]["state"]) == jev.MAX_STATE_CHARS
-    assert result.errors == [f"state cut to {jev.MAX_STATE_CHARS} characters"]
+    assert result.notes == [f"state cut to {jev.MAX_STATE_CHARS} characters"]
+    assert result.errors == []
 
 
 def test_logs_and_the_record_never_carry_the_key_state_or_reply(
@@ -283,18 +306,71 @@ def test_logs_and_the_record_never_carry_the_key_state_or_reply(
 ) -> None:
     secret_state = "CONFIDENTIAL-STATE-7731"
     secret_reply = "CONFIDENTIAL-REPLY-7731"
-    server = Server(
-        (400, secret_reply),
-        (200, secret_reply),
-        TimeoutError(secret_reply),
-        TimeoutError(secret_reply),
+    replies = Server(
+        (200, secret_reply), (429, secret_reply), (429, secret_reply), (400, secret_reply)
     )
+    hung = Server(TimeoutError(secret_reply), TimeoutError(secret_reply))
+    renamed = Server((200, json.dumps({"model": secret_reply + " x" * 20, "answers": {}})))
     with caplog.at_level(logging.DEBUG):
-        result = ask(secret_state, questions, post=server, sleep=lambda s: None)
-    text = caplog.text + json.dumps(result.to_dict())
+        results = [
+            ask(secret_state, questions, post=server, sleep=lambda s: None)
+            for server in (replies, hung, renamed)
+        ]
+    text = caplog.text + json.dumps([r.to_dict() for r in results])
     for secret in (key, secret_state, secret_reply):
         assert secret not in text
-    assert result.errors == ["HTTP 400", "unreadable response", "request error TimeoutError"]
+    assert results[0].errors == ["unreadable response", "HTTP 429", "HTTP 400"]
+    assert results[1].errors == ["request error TimeoutError"]
+    assert results[2].resolved_model == ""
+
+
+HUGE = "1" + "0" * 400
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        '{"answers": {"material": {"noul": ' + HUGE + "}}}",
+        '{"answers": {"trend": {"score": ' + HUGE + "}}}",
+        '{"answers": {"direction": {"choice": "good", "probabilities": {"good": ' + HUGE + "}}}}",
+        '{"answers": {"material": {"noul": 0.5}}, "usage": {"input_tokens": '
+        + HUGE
+        + ', "cost": '
+        + HUGE
+        + "}}",
+        "[" * 200_000,
+        '{"answers": ' + "[" * 200_000 + "1" + "]" * 200_000 + "}",
+        '{"answers": {"material": {"noul": 0.5}}, "model": ["x"]}',
+    ],
+)
+def test_a_hostile_reply_is_never_a_crash(questions: QuestionSet, body: str) -> None:
+    result = _ask(questions, Server(*[(200, body)] * 3))
+    assert isinstance(result, jev.Result)
+    assert result.input_tokens == 0 and result.cost == 0.0
+    assert result.resolved_model == ""
+
+
+def test_an_unforeseen_failure_in_averaging_is_an_error(
+    questions: QuestionSet, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def boom(*a: Any) -> None:
+        raise KeyError("x")
+
+    monkeypatch.setattr(jev, "average", boom)
+    result = _ask(questions, Server(_ok(_answers(0.5, "good", {}, 1.0))), repeats=1)
+    assert result.answers == {}
+    assert result.errors == ["unreadable response (KeyError)"]
+    assert result.error == "Jev gave no usable answer (unreadable response (KeyError))"
+
+
+@pytest.mark.parametrize(
+    ("level", "kept"), [(0, True), (2, True), (2.5, False), (3, False), (-1, False)]
+)
+def test_a_score_outside_the_levels_is_dropped(
+    questions: QuestionSet, level: float, kept: bool
+) -> None:
+    out = average(questions, [{"trend": {"score": level}}])
+    assert ("trend" in out) is kept
 
 
 def test_the_result_is_saved_as_plain_json(questions: QuestionSet) -> None:

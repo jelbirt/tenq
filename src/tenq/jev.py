@@ -8,7 +8,9 @@ answers vary between identical calls; the spread across repeats is kept, so
 the rules and the scorecard can see how settled an answer was.
 
 Never raises: a missing key, an HTTP error or an unreadable answer is an error
-on the result, and the brief goes out with Opus's call alone. Logs carry only
+on the result, and the brief goes out with Opus's call alone. A request that
+fails for good (a bad key, no credit, a service still down after one retry)
+ends the repeats, so an outage costs about one minute per stock, not three. Logs carry only
 status codes and exception types, never the state or an answer.
 
 Env: OPENROUTER_API_KEY (the only secret), JEV_MODEL (default jev-latest; the
@@ -44,6 +46,8 @@ REPEATS = 3
 TIMEOUT_S = 30
 ATTEMPTS = 2  # per repeat: one retry on a rate limit, an upstream failure or a timeout
 RETRY_CODES = {429, 500, 502, 503, 524, 529}
+FINAL_CODES = {400, 401, 402, 403, 404, 413}  # the same request would fail the same way
+MODEL_NAME = re.compile(r"[A-Za-z0-9._:/~-]{1,100}")
 MAX_STATE_CHARS = 60_000  # well under Jev's 32k-token state limit
 KEY = r"[a-z][a-z0-9_]{0,39}"
 
@@ -163,6 +167,7 @@ class Result:
     cost: float = 0.0
     duration_ms: int = 0
     errors: list[str] = field(default_factory=list)  # one per failed request
+    notes: list[str] = field(default_factory=list)  # e.g. the state was cut
     error: str | None = None  # set when no usable answer came back
 
     def to_dict(self) -> dict[str, Any]:
@@ -183,7 +188,10 @@ def _post(url: str, headers: dict[str, str], body: bytes) -> tuple[int, str]:
 def _finite(v: Any) -> float | None:
     if isinstance(v, bool) or not isinstance(v, int | float):
         return None
-    f = float(v)
+    try:
+        f = float(v)
+    except OverflowError:  # a 400-digit integer literal
+        return None
     return f if math.isfinite(f) else None
 
 
@@ -267,7 +275,7 @@ def ask(
         return result
     if len(state) > MAX_STATE_CHARS:
         state = state[:MAX_STATE_CHARS]
-        result.errors.append(f"state cut to {MAX_STATE_CHARS} characters")
+        result.notes.append(f"state cut to {MAX_STATE_CHARS} characters")
     body: dict[str, Any] = {"model": model, "state": state, "questions": questions.to_request()}
     if session_id:
         body["session_id"] = session_id[:256]
@@ -286,11 +294,15 @@ def ask(
         if isinstance(parsed, str):
             log.warning("Jev request %d failed (%s)", i + 1, parsed)
             result.errors.append(parsed)
-            if status in {401, 402, 403}:  # a bad key or no credit: repeating cannot help
+            # a bad request, key or credit fails the same way again, and a
+            # service still down after its retry would only spend the run's time
+            if status in FINAL_CODES or status == 0 or status >= 500:
                 break
             continue
         responses.append(parsed["answers"])
-        result.resolved_model = str(parsed.get("model") or result.resolved_model)
+        model_name = parsed.get("model")
+        if isinstance(model_name, str) and MODEL_NAME.fullmatch(model_name):
+            result.resolved_model = model_name
         usage = parsed.get("usage")
         if isinstance(usage, dict):
             result.input_tokens += int(_finite(usage.get("input_tokens")) or 0)
@@ -298,7 +310,11 @@ def ask(
             result.cost += _finite(usage.get("cost")) or 0.0
     result.duration_ms = int((time.monotonic() - started) * 1000)
     result.repeats = len(responses)
-    result.answers = average(questions, responses)
+    try:
+        result.answers = average(questions, responses)
+    except Exception as exc:  # the never-raises backstop: a reply nothing above foresaw
+        result.errors.append(f"unreadable response ({type(exc).__name__})")
+        result.answers = {}
     if not result.answers:
         result.error = "Jev gave no usable answer" + (
             f" ({result.errors[-1]})" if result.errors else ""
@@ -321,7 +337,7 @@ def _parse(status: int, text: str) -> dict[str, Any] | str:
         return f"HTTP {status}"
     try:
         parsed = json.loads(text)
-    except ValueError:
+    except (ValueError, RecursionError):
         return "unreadable response"
     if not isinstance(parsed, dict) or not isinstance(parsed.get("answers"), dict):
         return "response without answers"
