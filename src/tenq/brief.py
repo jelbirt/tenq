@@ -62,8 +62,8 @@ class Draft:
     error: str | None = None  # why the answer could not be used at all
 
 
-def _json_object(text: str) -> Any:
-    """The last JSON object in `text`, allowing a ```json fence around it."""
+def last_json_object(text: str, key: str) -> Any:
+    """The last JSON object in `text` that has `key`, allowing a ```json fence."""
     dec = json.JSONDecoder()
     found: Any = None
     for i, ch in enumerate(text):
@@ -73,7 +73,7 @@ def _json_object(text: str) -> Any:
             obj, _ = dec.raw_decode(text, i)
         except (ValueError, RecursionError):
             continue
-        if isinstance(obj, dict) and "claims" in obj:
+        if isinstance(obj, dict) and key in obj:
             found = obj
     return found
 
@@ -83,7 +83,7 @@ def parse_answer(text: str | None) -> Draft:
     whether a well-formed claim is true is the checker's job."""
     if not text:
         return Draft(error="no answer")
-    obj = _json_object(text)
+    obj = last_json_object(text, "claims")
     if obj is None or not isinstance(obj.get("claims"), list):
         return Draft(error="no JSON object with a claims list")
     draft = Draft()

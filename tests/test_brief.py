@@ -24,7 +24,7 @@ def test_the_shipped_prompt_has_a_version_and_names_every_tool() -> None:
     assert "prompt-version" not in p.text
     for tool in ("get_metrics", "search_filing", "read_passage"):
         assert tool in p.text
-    assert "—" not in p.text
+    assert "\u2014" not in p.text
 
 
 def test_a_prompt_without_a_version_is_refused(tmp_path: Path) -> None:

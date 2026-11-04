@@ -4,10 +4,12 @@ import json
 from typing import Any
 
 import anyio
+from conftest import QA_DOC
 from mcp.types import CallToolResult
 
+from tenq.docstore import DocStore
 from tenq.filings import FilingStore
-from tenq.mcp_server import build_server
+from tenq.mcp_server import build_doc_server, build_server
 from tenq.search import SearchHit
 
 LATEST = "CRWD-0001535527-26-000031"
@@ -122,4 +124,94 @@ def test_the_real_entrypoint_serves_over_stdio(store: FilingStore) -> None:
 
     tools, got = anyio.run(go)
     assert tools == {"get_metrics", "search_filing", "read_passage"}
+    assert isinstance(got, CallToolResult) and not got.is_error
+
+
+class FakeDocSearch:
+    """Returns one hit from the document and one from another, best first."""
+
+    def __init__(self, docs: DocStore) -> None:
+        self.docs = docs
+        self.calls: list[tuple[str, str, int]] = []
+
+    def search(self, key: str, query: str, k: int = 5) -> list[SearchHit]:
+        self.calls.append((key, query, k))
+        (p,) = [p for p in self.docs.passages(QA_DOC) if "widget presses" in p.text]
+        return [SearchHit("OTHER_2020_10K:3", 9.0, "elsewhere"), SearchHit(p.id, 2.0, p.text)]
+
+
+def _doc_call(docs: DocStore, name: str, args: dict[str, Any]) -> Any:
+    server = build_doc_server(docs, QA_DOC, FakeDocSearch(docs))
+
+    async def go() -> Any:
+        result = await server.call_tool(name, args)
+        assert isinstance(result, CallToolResult) and not result.is_error, result
+        return result
+
+    result = anyio.run(go)
+    if result.structured_content is not None:
+        sc = result.structured_content
+        return sc.get("result", sc)
+    return json.loads(result.content[0].text)
+
+
+def test_document_mode_has_only_search_and_read(docs: DocStore) -> None:
+    server = build_doc_server(docs, QA_DOC, FakeDocSearch(docs))
+    tools = anyio.run(server.list_tools)
+    assert sorted(t.name for t in tools) == ["read_passage", "search_filing"]
+    for t in tools:
+        assert t.annotations is not None and t.annotations.read_only_hint
+
+
+def test_document_search_keeps_this_document_and_gives_pages(docs: DocStore) -> None:
+    fake = FakeDocSearch(docs)
+    server = build_doc_server(docs, QA_DOC, fake)
+    anyio.run(server.call_tool, "search_filing", {"query": "presses", "k": 99})
+    assert fake.calls == [(QA_DOC, "presses", 20)]
+    (hit,) = _doc_call(docs, "search_filing", {"query": "presses"})
+    assert hit["passage_id"].startswith(f"{QA_DOC}:") and hit["page"] == 2
+
+
+def test_document_read_gives_the_page_and_stays_in_the_document(docs: DocStore) -> None:
+    (p,) = [p for p in docs.passages(QA_DOC) if "Risk factors" in p.text]
+    got = _doc_call(docs, "read_passage", {"passage_id": p.id})
+    assert got["found"] and got["page"] == 3 and got["text"].startswith("Risk factors")
+    docs.save("OTHER_2020_10K", "b" * 64, ["other company"], 0.1)
+    (q,) = docs.passages("OTHER_2020_10K")
+    assert _doc_call(docs, "read_passage", {"passage_id": q.id})["found"] is False
+    assert _doc_call(docs, "read_passage", {"passage_id": "../x:1"})["found"] is False
+
+
+def test_an_unsaved_document_is_refused(docs: DocStore) -> None:
+    import pytest
+
+    with pytest.raises(LookupError):
+        build_doc_server(docs, "NOPE_2020_10K", FakeDocSearch(docs))
+
+
+def test_the_real_entrypoint_serves_a_document_over_stdio(docs: DocStore) -> None:
+    import os
+    import sys
+
+    from mcp import ClientSession
+    from mcp.client.stdio import StdioServerParameters, stdio_client
+
+    (p,) = [p for p in docs.passages(QA_DOC) if "Risk factors" in p.text]
+    env = {
+        **os.environ,
+        "TENQ_DOCS": str(docs.root),
+        "TENQ_DOC": QA_DOC,
+        "TENQ_XERJ_URL": "http://127.0.0.1:9",  # unused by the tool called here
+    }
+    params = StdioServerParameters(command=sys.executable, args=["-m", "tenq.mcp_server"], env=env)
+
+    async def go() -> tuple[set[str], Any]:
+        async with stdio_client(params) as (r, w), ClientSession(r, w) as session:
+            await session.initialize()
+            tools = {t.name for t in (await session.list_tools()).tools}
+            got = await session.call_tool("read_passage", {"passage_id": p.id})
+            return tools, got
+
+    tools, got = anyio.run(go)
+    assert tools == {"search_filing", "read_passage"}
     assert isinstance(got, CallToolResult) and not got.is_error
