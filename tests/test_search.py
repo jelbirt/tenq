@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 import shutil
+import urllib.error
+from email.message import Message
 from pathlib import Path
 
 import pytest
 
+import tenq.search as search
 from tenq.filings import FilingStore, index_prefix
 from tenq.search import Xerj, hits_from_response, text_field, xerj_node
 
@@ -108,6 +111,18 @@ def test_a_text_schema_chunk_spans_to_its_end_line(store: FilingStore) -> None:
 def test_the_text_field_is_read_from_the_mapping(properties: dict[str, object], field: str) -> None:
     mapping = {"tenq-crwd-t-docs": {"mappings": {"properties": properties}}}
     assert text_field(mapping) == field
+
+
+def test_a_key_with_no_index_has_no_hits(
+    store: FilingStore, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def missing(url: str, body: object = None, timeout: float = 10) -> object:
+        raise urllib.error.HTTPError(url, 404, "no such index", Message(), None)
+
+    monkeypatch.setattr(search, "_request", missing)
+    x = Xerj("http://127.0.0.1:1", store)
+    assert x.search("CRWD", "revenue") == []
+    assert x._fields == {}  # nothing cached: a later index is still found
 
 
 def test_a_mapping_without_a_text_field_is_an_error() -> None:

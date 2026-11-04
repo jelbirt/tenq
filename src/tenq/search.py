@@ -156,7 +156,13 @@ class Xerj:
         # over-fetch: several xerj chunks can fall in one tenq passage
         pattern = f"{self.url}/{self.store.index_prefix(key)}-*"
         if key not in self._fields:
-            self._fields[key] = text_field(_request(f"{pattern}/_mapping"))
+            try:
+                mapping = _request(f"{pattern}/_mapping")
+            except urllib.error.HTTPError as e:
+                if e.code == 404:
+                    return []  # nothing indexed under this key (yet): no hits, nothing cached
+                raise
+            self._fields[key] = text_field(mapping)
         body = {"size": k * 4, "query": {"match": {self._fields[key]: query}}}
         resp = _request(f"{pattern}/_search", body)
         return hits_from_response(resp, self.store, query, k, key)
