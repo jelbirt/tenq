@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "tenq"
 version = "0.1.0"
-description = "Cited what-changed briefs from SEC filings"
+description = "Personal stock analyst: cited filing briefs and daily calls on a software watchlist"
 readme = "README.md"
 license = "MIT"
 requires-python = ">=3.12"
@@ -13,6 +13,7 @@ dependencies = [
     "edgartools>=5.62.1",
     "mcp>=2.3",
     "pyyaml>=6.0",
+    "yfinance>=1.8",
 ]
 
 [dependency-groups]
@@ -43,3 +44,8 @@ files = ["src", "tests"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q"
+
+[[tool.mypy.overrides]]
+# untyped: yfinance ships no types; pandas is only touched as a duck-typed frame
+module = ["yfinance", "pandas"]
+ignore_missing_imports = true
