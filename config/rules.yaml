@@ -1,0 +1,72 @@
+# How Jev's answers become a call. Read top to bottom. Every number here is a
+# setting; changing any of them, or any label, bumps the version so the
+# scorecard can tell rule sets apart (a test pins this file's hash for each
+# version). src/tenq/rules.py applies it, and checks every label below against
+# prompts/jev.yaml.
+version: rules-v4
+
+# 1. News: Jev's direction answer as an expected value from -1 (bad for the
+#    business) to +1 (good), times the probability the recent news is
+#    material, times how strong its evidence is. Opinion still counts for
+#    something: a weak source shrinks the news, it does not erase it.
+direction:
+  good: 1.0
+  bad: -1.0
+  mixed: 0.0
+  neutral: 0.0
+evidence:
+  reported: 1.0
+  company: 0.9
+  reporting: 0.75
+  opinion: 0.4
+  none: 0.0
+
+# 2. Guidance: an expected value from -1 to +1.
+guidance:
+  raised: 1.0
+  lowered: -1.0
+  kept: 0.2
+  issued: 0.0
+  mixed: 0.0
+  none: 0.0
+
+# 3. Fundamentals: the 0 to 4 trend level read as -1 to +1. Left out (weight
+#    and all) when the pack has no 10-Q/10-K numbers.
+# 4. Risk: the probability of a recent risk event, counted against the stock,
+#    less the bad news the news part already scored (direction times
+#    materiality times evidence times the news part's certainty), so one
+#    lawsuit is not counted twice, and a risk event Jev called immaterial or
+#    was unsure about as news still counts here.
+
+# How much each part counts. A part left out is not made up by the others,
+# so missing evidence pulls the call toward Hold.
+weights:
+  news: 0.45
+  guidance: 0.25
+  fundamentals: 0.15
+  risk: 0.15
+
+# 5. Certainty: a choice's doubt is already in its expected value above, so it
+#    is counted once. A yes/no or a score is also multiplied by 1 less its
+#    spread across rounds (on a 0 to 1 scale; a score's less the reversal lean
+#    its rounds measured). Every part is multiplied by the share of its planned
+#    rounds that came back. An unsure Jev drifts toward Hold; there is no hard
+#    cut-off on confidence. A Hold's confidence also falls with how flat the
+#    answers were: one that knew nothing is a Hold with no confidence.
+
+# 6. Already priced in: when the stock has already beaten (or lagged) QQQ in
+#    the signal's direction over the last `sessions`, the score shrinks by
+#    `per_move` for each usual move it made (its 20-session volatility scaled
+#    to that window), never by more than `most`. A move against the signal
+#    leaves the score as it is.
+priced_in:
+  sessions: 5
+  per_move: 0.25
+  most: 0.75
+
+# 7. The call, from the final score (-1 to +1). Fundamentals alone (at most
+#    0.15) never cross a line: a quiet day with no recent news is a Hold.
+calls:
+  buy: 0.20     # at or above: expect it to beat QQQ
+  sell: -0.20   # at or below: get out if you own it
+  short: -0.45  # at or below: expect it to fall
