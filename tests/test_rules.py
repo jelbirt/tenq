@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 import itertools
 import math
 from datetime import UTC, date, datetime
@@ -11,27 +12,36 @@ from typing import Any
 import pytest
 import yaml
 
-from tenq.jev import Answer, QuestionSet, Result, load_questions
+from tenq.jev import QUESTIONS_PATH, Answer, Result, load_questions
 from tenq.pack import Number, Pack
 from tenq.rules import (
     DEFAULT_RULES,
-    Rules,
     certainty,
+    confidence,
     decide,
+    expected,
     load_rules,
     name_call,
 )
 
 QUESTIONS = load_questions()
-RULES = load_rules(questions=QUESTIONS)
+RULES = load_rules(QUESTIONS)
 FIN = Number("fin:ACME:revenue:yoy_pct", "Revenue change from a year ago", 0.2, "percent")
 
+# One hash per rules version. Editing config/rules.yaml without bumping its
+# version fails here; after a bump, add the new version and its file's hash.
+KNOWN_RULES = {
+    "rules-v2": "ac1b87982703da0f24f361deb9b3e6214c5e5afbda6818365f96a1368e726b3a",
+}
 
-def _choice(key: str, probs: dict[str, float], spread: float = 0.0) -> Answer:
+
+def _choice(key: str, probs: dict[str, float], agreed: int | None = None) -> Answer:
     (q,) = [q for q in QUESTIONS.questions if q.key == key]
     full = {label: probs.get(label, 0.0) for label in q.labels()}
     top = max(full, key=lambda k: full[k])
-    return Answer(key, "choice", top, full, spread, len(full), balanced=True)
+    n = len(full)
+    agree = n if agreed is None else agreed
+    return Answer(key, "choice", top, full, 0.0, n, agreed=agree, balanced=True)
 
 
 def _noul(key: str, p: float, spread: float = 0.0) -> Answer:
@@ -72,8 +82,12 @@ USUAL_5D = 0.40 * math.sqrt(5 / 252)  # one usual 5-session move at 40% volatili
 
 
 def test_the_committed_rules_fit_the_committed_questions() -> None:
-    assert RULES.version == "rules-v1"
     assert sum(RULES.weights.values()) == pytest.approx(1.0)
+
+
+def test_a_rules_edit_needs_a_new_version() -> None:
+    assert RULES.version in KNOWN_RULES, "new rules version: add it and its hash above"
+    assert RULES.sha256 == KNOWN_RULES[RULES.version], "rules changed: bump the version"
 
 
 def test_good_news_is_a_buy_worked_by_hand() -> None:
@@ -84,14 +98,17 @@ def test_good_news_is_a_buy_worked_by_hand() -> None:
     assert parts["news"] == pytest.approx(0.324)
     assert parts["guidance"] == pytest.approx(0.25)  # raised, weight 0.25
     assert parts["fundamentals"] == pytest.approx(0.075)  # level 3 of 4 is +0.5
-    assert parts["risk"] == pytest.approx(-0.015)  # 10% risk, weight 0.15
+    assert parts["risk"] == pytest.approx(-0.015)  # 10% risk, none of it bad news yet
     assert call.raw == pytest.approx(0.634) and call.score == pytest.approx(0.634)
-    assert call.call == "Buy" and call.confidence == pytest.approx(0.634)
-    assert call.version == "rules-v1" and call.day == "2026-11-03"
+    # the most the parts could reach upward is 0.45 + 0.25 + 0.15
+    assert call.call == "Buy" and call.confidence == pytest.approx(0.634 / 0.85)
+    assert call.coverage == pytest.approx(1.0)
+    assert call.version == "rules-v2" and call.rules_sha == RULES.sha256
+    assert call.day == "2026-11-03"
     assert call.notes == ["no price move to check whether the news is priced in"]
 
 
-def test_bad_news_with_a_risk_event_is_a_short() -> None:
+def test_bad_news_is_not_counted_again_as_risk() -> None:
     result = _good(
         direction=_choice("direction", {"bad": 1.0}),
         guidance=_choice("guidance", {"lowered": 1.0}),
@@ -100,11 +117,21 @@ def test_bad_news_with_a_risk_event_is_a_short() -> None:
     )
     call = decide(_pack(), result, RULES, QUESTIONS)
     assert call is not None
-    # -0.36 - 0.25 - 0.075 - 0.135
-    assert call.score == pytest.approx(-0.82) and call.call == "Short"
+    (risk,) = [p for p in call.parts if p.name == "risk"]
+    assert risk.contribution == 0.0  # the news part already scored it as bad
+    # -0.36 - 0.25 - 0.075
+    assert call.score == pytest.approx(-0.685) and call.call == "Short"
+    assert call.confidence == pytest.approx(0.685)
 
 
-def test_mildly_bad_news_is_a_sell_and_quiet_news_a_hold() -> None:
+def test_a_risk_event_beside_good_news_still_counts() -> None:
+    call = decide(_pack(), _good(risk=_noul("risk", 1.0)), RULES, QUESTIONS)
+    assert call is not None
+    (risk,) = [p for p in call.parts if p.name == "risk"]
+    assert risk.contribution == pytest.approx(-0.15)
+
+
+def test_mildly_bad_news_is_a_hold_and_firmer_bad_news_a_sell() -> None:
     mild = _good(
         direction=_choice("direction", {"bad": 0.8, "neutral": 0.2}),
         source=_choice("source", {"reporting": 1.0}),
@@ -113,25 +140,25 @@ def test_mildly_bad_news_is_a_sell_and_quiet_news_a_hold() -> None:
     )
     call = decide(_pack(), mild, RULES, QUESTIONS)
     assert call is not None
-    # news -0.8 x 0.8 x 0.6 x 0.45 = -0.1728; risk -0.015
-    assert call.score == pytest.approx(-0.1878) and call.call == "Hold"
+    # news -0.8 x 0.8 x 0.6 x 0.45 = -0.1728; risk 0.1 x 0.2 not yet in news x 0.15
+    assert call.score == pytest.approx(-0.1758) and call.call == "Hold"
     worse = _good(
         direction=_choice("direction", {"bad": 1.0}),
-        source=_choice("source", {"reported": 1.0}),
         guidance=_choice("guidance", {"none": 1.0}),
         fundamentals=_score(2.0),
     )
     call = decide(_pack(), worse, RULES, QUESTIONS)
     assert call is not None
-    assert call.score == pytest.approx(-0.375) and call.call == "Sell"
+    assert call.score == pytest.approx(-0.36) and call.call == "Sell"
 
 
 def test_an_unsure_jev_drifts_toward_hold_without_a_cut_off() -> None:
     scores = []
     for spread in (0.0, 0.3, 0.6, 0.9):
         result = _good(
-            direction=_choice("direction", {"good": 0.9, "mixed": 0.1}, spread),
-            guidance=_choice("guidance", {"raised": 1.0}, spread),
+            material=_noul("material", 0.8, spread),
+            guidance=_choice("guidance", {"none": 1.0}),
+            fundamentals=_score(3.0, spread * 4),  # four levels apart is the whole scale
         )
         call = decide(_pack(), result, RULES, QUESTIONS)
         assert call is not None
@@ -139,13 +166,45 @@ def test_an_unsure_jev_drifts_toward_hold_without_a_cut_off() -> None:
     assert scores == sorted(scores, reverse=True)
     steps = [a - b for a, b in itertools.pairwise(scores)]
     assert steps == pytest.approx([steps[0]] * 3)  # a straight line, no jump
-    assert scores[-1] < RULES.buy  # unsure enough, the same news is a Hold
+    assert scores[0] >= RULES.buy > scores[-1]  # the same news, unsure enough, is a Hold
 
 
-def test_certainty_reads_a_score_spread_on_its_own_scale() -> None:
+def test_the_news_part_is_as_certain_as_its_least_certain_answer() -> None:
+    overs: list[dict[str, Answer]] = [
+        {"material": _noul("material", 0.8, 0.5)},
+        {"source": _choice("source", {"reported": 1.0}, agreed=2)},  # 2 of 5
+        {"direction": _choice("direction", {"good": 0.9, "mixed": 0.1}, agreed=2)},  # 2 of 4
+    ]
+    expected_certainty = [0.5, 2 / 5, 0.5]
+    for over, want in zip(overs, expected_certainty, strict=True):
+        call = decide(_pack(), _good(**over), RULES, QUESTIONS)
+        assert call is not None
+        assert call.parts[0].certainty == pytest.approx(want), over
+
+
+def test_certainty_reads_each_answer_on_its_own_scale() -> None:
     assert certainty(_score(2.0, spread=2.0), 5) == pytest.approx(0.5)
     assert certainty(_noul("risk", 0.5, spread=0.3), 2) == pytest.approx(0.7)
     assert certainty(_noul("risk", 0.5, spread=1.5), 2) == 0.0
+    # a choice by agreement: a spread from the rotation's lean is not doubt
+    lean = dataclasses.replace(_choice("direction", {"good": 0.7}, agreed=3), spread=0.25)
+    assert certainty(lean, 4) == pytest.approx(0.75)
+    assert certainty(dataclasses.replace(lean, repeats=0), 4) == 0.0
+
+
+def test_probabilities_are_made_to_add_up_to_one() -> None:
+    every = Answer("source", "choice", "none", dict.fromkeys(RULES.evidence, 1.0), 0.0, 5)
+    assert expected(every, RULES.evidence) == pytest.approx(2.6 / 5)
+    half = Answer("direction", "choice", "good", {"good": 0.5, "bad": 0.0}, 0.0, 4)
+    assert expected(half, RULES.direction) == pytest.approx(1.0)
+    empty = Answer("direction", "choice", "bad", {"good": 0.0}, 0.0, 4)
+    assert expected(empty, RULES.direction) == -1.0  # falls back to the pick
+    both = {"good": 1.0, "neutral": 1.0}
+    loud = Answer("direction", "choice", "good", both, 0.0, 4, agreed=4, balanced=True)
+    call = decide(_pack(), _good(direction=loud), RULES, QUESTIONS)
+    assert call is not None
+    assert all(-1.0 <= p.value <= 1.0 for p in call.parts)
+    assert call.parts[0].value == pytest.approx(0.5 * 0.8)
 
 
 def test_a_missing_answer_counts_as_nothing_and_is_named() -> None:
@@ -157,6 +216,16 @@ def test_a_missing_answer_counts_as_nothing_and_is_named() -> None:
     assert parts["news"].contribution == 0.0 and parts["news"].detail == "no answer for source"
     assert parts["guidance"].detail == "no answer for guidance"
     assert call.score == pytest.approx(0.06) and call.call == "Hold"
+    assert call.coverage == pytest.approx(0.30)  # fundamentals and risk only
+
+
+def test_an_answer_of_the_wrong_type_is_missing_and_noted() -> None:
+    wrong = Answer("fundamentals", "choice", "good", {"good": 1.0}, 0.0, 1, agreed=1)
+    call = decide(_pack(), _good(fundamentals=wrong), RULES, QUESTIONS)
+    assert call is not None
+    (part,) = [p for p in call.parts if p.name == "fundamentals"]
+    assert part.detail == "no answer for fundamentals"
+    assert "fundamentals answer is a choice, the rules read a score" in call.notes
 
 
 def test_no_filing_numbers_leaves_fundamentals_out() -> None:
@@ -165,10 +234,25 @@ def test_no_filing_numbers_leaves_fundamentals_out() -> None:
     (part,) = [p for p in call.parts if p.name == "fundamentals"]
     assert part.weight == 0.0 and part.detail == "no 10-Q/10-K numbers"
     assert call.score == pytest.approx(0.559)
+    assert call.confidence == pytest.approx(0.559 / 0.70)  # news and guidance reach 0.70
 
 
 def test_no_answers_is_no_call() -> None:
     assert decide(_pack(), Result(QUESTIONS.version, "jev-latest"), RULES, QUESTIONS) is None
+
+
+def test_a_jev_that_knew_nothing_is_a_hold_without_confidence() -> None:
+    result = _good(
+        material=_noul("material", 0.5, 1.0),
+        direction=_choice("direction", {"good": 0.3}, agreed=0),
+        guidance=_choice("guidance", {"raised": 0.3}, agreed=0),
+        fundamentals=_score(2.0, 4.0),
+        risk=_noul("risk", 0.5, 1.0),
+    )
+    call = decide(_pack(), result, RULES, QUESTIONS)
+    assert call is not None
+    assert call.call == "Hold" and call.score == 0.0
+    assert call.coverage == 0.0 and call.confidence == 0.0
 
 
 @pytest.mark.parametrize(
@@ -203,24 +287,35 @@ def test_zero_volatility_cannot_price_anything_in() -> None:
 
 
 @pytest.mark.parametrize(
-    ("score", "name", "confidence"),
+    ("score", "name"),
     [
-        (0.20, "Buy", 0.20),  # at the line is the call
-        (0.19, "Hold", 0.05),
-        (0.0, "Hold", 1.0),
-        (-0.10, "Hold", 0.5),
-        (-0.20, "Sell", 0.20),
-        (-0.45, "Short", 0.45),
-        (-1.0, "Short", 1.0),
+        (0.20, "Buy"),  # each line belongs to the call beyond it
+        (0.19, "Hold"),
+        (0.0, "Hold"),
+        (-0.19, "Hold"),
+        (-0.20, "Sell"),
+        (-0.44, "Sell"),
+        (-0.45, "Short"),
+        (-1.0, "Short"),
     ],
 )
-def test_each_score_names_one_call(score: float, name: str, confidence: float) -> None:
-    got, conf = name_call(score, RULES)
-    assert got == name and conf == pytest.approx(confidence)
+def test_each_score_names_one_call(score: float, name: str) -> None:
+    assert name_call(score, RULES) == name
+
+
+def test_hold_confidence_is_measured_against_its_own_side_of_the_band() -> None:
+    lopsided = dataclasses.replace(RULES, buy=0.30)
+    call = decide(_pack(), _good(), RULES, QUESTIONS)
+    assert call is not None
+    parts = call.parts  # full coverage
+    assert confidence(0.15, "Hold", lopsided, parts) == pytest.approx(0.5)  # half of 0.30
+    assert confidence(-0.10, "Hold", lopsided, parts) == pytest.approx(0.5)  # half of 0.20
+    assert confidence(0.0, "Hold", lopsided, parts) == pytest.approx(1.0)
 
 
 def test_an_unbalanced_answer_and_a_version_mismatch_are_noted() -> None:
     result = _good(risk=Answer("risk", "noul", 0.1, {}, 0.0, 2, balanced=False))
+    result.answers["unread"] = Answer("unread", "noul", 0.5, {}, 0.0, 1, balanced=False)
     result.version = "jev-q1"
     call = decide(_pack(*_move(0.0)), result, RULES, QUESTIONS)
     assert call is not None
@@ -236,11 +331,12 @@ def test_the_record_and_the_email_lines_show_every_part() -> None:
     d = call.to_dict()
     assert [p["name"] for p in d["parts"]] == ["news", "guidance", "fundamentals", "risk"]
     assert d["parts"][0]["contribution"] == pytest.approx(0.324)
+    assert d["rules_sha"] == RULES.sha256 and d["coverage"] == pytest.approx(1.0)
     lines = call.explain()
     assert lines[0] == (
         "news: +0.32 (good +0.90, material 80%, evidence 1.00; weight 0.45, certainty 100%)"
     )
-    assert lines[-2:] == ["priced in: score cut by 50%", "score +0.32: Buy (confidence 32%)"]
+    assert lines[-2:] == ["priced in: score cut by 50%", "score +0.32: Buy (confidence 37%)"]
 
 
 def _rules_file(tmp_path: Path, change: dict[str, Any]) -> Path:
@@ -265,6 +361,7 @@ def _rules_file(tmp_path: Path, change: dict[str, Any]) -> Path:
         {"version": ""},
         {"extra": 1},
         {"weights.news": 0.9},  # adds up past 1
+        {"weights.news": 0, "weights.guidance": 0, "weights.fundamentals": 0, "weights.risk": 0},
         {"weights.risk": ...},
         {"weights.news": -0.1},
         {"weights.news": True},
@@ -272,6 +369,10 @@ def _rules_file(tmp_path: Path, change: dict[str, Any]) -> Path:
         {"direction.good": float("nan")},
         {"evidence.none": -0.5},
         {"calls.buy": -0.1},
+        {"calls.buy": 0.0},
+        {"calls.sell": 0.0},
+        {"calls.buy": 0.9},  # more than news, guidance and fundamentals can reach
+        {"weights.risk": 0.05, "calls.short": -0.95},  # more than all parts can reach
         {"calls.short": -0.1},  # short must sit below sell
         {"calls.extra": 0.3},
         {"priced_in.sessions": 3},
@@ -282,7 +383,17 @@ def _rules_file(tmp_path: Path, change: dict[str, Any]) -> Path:
 )
 def test_a_malformed_rules_file_is_refused(tmp_path: Path, change: dict[str, Any]) -> None:
     with pytest.raises(ValueError, match="rules"):
-        load_rules(_rules_file(tmp_path, change), QUESTIONS)
+        load_rules(QUESTIONS, _rules_file(tmp_path, change))
+
+
+def test_a_key_given_twice_is_refused(tmp_path: Path) -> None:
+    text = DEFAULT_RULES.read_text(encoding="utf-8").replace(
+        "  good: 1.0\n", "  good: 1.0\n  good: -1.0\n", 1
+    )
+    path = tmp_path / "rules.yaml"
+    path.write_text(text, encoding="utf-8")
+    with pytest.raises(ValueError, match=r"repeats \['good'\]"):
+        load_rules(QUESTIONS, path)
 
 
 @pytest.mark.parametrize(
@@ -294,17 +405,28 @@ def test_a_malformed_rules_file_is_refused(tmp_path: Path, change: dict[str, Any
     ],
 )
 def test_labels_must_match_the_questions(tmp_path: Path, change: dict[str, Any]) -> None:
-    path = _rules_file(tmp_path, change)
-    assert isinstance(load_rules(path), Rules)  # fine on its own
     with pytest.raises(ValueError, match="labels must be exactly"):
-        load_rules(path, QUESTIONS)
+        load_rules(QUESTIONS, _rules_file(tmp_path, change))
 
 
-def test_the_rules_need_each_question_they_read(tmp_path: Path) -> None:
-    text = tmp_path / "q.yaml"
-    raw = yaml.safe_load(Path("prompts/jev.yaml").read_text(encoding="utf-8"))
-    del raw["questions"]["risk"]
-    text.write_text(yaml.safe_dump(raw), encoding="utf-8")
-    fewer: QuestionSet = load_questions(text)
-    with pytest.raises(ValueError, match="noul question 'risk'"):
-        load_rules(questions=fewer)
+def _drop_risk(q: dict[str, Any]) -> None:
+    del q["risk"]
+
+
+def _material_as_choice(q: dict[str, Any]) -> None:
+    q["material"] = {"type": "choice", "instructions": "x", "criteria": {"a": "x", "b": "y"}}
+
+
+@pytest.mark.parametrize(
+    ("edit", "message"),
+    [(_drop_risk, "noul question 'risk'"), (_material_as_choice, "noul question 'material'")],
+)
+def test_the_rules_need_each_question_they_read_with_its_type(
+    tmp_path: Path, edit: Any, message: str
+) -> None:
+    raw = yaml.safe_load(QUESTIONS_PATH.read_text(encoding="utf-8"))
+    edit(raw["questions"])
+    path = tmp_path / "q.yaml"
+    path.write_text(yaml.safe_dump(raw), encoding="utf-8")
+    with pytest.raises(ValueError, match=message):
+        load_rules(load_questions(path))

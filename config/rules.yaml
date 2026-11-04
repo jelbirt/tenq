@@ -1,8 +1,9 @@
 # How Jev's answers become a call. Read top to bottom. Every number here is a
 # setting; changing any of them, or any label, bumps the version so the
-# scorecard can tell rule sets apart. src/tenq/rules.py applies it, and a
-# test checks every label below against prompts/jev.yaml.
-version: rules-v1
+# scorecard can tell rule sets apart (a test pins this file's hash for each
+# version). src/tenq/rules.py applies it, and checks every label below against
+# prompts/jev.yaml.
+version: rules-v2
 
 # 1. News: Jev's direction answer as an expected value from -1 (bad for the
 #    business) to +1 (good), times the probability the recent news is
@@ -30,7 +31,9 @@ guidance:
 
 # 3. Fundamentals: the 0 to 4 trend level read as -1 to +1. Left out (weight
 #    and all) when the pack has no 10-Q/10-K numbers.
-# 4. Risk: the probability of a recent risk event, counted against the stock.
+# 4. Risk: the probability of a recent risk event, counted against the stock,
+#    less the share the news part already scored as bad news (so one lawsuit
+#    is not counted twice).
 
 # How much each part counts. A part left out is not made up by the others,
 # so missing evidence pulls the call toward Hold.
@@ -41,9 +44,10 @@ weights:
   risk: 0.15
 
 # 5. Certainty: each part counts in full only when Jev's rounds agreed. Its
-#    contribution is multiplied by 1 less the answer's spread across rounds
-#    (spread on a 0 to 1 scale), so an unsure Jev drifts toward Hold. There is
-#    no hard cut-off on confidence.
+#    contribution is multiplied by the share of rounds that picked the winner
+#    (choices) or by 1 less the spread across rounds (yes/no and scores, on a
+#    0 to 1 scale), so an unsure Jev drifts toward Hold. There is no hard
+#    cut-off on confidence.
 
 # 6. Already priced in: when the stock has already beaten (or lagged) QQQ in
 #    the signal's direction over the last `sessions`, the score shrinks by
