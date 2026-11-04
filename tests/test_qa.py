@@ -145,3 +145,45 @@ def test_an_answer_when_every_search_failed_is_infrastructure(docs: DocStore) ->
     assert (
         outcome(_searched(), docs, QA_DOC).status == ANSWERED
     )  # no search at all is the model's call
+
+
+@pytest.mark.parametrize(
+    ("text", "status", "answer"),
+    [
+        ('{"answer": "About  $1,234 million."}', ANSWERED, "About $1,234 million."),
+        ('{"answer": "  "}', MODEL_FAILURE, None),
+        ("no json here", MODEL_FAILURE, None),
+    ],
+)
+def test_a_closed_book_answer_is_read_from_its_json(
+    text: str, status: str, answer: str | None
+) -> None:
+    a = qa.closed_outcome(AgentRun(model="opus", text=text))
+    assert (a.status, a.text) == (status, answer)
+    assert a.passage_ids == [] and a.pages == []
+
+
+def test_a_closed_book_failure_keeps_its_kind() -> None:
+    run = AgentRun(model="opus")
+    run.fail(INFRA, "api error: authentication_failed")
+    assert qa.closed_outcome(run).status == INFRA_FAILURE
+    run.fail(MODEL, "timeout")
+    assert qa.closed_outcome(run).status == MODEL_FAILURE
+
+
+def test_closed_book_has_no_tools_no_document_and_quiet_logs(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    seen: dict[str, Any] = {}
+
+    def fake(prompt: str, **kw: Any) -> AgentRun:
+        seen.update(kw, prompt=prompt)
+        return AgentRun(model=kw["model"], text='{"answer": "$1"}')
+
+    monkeypatch.setattr(qa, "call_claude", fake)
+    _, a = qa.ask_closed(QUESTION, load_prompt(qa.CLOSED_PROMPT_PATH), model="haiku")
+    assert a.status == ANSWERED
+    assert seen["mcp_servers"] == {} and seen["allowed_tools"] == []
+    assert seen["log_detail"] is False and seen["model"] == "haiku"
+    assert QA_DOC not in seen["prompt"] and QUESTION.question in seen["prompt"]
+    assert load_prompt(qa.CLOSED_PROMPT_PATH).version == "closed-v1"

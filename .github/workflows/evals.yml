@@ -1,0 +1,101 @@
+name: evals
+on:
+  schedule:
+    # nightly, finished well before the 11:17 UTC brief
+    - cron: "17 4 * * *"
+  workflow_dispatch:
+    inputs:
+      hours: {description: "Stop starting work after this many hours", required: false, default: "4.5"}
+
+# Read only, and no artifact or cache holds an answer or a grade: everything the
+# night produces goes to the private evals repo through its own deploy key.
+# scripts/checks.sh fails if this file gains write permissions or an artifact.
+permissions:
+  contents: read
+
+concurrency:
+  group: evals
+  cancel-in-progress: false
+
+jobs:
+  evals:
+    # the schedule runs once the repo variable EVALS_NIGHTLY is 1 (set after a
+    # good first night by dispatch); until then, dispatch only
+    if: ${{ github.event_name == 'workflow_dispatch' || vars.EVALS_NIGHTLY == '1' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 330
+    steps:
+      - uses: actions/checkout@v4
+        with: {ref: main, persist-credentials: false}
+      - name: check out the private evals repo
+        uses: actions/checkout@v4
+        with:
+          repository: jelbirt/tenq-evals
+          ssh-key: ${{ secrets.EVALS_DEPLOY_KEY }}
+          path: evals-state
+      - uses: astral-sh/setup-uv@v6
+        with: {python-version: "3.12", enable-cache: true}
+      - run: uv sync --locked
+      - name: restore FinanceBench download and extracted text
+        # public dataset files and their extracted text only, never answers or grades
+        uses: actions/cache/restore@v4
+        with:
+          path: data/financebench
+          key: financebench-${{ hashFiles('config/financebench.json') }}-start
+          restore-keys: financebench-${{ hashFiles('config/financebench.json') }}-
+      - name: install xerj
+        run: |
+          scripts/install-xerj.sh
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+      - name: install Claude Code CLI
+        # pinned with brief.yml: the guardrails rely on exact flags
+        run: npm install -g @anthropic-ai/claude-code@2.1.300
+      - name: Claude token shape
+        env:
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+        run: |
+          t="$CLAUDE_CODE_OAUTH_TOKEN"
+          prefix=no; [[ "$t" == sk-ant-oat* ]] && prefix=yes
+          space=no; [[ "$t" =~ [[:space:]] ]] && space=yes
+          echo "token length ${#t}, sk-ant-oat prefix: $prefix, whitespace: $space"
+      - name: run one night
+        env:
+          HOURS: ${{ inputs.hours }}
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+        # prints counts only; exit 2 is a night stopped by infrastructure, still committed
+        run: uv run --locked python -m tenq.evals --state evals-state --hours "${HOURS:-4.5}"
+      - name: save FinanceBench download and extracted text
+        # saved even after a stopped night, under a key that changes only when
+        # a new document was extracted, so an unchanged night saves nothing
+        if: ${{ always() }}
+        uses: actions/cache/save@v4
+        with:
+          path: data/financebench
+          key: financebench-${{ hashFiles('config/financebench.json') }}-${{ hashFiles('data/financebench/docs/**') }}
+      - name: commit the night to the evals repo
+        if: ${{ always() }}
+        working-directory: evals-state
+        run: |
+          git config user.name tenq-bot
+          git config user.email bot@users.noreply.github.com
+          # records are append-only lines: two nights' appends merge without a conflict
+          grep -qxF '*.jsonl merge=union' .gitattributes 2>/dev/null \
+            || echo '*.jsonl merge=union' >> .gitattributes
+          git add -A
+          if git diff --cached --quiet; then
+            echo "nothing new"
+            exit 0
+          fi
+          # records and finished ids land together, in one commit
+          git commit -q -m "night $(date -u +%Y-%m-%d), run ${GITHUB_RUN_ID}"
+          for attempt in 1 2; do
+            if git pull -q --rebase && git push -q; then
+              exit 0
+            fi
+            git rebase --abort 2>/dev/null || true
+            sleep 5
+          done
+          # never lose a night that was paid for: keep it on its own branch to merge by hand
+          git push -q origin "HEAD:refs/heads/night-${GITHUB_RUN_ID}"
+          echo "::warning::night kept on branch night-${GITHUB_RUN_ID} of the evals repo"
+          exit 1

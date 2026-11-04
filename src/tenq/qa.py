@@ -28,6 +28,7 @@ from tenq.financebench import Document, Question
 from tenq.llm import DEFAULT_MODEL, INFRA, AgentRun, call_claude
 
 PROMPT_PATH = REPO_ROOT / "prompts" / "qa.md"
+CLOSED_PROMPT_PATH = REPO_ROOT / "prompts" / "closed.md"  # no tools, no document
 SERVER = "tenq"
 TOOLS = ("search_filing", "read_passage")
 ALLOWED_TOOLS = [f"mcp__{SERVER}__{t}" for t in TOOLS]
@@ -135,3 +136,28 @@ def ask(
         log_detail=False,
     )
     return run, outcome(run, store, q.doc_name)
+
+
+def closed_outcome(run: AgentRun) -> Answer:
+    if run.error is not None:
+        status = INFRA_FAILURE if run.failure == INFRA else MODEL_FAILURE
+        return Answer(status, error=run.error)
+    obj = last_json_object(run.text or "", "answer")
+    if obj is None or not isinstance(obj.get("answer"), str) or not obj["answer"].strip():
+        return Answer(MODEL_FAILURE, error="no JSON object with an answer")
+    return Answer(ANSWERED, " ".join(obj["answer"].split())[:MAX_ANSWER_CHARS])
+
+
+def ask_closed(
+    q: Question, prompt: Prompt, *, model: str = DEFAULT_MODEL
+) -> tuple[AgentRun, Answer]:
+    """The paper's closed-book setting: the question alone, no tools, no document."""
+    run = call_claude(
+        f"Company: {q.company}.\n\nQuestion: {q.question}",
+        system=prompt.text,
+        mcp_servers={},
+        allowed_tools=[],
+        model=model,
+        log_detail=False,
+    )
+    return run, closed_outcome(run)
