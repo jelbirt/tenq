@@ -295,6 +295,9 @@ def test_an_empty_pack_says_so(tmp_path: Path, current: FilingStore) -> None:
         (105500000.0, "$105.5 million"),
         (244.68, "$244.68"),
         (0.0, "$0.00"),
+        (999999999.0, "$1.000 billion"),
+        (999949999.0, "$999.9 million"),
+        (999000.0, "$999,000.00"),
     ],
 )
 def test_money_is_short(value: float, shown: str) -> None:
@@ -305,17 +308,35 @@ def test_money_is_short(value: float, shown: str) -> None:
     "value", [1470897000.0, -33232000.0, 105549999.0, 1234567.0, 999999999.0, 98765432100.0]
 )
 def test_money_as_shown_passes_the_checkers_tolerance(value: float) -> None:
-    words = money(value).replace("$", "").replace(",", "").split()
-    scale = {"billion": 1e9, "million": 1e6}.get(words[-1], 1.0)
-    assert abs(float(words[0]) * scale - value) <= 1e-3 * abs(value)
+    # The checker accepts a written figure within half a unit of its last
+    # shown digit; the figure the pack shows must itself pass that rule.
+    figure, *word = money(value).replace("$", "").replace(",", "").split()
+    scale = {"billion": 1e9, "million": 1e6}.get(word[0] if word else "", 1.0)
+    places = len(figure.split(".")[1]) if "." in figure else 0
+    half_unit = 0.5 * 10**-places * scale
+    assert abs(float(figure) * scale - value) <= half_unit * (1 + 1e-9)
+    assert abs(float(figure) * scale - value) <= 1e-3 * abs(value)
+
+
+@pytest.mark.parametrize(
+    ("number", "shown"),
+    [
+        (pack.Number("x", "x", 0.2583040193, "percent"), "25.83%"),
+        (pack.Number("x", "x", -0.0123, "percent"), "-1.23%"),
+        (pack.Number("x", "x", 0.0123, "points"), "+1.23 points"),
+        (pack.Number("x", "x", -0.0456, "points"), "-4.56 points"),
+    ],
+)
+def test_ratios_read_as_percent_and_points(number: pack.Number, shown: str) -> None:
+    assert pack._shown(number) == shown
 
 
 def test_a_points_value_reads_as_points(store: FilingStore, current: FilingStore) -> None:
     p = _build(store, current)
     excess = p.number("px:CRWD:excess_20d")
     assert excess is not None and excess.kind == "points"
-    shown = f"{excess.value * 100:+.2f} points"
-    assert f"[px:CRWD:excess_20d] CRWD return less QQQ over 20 sessions: {shown}" in p.render()
+    line = next(x for x in p.render().splitlines() if x.startswith("[px:CRWD:excess_20d]"))
+    assert line.endswith(" points") and "%" not in line
 
 
 def test_a_close_after_as_of_is_never_seen(store: FilingStore, current: FilingStore) -> None:
@@ -329,6 +350,13 @@ def test_a_close_after_as_of_is_never_seen(store: FilingStore, current: FilingSt
 def test_a_naive_as_of_is_refused(store: FilingStore, current: FilingStore) -> None:
     with pytest.raises(ValueError, match="time zone"):
         _build(store, current, as_of=datetime(2026, 10, 26, 1, 0))
+
+
+def test_fullwidth_brackets_cannot_pose_as_an_id(store: FilingStore, current: FilingStore) -> None:
+    title = "CrowdStrike \uff3bpx:CRWD:close\uff3d and \u3010px:CRWD:ret_1d\u3011 jump"
+    item = _news("CRWD", title, AS_OF - timedelta(hours=1))
+    text = _build(store, current, news=[item]).render()
+    assert "CrowdStrike (px:CRWD:close) and (px:CRWD:ret_1d) jump" in text
 
 
 def test_bracketed_text_cannot_pose_as_an_id(store: FilingStore, current: FilingStore) -> None:
@@ -348,6 +376,9 @@ def _meta(filed: str, accepted: str = "") -> FilingMeta:
         # Accepted at 16:05 New York, after a 09:00 run that same day: not yet known.
         (_meta("2026-11-04", "2026-11-04T16:05:00-05:00"), False),
         (_meta("2026-11-04", "2026-11-04T08:59:00-05:00"), True),
+        # Accepted at the very instant of the run: known.
+        (_meta("2026-11-04", "2026-11-04T09:00:00-05:00"), True),
+        (_meta("2026-11-04", "2026-11-04T09:00:01-05:00"), False),
         # No acceptance time: the filing date against the New York date.
         (_meta("2026-11-04"), True),
         (_meta("2026-11-05"), False),
@@ -401,3 +432,43 @@ def test_a_weekend_filing_is_known_before_its_date() -> None:
     weekend = _meta("2026-11-09", "2026-11-07T10:00:00-05:00")
     assert visible(weekend, datetime(2026, 11, 8, 12, 0, tzinfo=UTC))
     assert not visible(_meta("2026-11-09"), datetime(2026, 11, 8, 12, 0, tzinfo=UTC))
+
+
+def test_an_after_hours_filing_is_zero_days_old(tmp_path: Path, current: FilingStore) -> None:
+    # Accepted at 18:00 New York on the 25th, so EDGAR dates it the 26th;
+    # the 21:00 run that evening sees it, and its age is never negative.
+    filings = FilingStore(tmp_path / "evening")
+    meta = FilingMeta(
+        "CRWD", 1535527, "CrowdStrike", "10-Q", "0001535527-26-000050", "2026-10-26",
+        "2026-10-31", "https://x", "", "2026-10-25T18:00:00-04:00",
+    )  # fmt: skip
+    filings.save(meta, "Quarterly report\n", [])
+    p = _build(filings, current)
+    assert p.filing is not None and p.filing.days_old == 0
+    assert p.filing.accepted == "2026-10-25T18:00:00-04:00"
+
+
+def test_one_failing_build_costs_only_its_own_pack(
+    store: FilingStore, current: FilingStore, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    real = pack.build
+
+    def build(ticker: str, company: str, **kw: object) -> pack.Pack | None:
+        if ticker == "DDOG":
+            raise KeyError("boom")
+        return real(ticker, company, **kw)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(pack, "build", build)
+    packs, missing = build_all(
+        {"DDOG": "Datadog", "CRWD": "CrowdStrike"},
+        prices=_prices("CRWD", "DDOG"),
+        filings=store,
+        current=current,
+        news={},
+        as_of=AS_OF,
+    )
+    assert [p.ticker for p in packs] == ["CRWD"]
+    assert missing == ["no pack for DDOG: build failed"]
+    with pytest.raises(ValueError, match="time zone"):
+        build_all({}, prices=_prices(), filings=store, current=current, news={},
+                  as_of=datetime(2026, 10, 26, 1, 0))  # fmt: skip

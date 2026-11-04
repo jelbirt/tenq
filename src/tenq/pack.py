@@ -90,6 +90,7 @@ class Report:
     filed: str
     items: tuple[str, ...]
     excerpts: tuple[Excerpt, ...]
+    url: str = ""  # saved for the email's source links; not shown to the models
 
 
 @dataclass(frozen=True)
@@ -99,6 +100,8 @@ class Headline:
     kind: str
     published: str
     summary: str
+    link: str = ""  # saved for the email's source links; not shown to the models
+    source: str = ""
 
 
 @dataclass(frozen=True)
@@ -107,7 +110,9 @@ class Filing:
     form: str
     period: str
     filed: str
-    days_old: int
+    days_old: int  # from the day it became known (acceptance in New York, else filing date)
+    accepted: str = ""
+    url: str = ""
 
 
 @dataclass
@@ -202,12 +207,20 @@ def money(value: float) -> str:
     the checker's 1e-3 relative tolerance of the exact value the pack holds.
     """
     sign, v = ("-" if value < 0 else ""), abs(value)
-    for scale, word in ((1e9, "billion"), (1e6, "million")):
-        if v >= scale:
-            shown = v / scale
-            places = max(0, 3 - len(str(int(shown))) + 1)
-            return f"{sign}${shown:,.{places}f} {word}"
+    for scale, word, below in ((1e9, "billion", 1e6), (1e6, "million", 1.0)):
+        # A value just under a scale can round up to it: $1.000 billion,
+        # never $1,000.0 million.
+        if v >= scale or float(_scaled(v, below).replace(",", "")) * below >= scale:
+            return f"{sign}${_scaled(v, scale)} {word}"
     return f"{sign}${v:,.2f}"
+
+
+def _scaled(v: float, scale: float) -> str:
+    if scale == 1.0:
+        return f"{v:,.2f}"
+    shown = v / scale
+    places = max(0, 3 - len(str(int(shown))) + 1)
+    return f"{shown:,.{places}f}"
 
 
 def _shown(n: Number) -> str:
@@ -218,9 +231,12 @@ def _shown(n: Number) -> str:
     return f"{n.value * 100:.2f}%"
 
 
+NO_BRACKETS = str.maketrans("[]\uff3b\uff3d\u3010\u3011\u3014\u3015", "()()()()")
+
+
 def _cut(text: str, limit: int) -> str:
     """One line, at most `limit` characters, with no square brackets to pose as an id."""
-    text = " ".join(text.split()).replace("[", "(").replace("]", ")")
+    text = " ".join(text.split()).translate(NO_BRACKETS)
     return text if len(text) <= limit else text[: limit - 3].rstrip() + "..."
 
 
@@ -307,6 +323,16 @@ def _accepted(meta: FilingMeta) -> datetime | None:
     return when if when.tzinfo is not None else None
 
 
+def known_on(meta: FilingMeta) -> date | None:
+    """The New York date a filing became public: its acceptance, else its filing date.
+
+    EDGAR dates a filing accepted after 17:30 ET to the next business day, so
+    an evening 10-Q is known a day (or a weekend) before its filing date.
+    """
+    accepted = _accepted(meta)
+    return accepted.astimezone(MARKET_TZ).date() if accepted is not None else _filed(meta)
+
+
 def visible(meta: FilingMeta, as_of: datetime) -> bool:
     """Accepted by `as_of`; without an acceptance time, filed by its New York date."""
     accepted = _accepted(meta)
@@ -378,9 +404,11 @@ def build(
         known = None
     if known:
         latest = known[0]
-        filed = _filed(latest)
-        age = (last - filed).days if filed else 0
-        pack.filing = Filing(latest.doc, latest.form, latest.period, latest.filed, age)
+        known_day = known_on(latest)  # never None for a visible filing
+        age = max(0, (last - known_day).days) if known_day else 0
+        pack.filing = Filing(
+            latest.doc, latest.form, latest.period, latest.filed, age, latest.accepted, latest.url
+        )
         if age > FILING_DAYS:
             pack.notes.append(f"latest {latest.form} is {age} days old")
         try:
@@ -409,7 +437,9 @@ def build(
             log.warning("8-K text failed for %s (%s)", meta.accession, type(exc).__name__)
             pack.notes.append(f"8-K {meta.accession} text unavailable")
             quoted = ()
-        pack.reports.append(Report(meta.doc, meta.filed, tuple(describe(meta.items)), quoted))
+        pack.reports.append(
+            Report(meta.doc, meta.filed, tuple(describe(meta.items)), quoted, meta.url)
+        )
 
     for item in news:
         if item.ticker != ticker or item.published > as_of:
@@ -421,6 +451,8 @@ def build(
                 item.kind,
                 item.published.isoformat(),
                 _cut(item.summary, SUMMARY_CHARS),
+                item.link,
+                item.source,
             )
         )
     return pack
@@ -436,20 +468,28 @@ def build_all(
     as_of: datetime,
     notes: Mapping[str, Iterable[str]] | None = None,
 ) -> tuple[list[Pack], list[str]]:
-    """One pack per ticker; a ticker with no prices gets no pack and a note."""
+    """One pack per ticker; a ticker with no prices, or whose build fails, gets
+    no pack and a note, and the others are still built."""
+    if as_of.tzinfo is None:
+        raise ValueError("as_of must carry a time zone")
     packs: list[Pack] = []
     missing: list[str] = []
     for ticker, company in names.items():
-        pack = build(
-            ticker,
-            company,
-            prices=prices,
-            filings=filings,
-            current=current,
-            news=news.get(ticker, ()),
-            as_of=as_of,
-            notes=(notes or {}).get(ticker, ()),
-        )
+        try:
+            pack = build(
+                ticker,
+                company,
+                prices=prices,
+                filings=filings,
+                current=current,
+                news=news.get(ticker, ()),
+                as_of=as_of,
+                notes=(notes or {}).get(ticker, ()),
+            )
+        except Exception as exc:
+            log.warning("pack failed for %s (%s)", ticker, type(exc).__name__)
+            missing.append(f"no pack for {ticker}: build failed")
+            continue
         if pack is None:
             missing.append(f"no pack for {ticker}: no prices")
         else:
