@@ -13,6 +13,7 @@ answer is a Refusal without a call.
 
 from __future__ import annotations
 
+import re
 from dataclasses import asdict, dataclass
 from typing import Any
 
@@ -27,6 +28,9 @@ CORRECT, INCORRECT, REFUSAL = PAPER_LABELS
 LABELS = {"correct": CORRECT, "incorrect": INCORRECT, "refusal": REFUSAL}
 GRADED = "graded"
 MAX_GRADED_CHARS = 12_000  # the longest answer in the paper's files is under 11k
+TAG = re.compile(
+    r"<\s*/?\s*(?:question|gold_answer|gold_justification|answer_to_grade)\b[^>]*>", re.I
+)
 MAX_REASON_CHARS = 500
 TIMEOUT_S = 300
 
@@ -42,15 +46,21 @@ class Grade:
         return asdict(self)
 
 
+def _inert(text: str) -> str:
+    """Defuse any of the message's own tags inside a field, so an answer cannot
+    close its block early and speak outside it."""
+    return TAG.sub(lambda m: m.group(0).replace("<", "&lt;"), text)
+
+
 def user_message(q: Question, answer: str) -> str:
     if len(answer) > MAX_GRADED_CHARS:
         answer = answer[:MAX_GRADED_CHARS] + " [answer cut here]"
     justification = q.justification.strip() or "(none given)"
     return (
-        f"<question>\n{q.question}\n</question>\n\n"
-        f"<gold_answer>\n{q.answer}\n</gold_answer>\n\n"
-        f"<gold_justification>\n{justification}\n</gold_justification>\n\n"
-        f"<answer_to_grade>\n{answer}\n</answer_to_grade>"
+        f"<question>\n{_inert(q.question)}\n</question>\n\n"
+        f"<gold_answer>\n{_inert(q.answer)}\n</gold_answer>\n\n"
+        f"<gold_justification>\n{_inert(justification)}\n</gold_justification>\n\n"
+        f"<answer_to_grade>\n{_inert(answer)}\n</answer_to_grade>"
     )
 
 
