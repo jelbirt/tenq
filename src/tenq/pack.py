@@ -554,7 +554,12 @@ def build_all(
     return packs, missing
 
 
-def main(argv: list[str] | None = None) -> int:
+def gather(ticker: str, now: datetime) -> Pack | None:
+    """Fetch everything live for one stock and build its pack as of `now`.
+
+    Syncs its 10-Q/10-Ks and recent 8-Ks from EDGAR (needs EDGAR_IDENTITY),
+    downloads its prices and reads the news feeds. None when it has no prices.
+    """
     from tenq.config import load_watchlist
     from tenq.current import CURRENT_TAG, sync_current
     from tenq.current import DEFAULT_ROOT as CURRENT_ROOT
@@ -563,21 +568,14 @@ def main(argv: list[str] | None = None) -> int:
     from tenq.news import collect
     from tenq.prices import YahooPrices, fetch
 
-    ap = argparse.ArgumentParser(description="Build and print today's facts pack for a stock.")
-    ap.add_argument("ticker")
-    ap.add_argument("--json", action="store_true", help="print JSON instead of text")
-    args = ap.parse_args(argv)
-    logging.basicConfig(level=logging.WARNING, format="%(levelname)s %(name)s: %(message)s")
-    ticker = args.ticker.upper()
     names = load_watchlist().names
-    now = datetime.now(UTC)
     source = EdgarSource()
     filings, current = FilingStore(Path("data/filings")), FilingStore(CURRENT_ROOT, tag=CURRENT_TAG)
     sync(source, filings, ticker, DEFAULT_DEPTH)
     synced = sync_current(source, current, ticker, (now - timedelta(days=CURRENT_DAYS)).date())
     prices = fetch([ticker], YahooPrices(), now=now)
     news = collect({ticker: names.get(ticker)}, now - timedelta(hours=72))
-    pack = build(
+    return build(
         ticker,
         names.get(ticker, ticker),
         prices=prices,
@@ -587,6 +585,16 @@ def main(argv: list[str] | None = None) -> int:
         as_of=now,
         notes=[*prices.notes, *news.notes, *synced.notes],
     )
+
+
+def main(argv: list[str] | None = None) -> int:
+    ap = argparse.ArgumentParser(description="Build and print today's facts pack for a stock.")
+    ap.add_argument("ticker")
+    ap.add_argument("--json", action="store_true", help="print JSON instead of text")
+    args = ap.parse_args(argv)
+    logging.basicConfig(level=logging.WARNING, format="%(levelname)s %(name)s: %(message)s")
+    ticker = args.ticker.upper()
+    pack = gather(ticker, datetime.now(UTC))
     if pack is None:
         print(f"no prices for {ticker}")
         return 1
