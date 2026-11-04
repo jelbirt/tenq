@@ -32,11 +32,12 @@ class FilingMeta:
     ticker: str
     cik: int
     company: str
-    form: str  # "10-Q" or "10-K"
+    form: str  # "10-Q", "10-K" or "8-K"
     accession: str  # "0001535527-26-000031"
     filed: str  # ISO date the filing was accepted
-    period: str  # ISO date the reporting period ends
+    period: str  # ISO date the reporting period ends (an 8-K: the event date)
     url: str
+    items: str = ""  # an 8-K's item numbers as EDGAR lists them, e.g. "2.02,9.01"
 
     @property
     def doc(self) -> str:
