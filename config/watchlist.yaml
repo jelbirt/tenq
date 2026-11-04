@@ -1,6 +1,8 @@
 # The 20 software names, seeded from ticker-sentinel's config/watchlist.yaml
 # universe on 2026-11-03. Slice 1 briefs only the `active` names; the rest are
 # listed so slice 3 can widen coverage without a config migration.
+# `names` are what news headlines call each company; a name never needs its
+# legal suffix (Inc., Holdings), the matcher drops those.
 active: [CRWD]
 watchlist:
   - CRWD
@@ -23,3 +25,24 @@ watchlist:
   - NOW
   - PLTR
   - ADSK
+names:
+  CRWD: CrowdStrike
+  DDOG: Datadog
+  SNOW: Snowflake
+  NET: Cloudflare
+  ZS: Zscaler
+  MDB: MongoDB
+  TEAM: Atlassian
+  PANW: Palo Alto Networks
+  SHOP: Shopify
+  RBRK: Rubrik
+  FTNT: Fortinet
+  OKTA: Okta
+  DT: Dynatrace
+  GTLB: GitLab
+  IOT: Samsara
+  MNDY: monday.com
+  HUBS: HubSpot
+  NOW: ServiceNow
+  PLTR: Palantir
+  ADSK: Autodesk
