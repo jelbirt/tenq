@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import shutil
+import urllib.error
+from email.message import Message
 from pathlib import Path
 
 import pytest
 
-from tenq.filings import FilingStore
-from tenq.search import Xerj, hits_from_response, index_prefix, xerj_node
+import tenq.search as search
+from tenq.filings import FilingStore, index_prefix
+from tenq.search import Xerj, hits_from_response, text_field, xerj_node
 
 LATEST = "CRWD-0001535527-26-000031"
 
@@ -88,11 +91,50 @@ def test_a_repeat_chunk_does_not_fall_back_to_a_neighbour(store: FilingStore) ->
     assert [h.passage_id for h in hits] == [para.id]
 
 
+def test_a_text_schema_chunk_spans_to_its_end_line(store: FilingStore) -> None:
+    # for some corpora xerj names the field `text` and records `end_line` (an int)
+    passages = store.passages(store.filings("CRWD")[0])
+    heading, para = passages[0], passages[1]
+    hit = _hit(f"{LATEST}.txt", heading.line, 5.0)
+    src = hit["_source"]
+    assert isinstance(src, dict)
+    del src["body"]
+    src.update(text="ITEM 2.", start_line=heading.line, end_line=para.line)
+    (got,) = hits_from_response({"hits": {"hits": [hit]}}, store, "revised previously issued", k=5)
+    assert got.passage_id == para.id
+
+
+@pytest.mark.parametrize(
+    ("properties", "field"),
+    [({"body": {}, "start_line": {}}, "body"), ({"text": {}, "impl": {}}, "text")],
+)
+def test_the_text_field_is_read_from_the_mapping(properties: dict[str, object], field: str) -> None:
+    mapping = {"tenq-crwd-t-docs": {"mappings": {"properties": properties}}}
+    assert text_field(mapping) == field
+
+
+def test_a_key_with_no_index_has_no_hits(
+    store: FilingStore, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def missing(url: str, body: object = None, timeout: float = 10) -> object:
+        raise urllib.error.HTTPError(url, 404, "no such index", Message(), None)
+
+    monkeypatch.setattr(search, "_request", missing)
+    x = Xerj("http://127.0.0.1:1", store)
+    assert x.search("CRWD", "revenue") == []
+    assert x._fields == {}  # nothing cached: a later index is still found
+
+
+def test_a_mapping_without_a_text_field_is_an_error() -> None:
+    with pytest.raises(RuntimeError, match="no text field"):
+        text_field({"i": {"mappings": {"properties": {"start_line": {}}}}})
+
+
 def test_hits_from_another_ticker_are_dropped(store: FilingStore) -> None:
     p = store.passages(store.filings("CRWD")[0])[1]
     resp = {"hits": {"hits": [_hit(f"{LATEST}.txt", p.line, 1.0)]}}
-    assert hits_from_response(resp, store, "revenue", k=5, ticker="CRW") == []
-    assert len(hits_from_response(resp, store, "revenue", k=5, ticker="CRWD")) == 1
+    assert hits_from_response(resp, store, "revenue", k=5, key="CRW") == []
+    assert len(hits_from_response(resp, store, "revenue", k=5, key="CRWD")) == 1
 
 
 def test_index_prefix_is_xerj_shaped_and_never_a_sibling() -> None:
