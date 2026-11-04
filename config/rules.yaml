@@ -1,0 +1,62 @@
+# How Jev's answers become a call. Read top to bottom. Every number here is a
+# setting; changing any of them, or any label, bumps the version so the
+# scorecard can tell rule sets apart. src/tenq/rules.py applies it, and a
+# test checks every label below against prompts/jev.yaml.
+version: rules-v1
+
+# 1. News: Jev's direction answer as an expected value from -1 (bad for the
+#    business) to +1 (good), times the probability the recent news is
+#    material, times how strong its evidence is.
+direction:
+  good: 1.0
+  bad: -1.0
+  mixed: 0.0
+  neutral: 0.0
+evidence:
+  reported: 1.0
+  company: 0.8
+  reporting: 0.6
+  opinion: 0.2
+  none: 0.0
+
+# 2. Guidance: an expected value from -1 to +1.
+guidance:
+  raised: 1.0
+  lowered: -1.0
+  kept: 0.2
+  issued: 0.0
+  mixed: 0.0
+  none: 0.0
+
+# 3. Fundamentals: the 0 to 4 trend level read as -1 to +1. Left out (weight
+#    and all) when the pack has no 10-Q/10-K numbers.
+# 4. Risk: the probability of a recent risk event, counted against the stock.
+
+# How much each part counts. A part left out is not made up by the others,
+# so missing evidence pulls the call toward Hold.
+weights:
+  news: 0.45
+  guidance: 0.25
+  fundamentals: 0.15
+  risk: 0.15
+
+# 5. Certainty: each part counts in full only when Jev's rounds agreed. Its
+#    contribution is multiplied by 1 less the answer's spread across rounds
+#    (spread on a 0 to 1 scale), so an unsure Jev drifts toward Hold. There is
+#    no hard cut-off on confidence.
+
+# 6. Already priced in: when the stock has already beaten (or lagged) QQQ in
+#    the signal's direction over the last `sessions`, the score shrinks by
+#    `per_move` for each usual move it made (its 20-session volatility scaled
+#    to that window), never by more than `most`. A move against the signal
+#    leaves the score as it is.
+priced_in:
+  sessions: 5
+  per_move: 0.25
+  most: 0.75
+
+# 7. The call, from the final score (-1 to +1):
+calls:
+  buy: 0.20     # at or above: expect it to beat QQQ
+  sell: -0.20   # at or below: get out if you own it
+  short: -0.45  # at or below: expect it to fall
