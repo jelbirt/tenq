@@ -9,6 +9,7 @@ from tenq.news import (
     clean,
     collect,
     item_id,
+    kind_of,
     mentions,
     normalise_name,
     parse_feed,
@@ -161,7 +162,7 @@ def test_general_and_per_ticker_feeds_are_matched_dated_and_deduped() -> None:
     assert got.notes == ()
 
 
-def test_a_general_feed_story_counts_only_for_stocks_its_title_names() -> None:
+def test_a_story_counts_only_for_stocks_its_headline_names() -> None:
     pages: dict[str, bytes | Exception] = {
         GENERAL: _rss(
             ("Zscaler falls after earnings", "https://a.example/1", LATE, "peers CrowdStrike fell"),
@@ -172,7 +173,7 @@ def test_a_general_feed_story_counts_only_for_stocks_its_title_names() -> None:
     }
     got = _collect(pages, {"CRWD": "CrowdStrike", "ZS": "Zscaler"})
     assert [i.title for i in got.items["ZS"]] == ["Zscaler falls after earnings"]
-    assert [i.title for i in got.items["CRWD"]] == ["Security stocks slide"]  # Yahoo: summary ok
+    assert got.items["CRWD"] == ()  # named only in the summary, even in its own feed
 
 
 def test_a_story_dated_exactly_at_since_is_not_new() -> None:
@@ -270,7 +271,7 @@ def test_items_serialise_for_the_run_record() -> None:
     item = _collect(pages, {"CRWD": None}).items["CRWD"][0]
     d = item.to_dict()
     assert d["published"] == "2026-11-03T20:00:00+00:00"
-    assert d["id"] == item.id and d["ticker"] == "CRWD"
+    assert d["id"] == item.id and d["ticker"] == "CRWD" and d["kind"] == item.kind
 
 
 def test_the_cli_prints_counts_and_ids(
@@ -284,3 +285,204 @@ def test_the_cli_prints_counts_and_ids(
     assert news.main(["crwd"]) == 0
     out = capsys.readouterr().out
     assert "note: 1 news feed(s) unavailable" in out and "CRWD: 0" in out
+
+
+def _entry(title: str, link: str = "https://finance.yahoo.com/x", summary: str = "") -> Entry:
+    return Entry(title=title, link=link, source=YAHOO, published=None, summary=summary)
+
+
+@pytest.mark.parametrize(
+    ("title", "link", "summary", "kind"),
+    [
+        # the company's own release: a dateline, a wire mark, or "<Company> Announces ... Results"
+        (
+            "CrowdStrike Unveils Agentic Adversary Emulation",
+            "https://finance.yahoo.com/x",
+            "AUSTIN, Texas & BARCELONA, Spain, November 04, 2026--CrowdStrike (NASDAQ: CRWD)",
+            news.KIND_COMPANY,
+        ),
+        (
+            "CrowdStrike to Announce Fiscal Results",
+            "https://finance.yahoo.com/x",
+            "NEW YORK, Nov. 03, 2026 (GLOBE NEWSWIRE) -- CrowdStrike today said",
+            news.KIND_COMPANY,
+        ),
+        (
+            "CrowdStrike Announces Third Quarter Results",
+            "https://x.example/1",
+            "",
+            news.KIND_COMPANY,
+        ),
+        # someone else's release that names it
+        (
+            "Guardz Brings CrowdStrike Protection to Small Businesses",
+            "https://finance.yahoo.com/x",
+            "SAN FRANCISCO, November 02, 2026--Guardz today announced",
+            news.KIND_RELEASE,
+        ),
+        # reporting
+        (
+            "CrowdStrike stock tumbles 19% despite earnings beat",
+            "https://finance.yahoo.com/x",
+            "",
+            news.KIND_REPORT,
+        ),
+        (
+            "CrowdStrike's kill switch stops rogue agents",
+            "https://www.cnbc.com/x",
+            "",
+            news.KIND_REPORT,
+        ),
+        (
+            "CrowdStrike (CRWD) Q2 2027 Earnings Call Transcript",
+            "https://www.fool.com/x",
+            "",
+            news.KIND_REPORT,
+        ),
+        # opinion: the site, or the headline's shape
+        ("Why CrowdStrike Stock Dove Today", "https://www.fool.com/x", "", news.KIND_OPINION),
+        ("CrowdStrike Sinks 14% in a Week", "https://www.tikr.com/x", "", news.KIND_OPINION),
+        ("Is CrowdStrike Stock A Buy Today?", "https://finance.yahoo.com/x", "", news.KIND_OPINION),
+        (
+            "CrowdStrike vs. Okta: Which Is a Better Buy?",
+            "https://finance.yahoo.com/x",
+            "",
+            news.KIND_OPINION,
+        ),
+        (
+            "CrowdStrike (CRWD) Registers a Bigger Fall Than the Market: Important Facts to Note",
+            "https://finance.yahoo.com/x",
+            "",
+            news.KIND_OPINION,
+        ),
+    ],
+)
+def test_each_story_is_labelled_by_kind(title: str, link: str, summary: str, kind: str) -> None:
+    assert kind_of(_entry(title, link, summary), "CRWD", "CrowdStrike") == kind
+
+
+def test_a_release_without_a_company_name_is_never_the_companys_own() -> None:
+    entry = _entry("CRWD announces results", summary="AUSTIN, Texas, November 04, 2026--")
+    assert kind_of(entry, "CRWD", None) == news.KIND_RELEASE
+
+
+def test_the_cap_keeps_the_companys_release_over_newer_opinion() -> None:
+    columns = [
+        (f"Is CrowdStrike a Buy? Take {n}", f"https://www.fool.com/{n}", LATER, "")
+        for n in range(5)
+    ]
+    release = ("CrowdStrike Announces Results", "https://finance.yahoo.com/r", LATE, "")
+    report = ("CrowdStrike shares fall", "https://www.cnbc.com/r", LATE, "")
+    got = collect(
+        {"CRWD": "CrowdStrike"},
+        SINCE,
+        fetch=Feeds({GENERAL: _rss(*columns, report, release)}),
+        general=[GENERAL],
+        per_ticker=None,
+        cap=3,
+    )
+    assert [(i.kind, i.title) for i in got.items["CRWD"]] == [
+        (news.KIND_COMPANY, "CrowdStrike Announces Results"),
+        (news.KIND_REPORT, "CrowdStrike shares fall"),
+        (news.KIND_OPINION, "Is CrowdStrike a Buy? Take 0"),  # newest of its kind first
+    ]
+
+
+def test_items_of_one_kind_stay_newest_first() -> None:
+    pages: dict[str, bytes | Exception] = {
+        GENERAL: _rss(
+            ("CRWD falls", "https://a.example/1", LATE, ""),
+            ("CRWD rises", "https://a.example/2", LATER, ""),
+        )
+    }
+    assert [i.title for i in _collect(pages, {"CRWD": None}).items["CRWD"]] == [
+        "CRWD rises",
+        "CRWD falls",
+    ]
+
+
+def test_video_and_podcast_hosts_are_dropped() -> None:
+    pages: dict[str, bytes | Exception] = {
+        YAHOO.format(ticker="HUBS"): _rss(
+            ("HubSpot founders on growth", "https://thehustle.videonest.co/1", LATE, ""),
+            ("HubSpot beats estimates", "https://www.cnbc.com/2", LATE, ""),
+        )
+    }
+    got = _collect(pages, {"HUBS": "HubSpot"})
+    assert [i.title for i in got.items["HUBS"]] == ["HubSpot beats estimates"]
+
+
+@pytest.mark.parametrize(
+    ("title", "link", "summary", "kind"),
+    [
+        # a release that describes itself after its listing, or says "today announced"
+        (
+            "CrowdStrike to Announce Fiscal Results on December 2",
+            "https://finance.yahoo.com/x",
+            "CrowdStrike (NASDAQ: CRWD), the AI-native cybersecurity leader, will",
+            news.KIND_COMPANY,
+        ),
+        (
+            "CrowdStrike Extends Its Platform",
+            "https://finance.yahoo.com/x",
+            "CrowdStrike, Inc. (NASDAQ: CRWD) today announced",
+            news.KIND_COMPANY,
+        ),
+        # a reporter's headline with a release's verb, or a listing mark mid-sentence
+        (
+            "CrowdStrike launches AI kill switch that it says can stop rogue agents",
+            "https://www.cnbc.com/x",
+            "CrowdStrike launched an AI kill switch that the company says",
+            news.KIND_REPORT,
+        ),
+        (
+            "CrowdStrike Launches AI Agent Kill Switch",
+            "https://decrypt.co/x",
+            "CrowdStrike's new kill switch lets security teams",
+            news.KIND_REPORT,
+        ),
+        (
+            "CrowdStrike (CRWD) stock trades down, here is how",
+            "https://finance.yahoo.com/x",
+            "Shares of cybersecurity platform provider CrowdStrike (NASDAQ:CRWD) fell",
+            news.KIND_REPORT,
+        ),
+        (
+            "CrowdStrike stock slides",
+            "https://finance.yahoo.com/x",
+            "Investing.com -- CrowdStrike Inc. (NASDAQ: CRWD) reported results",
+            news.KIND_REPORT,
+        ),
+        # a research firm's promotion that lists the company
+        (
+            "Global Security Software Market 2026 | Growth to $88B with CrowdStrike",
+            "https://finance.yahoo.com/x",
+            "Boost ROI with scalable cloud",
+            news.KIND_RELEASE,
+        ),
+        ("CrowdStrike Market Share Analysis", "https://finance.yahoo.com/x", "", news.KIND_RELEASE),
+        # stock-site templates syndicated through Yahoo
+        (
+            "Here\u2019s Why CrowdStrike Fell More Than Broader Market",
+            "https://finance.yahoo.com/x",
+            "",
+            news.KIND_OPINION,
+        ),
+        (
+            "Zacks Industry Outlook Highlights CrowdStrike",
+            "https://finance.yahoo.com/x",
+            "",
+            news.KIND_OPINION,
+        ),
+        (
+            "Don't Overlook CrowdStrike Revenue Trends",
+            "https://finance.yahoo.com/x",
+            "",
+            news.KIND_OPINION,
+        ),
+    ],
+)
+def test_a_release_is_told_from_reporting_by_its_text(
+    title: str, link: str, summary: str, kind: str
+) -> None:
+    assert kind_of(_entry(title, link, summary), "CRWD", "CrowdStrike") == kind

@@ -1,14 +1,24 @@
 """News headlines for each watchlist stock, from RSS feeds, each with a stable id.
 
 Two kinds of feed: Yahoo's per-ticker feed, and general business feeds (CNBC,
-MarketWatch). Yahoo's feed for a stock also carries stories about its peers that
-never name it, so every entry must name the stock by symbol or company name: in its
-title or summary for Yahoo's feed, in its title for a general feed,
-with the rules ticker-sentinel learned the hard way (`src/sentinel/news/matching.py`,
-MIT, same author): a symbol matches only in capitals, so "net income" is never NET;
+MarketWatch). Both carry stories about other companies: Yahoo's feed for a stock
+lists its peers' news, and a summary names rivals in passing ("peers CrowdStrike and
+Palo Alto also fell"). So a story counts for a stock only when its headline names
+the stock by symbol or company name, with the rules ticker-sentinel learned the hard
+way (`src/sentinel/news/matching.py`, MIT, same author): a symbol matches only in
+capitals, so "net income" is never NET;
 a one or two letter symbol, or one that is an English word (NOW, NET, TEAM), needs
 a cashtag, brackets or an exchange prefix, so neither the "S" in "U.S." nor "BUY
 NOW" is a stock; a company name matches without its legal suffix.
+
+Each item is labelled by kind, so a reader can weigh a company's own announcement
+above a columnist's take: KIND_COMPANY (the company's own press release), KIND_REPORT
+(news reporting), KIND_RELEASE (another company's press release that names it) and
+KIND_OPINION (buy-or-sell columns, ratings templates, stock-picking sites). The label
+comes from the link's site, the headline's wording and a press release's dateline;
+it is a heuristic, and a story it cannot place is a report. The per-ticker cap keeps
+the highest kinds first, then the newest, so a busy day's clickbait cannot push out
+the company's own release. Video and podcast hosts are dropped outright.
 
 Headline text is data from the open web, never instructions. Nothing here raises: a
 dead feed is skipped with a note.
@@ -56,6 +66,52 @@ LEGAL_SUFFIXES = frozenset(
     {"inc", "incorporated", "corp", "corporation", "holdings", "holding", "ltd", "limited"}
     | {"plc", "co", "company", "nv", "sa", "ag", "se"}
 )
+
+KIND_COMPANY = "company release"
+KIND_REPORT = "report"
+KIND_RELEASE = "release"
+KIND_OPINION = "opinion"
+KIND_RANK = {KIND_COMPANY: 0, KIND_REPORT: 1, KIND_RELEASE: 2, KIND_OPINION: 3}
+# sites whose items are stock-picking columns, ratings or chatter rather than reporting
+OPINION_HOSTS = frozenset(
+    {"fool.com", "tikr.com", "trefis.com", "247wallst.com", "barchart.com", "stocktwits.com"}
+    | {"marketbeat.com", "investorshub.advfn.com", "beincrypto.com", "seekingalpha.com"}
+    | {"zacks.com", "simplywall.st", "insidermonkey.com"}
+)
+# sites with no reporting at all (HubSpot's podcasts, filed under HUBS by Yahoo)
+DROP_HOSTS = frozenset({"videonest.co"})
+# headline shapes of columns and ratings templates that Yahoo hosts on its own site
+OPINION_TITLE = re.compile(
+    r"\b(?:buy|sell|hold)\b[^.]{0,30}\?|better buy|should you|is it (?:time|a buy)"
+    r"|time to (?:buy|sell|hold)|facts to (?:know|note)|bigger fall than|as market (?:rises|dips)"
+    r"|stocks? to (?:buy|watch)|fair value|overvalued|undervalued|price i'?d pay"
+    r"|what'?s in (?:store|the cards)|beat estimates again|read this before|worth the wait"
+    r"|billionaire|\bvs\.?\s|top analyst calls|brokers suggest|could derail"
+    # stock-site templates syndicated through Yahoo, whose links hide the site
+    r"|\bzacks\b|here[\u2019']?s why|don[\u2019']?t overlook|compared to estimates|on the horizon"
+    r"|look at key metrics|doubters",
+    re.IGNORECASE,
+)
+# a market-research firm's promotion that lists companies in its headline
+RESEARCH_TITLE = re.compile(
+    r"\bmarket (?:report|size|share|forecast|outlook|analysis)\b|\bmarket 20[0-9]{2}\b",
+    re.IGNORECASE,
+)
+# the transcript or summary of an earnings call reports what was said, whatever the site
+CALL_TITLE = re.compile(r"earnings call (?:transcript|summary|highlights)", re.IGNORECASE)
+# a press release opens with a dateline ("AUSTIN, Texas, November 04, 2026--") or a
+# wire service's mark, says it was announced today, or describes itself after its
+# listing ("(NASDAQ: PANW), the global ..."); reporters write "(NASDAQ:CRWD) fell"
+RELEASE_TEXT = re.compile(
+    r"^[^\n]{0,120}?\b20[0-9]{2}\s*(?:--|\(GLOBE NEWSWIRE\)|/PRNewswire/|\(BUSINESS WIRE\))"
+    r"|\b(?:today announced|announced today)\b"
+    r"|^[^\n]{0,80}?\((?:NASDAQ|Nasdaq|NYSE)(?: Global Select Market)?: [A-Z.]{1,6}\),"
+    r"\s+(?:the|a|an)\s"
+)
+# with no release text, only a results announcement in the company's own words
+# ("Datadog Announces Third Quarter 2026 Financial Results"); a reporter's "CrowdStrike
+# launches AI kill switch" is a report
+OWN_RESULTS = re.compile(r"\s+(?:Announces|Reports)\b.*\bResults\b")
 TAG = re.compile(r"<[^>]*>")
 SPACE = re.compile(r"\s+")
 
@@ -71,6 +127,7 @@ class NewsItem:
     source: str  # the feed it came from
     published: datetime
     summary: str
+    kind: str  # one of KIND_RANK
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -81,6 +138,7 @@ class NewsItem:
             "source": self.source,
             "published": self.published.isoformat(),
             "summary": self.summary,
+            "kind": self.kind,
         }
 
 
@@ -179,6 +237,35 @@ def mentions(text: str, ticker: str, name: str | None) -> bool:
     return re.search(rf"(?<!\w){re.escape(key)}(?!\w)", text.lower()) is not None
 
 
+def host(link: str) -> str:
+    """The link's site without "www.": "https://www.fool.com/x" to "fool.com"."""
+    return (urlsplit(link).hostname or "").removeprefix("www.")
+
+
+def _on(site: str, hosts: frozenset[str]) -> bool:
+    return any(site == h or site.endswith("." + h) for h in hosts)
+
+
+def kind_of(entry: Entry, ticker: str, name: str | None) -> str:
+    """Which kind of item a story is for this stock; see the module docstring."""
+    if CALL_TITLE.search(entry.title):
+        return KIND_REPORT
+    if _on(host(entry.link), OPINION_HOSTS) or OPINION_TITLE.search(entry.title):
+        return KIND_OPINION
+    if RESEARCH_TITLE.search(entry.title):
+        return KIND_RELEASE
+    own = (
+        bool(name)
+        and len(key := normalise_name(name or "")) >= MIN_NAME
+        and entry.title.lower().startswith(key)
+    )
+    if RELEASE_TEXT.search(entry.summary):
+        return KIND_COMPANY if own else KIND_RELEASE
+    if own and OWN_RESULTS.match(entry.title[len(key) :]):
+        return KIND_COMPANY
+    return KIND_REPORT
+
+
 def link_key(entry: Entry) -> str:
     """Same story, same key: a link without its tracking parameters, else the title."""
     if entry.link:
@@ -223,6 +310,8 @@ def collect(
 
     def add(ticker: str, entry: Entry) -> None:
         nonlocal undated
+        if _on(host(entry.link), DROP_HOSTS) or not mentions(entry.title, ticker, tickers[ticker]):
+            return
         if entry.published is None:
             undated += 1
             return
@@ -236,6 +325,7 @@ def collect(
             source=entry.source,
             published=entry.published,
             summary=entry.summary,
+            kind=kind_of(entry, ticker, tickers[ticker]),
         )
         seen = found[ticker]
         title = item.title.lower()
@@ -249,11 +339,8 @@ def collect(
             dead.append(url)
             continue
         for entry in entries:
-            # a general feed's summary is where rivals get named ("peers CrowdStrike
-            # and Palo Alto also fell"), so only its title can tie a story to a stock
-            for ticker, name in tickers.items():
-                if mentions(entry.title, ticker, name):
-                    add(ticker, entry)
+            for ticker in tickers:
+                add(ticker, entry)
     if per_ticker:
         failures = 0
         for ticker in tickers:
@@ -267,16 +354,17 @@ def collect(
                 continue
             failures = 0
             for entry in entries:
-                if mentions(f"{entry.title} {entry.summary}", ticker, tickers[ticker]):
-                    add(ticker, entry)
+                add(ticker, entry)
     if dead:
         notes.append(f"{len(dead)} news feed(s) unavailable")
     if undated:
         log.info("left out %d undated entries", undated)
-    items = {
-        t: tuple(sorted(seen.values(), key=lambda i: i.published, reverse=True)[:cap])
-        for t, seen in found.items()
-    }
+
+    def ranked(seen: dict[str, NewsItem]) -> tuple[NewsItem, ...]:
+        newest = sorted(seen.values(), key=lambda i: i.published, reverse=True)
+        return tuple(sorted(newest, key=lambda i: KIND_RANK[i.kind])[:cap])  # stable sort
+
+    items = {t: ranked(seen) for t, seen in found.items()}
     return News(items=items, notes=tuple(notes))
 
 
@@ -297,7 +385,7 @@ def main(argv: list[str] | None = None) -> int:
     for ticker in tickers:
         print(f"{ticker}: {len(news.items[ticker])}")
         for item in news.items[ticker]:
-            print(f"  {item.published:%m-%d %H:%M} {item.id} {item.title}")
+            print(f"  {item.published:%m-%d %H:%M} {item.kind:<15} {item.id} {item.title}")
     return 0
 
 
