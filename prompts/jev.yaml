@@ -1,0 +1,87 @@
+# Jev's questions about one stock's facts pack. Each is narrow on purpose:
+# Jev answers typed questions well and open "what should I do" questions
+# badly, and it is weak at arithmetic, so every number it sees was computed
+# in code. Rules (task 6) combine the answers into the call.
+#
+# Types (OpenRouter System One): noul is the probability a statement is
+# true; choice picks one label from criteria; score picks a level from an
+# ordered list (0 is the first). Changing any question bumps the version.
+version: jev-q1
+questions:
+  material:
+    type: noul
+    instructions: >-
+      Does any headline or 8-K in the facts report something that could change
+      the company's revenue, profit or risk by more than a routine amount
+      (results, guidance, a large deal, an acquisition, a security incident,
+      a lawsuit, an executive departure, an index change)?
+    criteria:
+      "true": At least one item is material news about this company.
+      "false": Only routine items, opinion pieces, or nothing new.
+  direction:
+    type: choice
+    instructions: >-
+      Taken together, is the new information in the headlines and 8-Ks good or
+      bad for this company's business (not for its stock price)?
+    criteria:
+      good: Mostly good for the business.
+      bad: Mostly bad for the business.
+      mixed: Real good and bad items that roughly offset.
+      neutral: Nothing that moves the business either way.
+  source:
+    type: choice
+    instructions: >-
+      What is the strongest kind of evidence behind the most important new item?
+    criteria:
+      reported: Reported results or a filed document (10-Q, 10-K, 8-K).
+      company: A company announcement or guidance.
+      reporting: News reporting of a specific event.
+      opinion: Analyst or columnist opinion, previews, or speculation.
+      none: There is no new item.
+  guidance:
+    type: choice
+    instructions: >-
+      Did the company change its outlook (guidance) in the facts given?
+    criteria:
+      raised: Guidance was raised.
+      lowered: Guidance was lowered.
+      kept: Guidance was reaffirmed.
+      none: No guidance appears in the facts.
+  fundamentals:
+    type: score
+    instructions: >-
+      From the latest 10-Q or 10-K numbers (growth from a year ago, margins,
+      cash flow), how is the business trending?
+    criteria:
+      - Clearly worsening.
+      - Somewhat worsening.
+      - Steady.
+      - Somewhat improving.
+      - Clearly improving.
+  priced_in:
+    type: noul
+    instructions: >-
+      Has the stock already moved strongly against QQQ in the direction the news
+      points (the excess return lines over 5 and 20 sessions), so that the news
+      is likely already in the price?
+    criteria:
+      "true": The stock has already moved strongly with the news.
+      "false": The move is small, opposite, or there is no clear news.
+  risk:
+    type: noul
+    instructions: >-
+      Is there a new risk event for this company in the facts: a lawsuit,
+      investigation, outage or breach, a downgrade, an executive leaving, or a
+      customer loss?
+    criteria:
+      "true": A new risk event appears.
+      "false": No new risk event appears.
+  catalyst:
+    type: noul
+    instructions: >-
+      Do the facts name a specific company event expected within the next four
+      weeks (an earnings date, an investor day, a product launch, an index
+      change taking effect)?
+    criteria:
+      "true": A dated event in the next four weeks is named.
+      "false": No such event is named.
