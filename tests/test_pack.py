@@ -494,3 +494,28 @@ def test_one_failing_build_costs_only_its_own_pack(
     with pytest.raises(ValueError, match="time zone"):
         build_all({}, prices=_prices(), filings=store, current=current, news={},
                   as_of=datetime(2026, 10, 26, 1, 0))  # fmt: skip
+
+
+@pytest.mark.parametrize(
+    ("when", "age"),
+    [
+        ("2026-10-25T23:30:00+00:00", "today"),  # 19:30 New York on the 25th
+        ("2026-10-25T03:00:00+00:00", "1 day old"),  # 23:00 New York on the 24th
+        ("2026-10-18", "7 days old"),  # an 8-K's EDGAR date
+        ("2026-10-27T12:00:00+00:00", "today"),  # never negative
+        ("not a date", "age unknown"),
+    ],
+)
+def test_each_item_shows_its_age_in_new_york_days(when: str, age: str) -> None:
+    assert pack._age(AS_OF, when) == age
+
+
+def test_eightks_and_headlines_are_rendered_with_their_age(
+    store: FilingStore, current: FilingStore
+) -> None:
+    current.save(_eightk("0001535527-26-000040", "2026-10-20"), EIGHTK_TEXT, [])
+    news = [_news("CRWD", "CrowdStrike wins a deal", AS_OF - timedelta(days=2))]
+    lines = _build(store, current, news=news).render().splitlines()
+    assert "- CRWD-0001535527-26-000040 filed 2026-10-20 (5 days old): " in "\n".join(lines)
+    headline = next(line for line in lines if "CrowdStrike wins a deal" in line)
+    assert ", 2 days old) CrowdStrike wins a deal" in headline
