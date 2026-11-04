@@ -1,0 +1,129 @@
+from __future__ import annotations
+
+import json
+from pathlib import Path
+from typing import Any
+
+import pytest
+from conftest import QA_DOC
+
+from tenq import qa
+from tenq.brief import load_prompt
+from tenq.docstore import DocStore
+from tenq.financebench import Document, Evidence, Question
+from tenq.llm import INFRA, MODEL, AgentRun
+from tenq.qa import ANSWERED, INFRA_FAILURE, MODEL_FAILURE, ask, outcome, parse_answer
+
+QUESTION = Question(
+    id="fb_0001",
+    company="Acme",
+    doc_name=QA_DOC,
+    question_type="metrics-generated",
+    question_reasoning=None,
+    question="What did Acme spend on widget presses?",
+    answer="$1,234",
+    justification="",
+    evidence=(Evidence(QA_DOC, 2, "Purchases of widget presses 1,234"),),
+)
+
+
+def _id(docs: DocStore, words: str) -> str:
+    (p,) = [p for p in docs.passages(QA_DOC) if words in p.text]
+    return p.id
+
+
+def _json(answer: object, ids: object) -> str:
+    return (
+        "Searching first.\n```json\n" + json.dumps({"answer": answer, "passage_ids": ids}) + "\n```"
+    )
+
+
+def test_an_answer_resolves_its_citations_to_pages(docs: DocStore) -> None:
+    presses, risks = _id(docs, "widget presses"), _id(docs, "Risk factors")
+    got = parse_answer(_json("  Acme spent\n$1,234. ", [risks, presses, risks]), docs, QA_DOC)
+    assert got.status == ANSWERED and got.text == "Acme spent $1,234."
+    assert got.passage_ids == [risks, presses] and got.pages == [2, 3]
+    assert got.dropped_ids == 0 and got.error is None
+
+
+@pytest.mark.parametrize(
+    "bad",
+    [
+        f"{QA_DOC}:9999",  # no such passage
+        f"{QA_DOC}:1:2",
+        "OTHER_2020_10K:1",  # another document
+        "../../etc/passwd",
+        f"{QA_DOC}:\uff11",  # a fullwidth digit
+    ],
+)
+def test_citations_that_are_not_passages_of_the_document_are_dropped(
+    docs: DocStore, bad: str
+) -> None:
+    docs.save("OTHER_2020_10K", "b" * 64, ["other company"], 0.1)
+    presses = _id(docs, "widget presses")
+    got = parse_answer(_json("$1,234", [bad, presses, 7, None]), docs, QA_DOC)
+    assert got.status == ANSWERED and got.passage_ids == [presses] and got.pages == [2]
+    assert got.dropped_ids == 1  # non-strings are not citations at all
+
+
+def test_an_answer_with_no_citations_is_still_an_answer(docs: DocStore) -> None:
+    got = parse_answer(_json("The document does not say.", []), docs, QA_DOC)
+    assert got.status == ANSWERED and got.passage_ids == [] and got.pages == []
+    assert parse_answer(_json("x", "not a list"), docs, QA_DOC).passage_ids == []
+
+
+def test_citations_are_capped(docs: DocStore) -> None:
+    ids = [p.id for p in docs.passages(QA_DOC)]
+    got = parse_answer(_json("x", ids * 5), docs, QA_DOC)
+    assert len(got.passage_ids) == len(set(ids)) <= qa.MAX_CITATIONS
+    many = parse_answer(_json("x", [ids[0]] + [f"{QA_DOC}:{n}" for n in range(500)]), docs, QA_DOC)
+    assert len(many.passage_ids) <= qa.MAX_CITATIONS
+
+
+@pytest.mark.parametrize(
+    "text",
+    [None, "", "I could not find it.", _json("", []), _json("   ", []), _json(5, []), "{bad json"],
+)
+def test_an_unreadable_answer_is_a_model_failure(docs: DocStore, text: str | None) -> None:
+    got = parse_answer(text, docs, QA_DOC)
+    assert got.status == MODEL_FAILURE and got.error is not None and got.text is None
+
+
+def test_a_failed_run_is_graded_by_its_kind(docs: DocStore) -> None:
+    run = AgentRun(model="opus")
+    run.fail(MODEL, "timed out after 900s")
+    assert outcome(run, docs, QA_DOC).status == MODEL_FAILURE
+    run.fail(INFRA, "error result: 401")
+    assert outcome(run, docs, QA_DOC).status == INFRA_FAILURE
+    run.usage_limit = True
+    assert outcome(run, docs, QA_DOC).status == INFRA_FAILURE
+
+
+def test_ask_runs_document_mode_quietly(docs: DocStore, monkeypatch: pytest.MonkeyPatch) -> None:
+    seen: dict[str, Any] = {}
+
+    def fake(prompt: str, **kw: Any) -> AgentRun:
+        seen.update(kw, prompt=prompt)
+        return AgentRun(model=kw["model"], text=_json("$1,234", [_id(docs, "widget presses")]))
+
+    monkeypatch.setattr(qa, "call_claude", fake)
+    doc = Document(QA_DOC, "Acme", "10k", 2020)
+    run, answer = ask(QUESTION, docs, "http://x:1", load_prompt(qa.PROMPT_PATH), document=doc,
+                      model="haiku")  # fmt: skip
+    assert answer.status == ANSWERED and answer.pages == [2] and run.model == "haiku"
+    assert seen["log_detail"] is False and seen["model"] == "haiku"
+    assert seen["allowed_tools"] == ["mcp__tenq__search_filing", "mcp__tenq__read_passage"]
+    env = seen["mcp_servers"]["tenq"]["env"]
+    assert env == {"TENQ_DOCS": str(docs.root.resolve()), "TENQ_DOC": QA_DOC,
+                   "TENQ_XERJ_URL": "http://x:1"}  # fmt: skip
+    assert QUESTION.question in seen["prompt"] and "fiscal 2020" in seen["prompt"]
+    assert QUESTION.answer not in seen["prompt"]  # the gold answer never reaches the model
+
+
+def test_the_qa_prompt_is_versioned_and_tells_the_model_the_tools() -> None:
+    prompt = load_prompt(qa.PROMPT_PATH)
+    assert prompt.version == "qa-v1"
+    for tool in qa.TOOLS:
+        assert tool in prompt.text
+    assert '"answer"' in prompt.text and '"passage_ids"' in prompt.text
+    assert "—" not in Path(qa.PROMPT_PATH).read_text(encoding="utf-8")
