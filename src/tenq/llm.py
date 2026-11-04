@@ -23,7 +23,7 @@ hang before the model started, a missing init event, an unreadable stream,
 tools outside the allowlist, allowed tools never offered because tenq's
 server did not start) says nothing about the model.
 `usage_limit` marks an infrastructure failure from the plan's usage limit.
-Evals grade the first kind as a refusal and stop on the second.
+Callers may treat the first as an answer and should retry or stop on the second.
 
 The stream-json events are kept in summary form (tool calls, usage, timing)
 for the trace and the run record.
