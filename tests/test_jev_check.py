@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from datetime import datetime
 from typing import Any
 
@@ -108,7 +109,7 @@ def test_one_stock_failing_to_gather_costs_only_its_own_line(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     asked, gathered = _setup(monkeypatch, _measured(), _pack())
-    real = vars(jev_check)["gather"]
+    real: Callable[[str, datetime], Pack | None] = vars(jev_check)["gather"]
 
     def gather(ticker: str, now: datetime) -> Pack | None:
         if ticker == "CRDW":
