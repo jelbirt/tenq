@@ -21,7 +21,7 @@ from tenq import jev
 from tenq.filings import TICKER
 from tenq.jev import Answer, QuestionSet, Result
 from tenq.pack import gather
-from tenq.rules import Call, decide, load_rules
+from tenq.rules import Call, Rules, decide, load_rules
 
 MAX_TICKERS = 5  # a check, not a run: keeps a mistyped list from costing much
 
@@ -59,13 +59,19 @@ def report(ticker: str, result: Result, call: Call | None) -> list[str]:
     return lines
 
 
-def check(ticker: str, questions: QuestionSet, now: datetime) -> tuple[list[str], bool, float]:
-    """Lines to print, whether a call came out, and the cost."""
-    pack = gather(ticker, now)
+def check(
+    ticker: str, questions: QuestionSet, rules: Rules, now: datetime
+) -> tuple[list[str], bool, float]:
+    """Lines to print, whether a call came out, and the cost. Never raises for
+    one stock's data: an unknown ticker or an EDGAR outage is that stock's line."""
+    try:
+        pack = gather(ticker, now)
+    except Exception as exc:  # the type only: exception text is not trusted to be clean
+        return [f"== {ticker}: no facts pack ({type(exc).__name__}), nothing asked"], False, 0.0
     if pack is None:
         return [f"== {ticker}: no prices, nothing asked"], False, 0.0
     result = jev.ask(pack.render(), questions, session_id=f"tenq-check-{ticker}-{pack.day}")
-    call = decide(pack, result, load_rules(questions), questions) if result.answers else None
+    call = decide(pack, result, rules, questions) if result.answers else None
     lines = report(ticker, result, call)
     lines += [f"  pack note: {n}" for n in pack.notes]
     return lines, call is not None, result.cost
@@ -82,10 +88,11 @@ def main(argv: list[str] | None = None) -> int:
         print(f"give 1 to {MAX_TICKERS} tickers; not tickers: {bad}")
         return 2
     questions = jev.load_questions()
+    rules = load_rules(questions)  # a bad file fails here, before anything is paid for
     now = datetime.now(UTC)
     ok, total = True, 0.0
     for ticker in tickers:
-        lines, called, cost = check(ticker, questions, now)
+        lines, called, cost = check(ticker, questions, rules, now)
         print("\n".join(lines))
         ok, total = ok and called, total + cost
     print(f"total cost ${total:.6f}")

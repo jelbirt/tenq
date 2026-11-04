@@ -26,4 +26,4 @@ jobs:
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
         run: |
           read -ra args <<< "$TICKERS"
-          uv run python -m tenq.jev_check "${args[@]}"
+          uv run --locked python -m tenq.jev_check "${args[@]}"

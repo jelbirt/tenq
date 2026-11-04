@@ -102,3 +102,47 @@ def test_each_answer_line_says_whether_its_lean_was_measured() -> None:
     assert "lean not measured" in jev_check.answer_line(unbalanced)
     line = jev_check.answer_line(_noul("risk", 0.25))
     assert "risk: 0.25" in line and "lean" not in line
+
+
+def test_one_stock_failing_to_gather_costs_only_its_own_line(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    asked, gathered = _setup(monkeypatch, _measured(), _pack())
+    real = vars(jev_check)["gather"]
+
+    def gather(ticker: str, now: datetime) -> Pack | None:
+        if ticker == "CRDW":
+            gathered.append(ticker)
+            raise LookupError("company CRDW not found, secret-ish detail")
+        return real(ticker, now)
+
+    monkeypatch.setattr(jev_check, "gather", gather)
+    assert jev_check.main(["CRDW", "ACME"]) == 1
+    out = capsys.readouterr().out
+    assert gathered == ["CRDW", "ACME"] and len(asked.calls) == 1
+    assert "== CRDW: no facts pack (LookupError), nothing asked" in out
+    assert "secret-ish" not in out
+    assert out.rstrip().endswith("total cost $0.000380")
+
+
+def test_five_tickers_are_allowed_and_their_costs_add_up(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    asked, _ = _setup(monkeypatch, _measured(), _pack())
+    assert jev_check.main(["A", "B", "C", "D", "E"]) == 0
+    assert len(asked.calls) == 5
+    assert capsys.readouterr().out.rstrip().endswith("total cost $0.001900")
+
+
+def test_a_broken_rules_file_fails_before_anything_is_fetched(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    asked, gathered = _setup(monkeypatch, _measured(), _pack())
+
+    def broken(_q: QuestionSet) -> None:
+        raise ValueError("rules: bad")
+
+    monkeypatch.setattr(jev_check, "load_rules", broken)
+    with pytest.raises(ValueError):
+        jev_check.main(["ACME"])
+    assert gathered == [] and asked.calls == []
