@@ -32,6 +32,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import math
 import re
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
@@ -150,6 +151,7 @@ class Pack:
                     "doc": r.doc,
                     "filed": r.filed,
                     "items": list(r.items),
+                    "url": r.url,
                     "excerpts": [vars(e) for e in r.excerpts],
                 }
                 for r in self.reports
@@ -169,9 +171,14 @@ class Pack:
         lines.append("")
         if self.filing is not None:
             f = self.filing
+            when = f"filed {f.filed}"
+            accepted = _when(f.accepted)
+            if accepted is not None and cutoff(accepted).isoformat() != f.filed:
+                # After hours EDGAR dates a filing to the next business day.
+                when = f"accepted {cutoff(accepted).isoformat()}, EDGAR-dated {f.filed}"
             lines.append(
                 f"Latest filing: {f.form} for the period ended {f.period}, "
-                f"filed {f.filed} ({f.days_old} days old)."
+                f"{when} ({f.days_old} days old)."
             )
         else:
             lines.append("Latest filing: none on record.")
@@ -206,6 +213,8 @@ def money(value: float) -> str:
     Four significant figures at least, so a value read off the page is within
     the checker's 1e-3 relative tolerance of the exact value the pack holds.
     """
+    if not math.isfinite(value):
+        return "n/a"
     sign, v = ("-" if value < 0 else ""), abs(value)
     for scale, word, below in ((1e9, "billion", 1e6), (1e6, "million", 1.0)):
         # A value just under a scale can round up to it: $1.000 billion,
@@ -315,12 +324,16 @@ def cutoff(as_of: datetime) -> date:
     return as_of.astimezone(MARKET_TZ).date()
 
 
-def _accepted(meta: FilingMeta) -> datetime | None:
+def _when(accepted: str) -> datetime | None:
     try:
-        when = datetime.fromisoformat(meta.accepted)
+        when = datetime.fromisoformat(accepted)
     except ValueError:
         return None
     return when if when.tzinfo is not None else None
+
+
+def _accepted(meta: FilingMeta) -> datetime | None:
+    return _when(meta.accepted)
 
 
 def known_on(meta: FilingMeta) -> date | None:

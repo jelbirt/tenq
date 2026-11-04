@@ -276,6 +276,10 @@ def test_every_id_is_rendered_and_saved(store: FilingStore, current: FilingStore
     assert saved["day"] == LAST.isoformat()
     assert {n["id"] for n in saved["numbers"]} == {n.id for n in p.numbers}
     assert saved["news"][0]["id"] == item.id
+    assert p.news[0].link == saved["news"][0]["link"] == "https://example.com/a"
+    assert p.news[0].source == saved["news"][0]["source"] == "feed"
+    assert p.reports[0].url == saved["reports"][0]["url"] != ""
+    assert p.filing is not None and saved["filing"]["url"] == p.filing.url != ""
 
 
 def test_an_empty_pack_says_so(tmp_path: Path, current: FilingStore) -> None:
@@ -298,6 +302,8 @@ def test_an_empty_pack_says_so(tmp_path: Path, current: FilingStore) -> None:
         (999999999.0, "$1.000 billion"),
         (999949999.0, "$999.9 million"),
         (999000.0, "$999,000.00"),
+        (float("nan"), "n/a"),
+        (float("-inf"), "n/a"),
     ],
 )
 def test_money_is_short(value: float, shown: str) -> None:
@@ -446,6 +452,22 @@ def test_an_after_hours_filing_is_zero_days_old(tmp_path: Path, current: FilingS
     p = _build(filings, current)
     assert p.filing is not None and p.filing.days_old == 0
     assert p.filing.accepted == "2026-10-25T18:00:00-04:00"
+    assert "accepted 2026-10-25, EDGAR-dated 2026-10-26 (0 days old)" in p.render()
+
+
+def test_age_counts_from_acceptance_not_the_edgar_date(
+    tmp_path: Path, current: FilingStore
+) -> None:
+    # Accepted Friday evening, dated Monday, read Tuesday night: 4 days, not 1.
+    filings = FilingStore(tmp_path / "friday")
+    meta = FilingMeta(
+        "CRWD", 1535527, "CrowdStrike", "10-Q", "0001535527-26-000050", "2026-10-26",
+        "2026-10-31", "https://x", "", "2026-10-23T18:00:00-04:00",
+    )  # fmt: skip
+    filings.save(meta, "Quarterly report\n", [])
+    tuesday = datetime(2026, 10, 28, 1, 0, tzinfo=UTC)  # 21:00 New York on the 27th
+    p = _build(filings, current, as_of=tuesday, prices=_prices("CRWD", end=cutoff(tuesday)))
+    assert p.filing is not None and p.filing.days_old == 4
 
 
 def test_one_failing_build_costs_only_its_own_pack(
