@@ -331,6 +331,8 @@ def test_a_choice_without_probabilities_counts_its_pick(questions: QuestionSet) 
     assert d.value == "bad"
     assert d.probabilities == pytest.approx({"good": 1 / 3, "bad": 2 / 3, "neutral": 0.0})
     assert d.spread == 1.0
+    # firsts were good, bad, neutral: one of three picks was the first-listed label
+    assert d.balanced and d.first_lift == pytest.approx(1 / 3 - 1 / 3)
 
 
 def test_a_tied_choice_goes_to_the_earlier_label(questions: QuestionSet) -> None:
@@ -386,10 +388,11 @@ HUGE = "1" + "0" * 400
         "[" * 200_000,
         '{"answers": ' + "[" * 200_000 + "1" + "]" * 200_000 + "}",
         '{"answers": {"material": {"noul": 0.5}}, "model": ["x"]}',
+        '{"answers": {"trend": {"score": 1, "probabilities": {"' + "9" * 5000 + '": 0.1}}}}',
     ],
 )
 def test_a_hostile_reply_is_never_a_crash(questions: QuestionSet, body: str) -> None:
-    result = _ask(questions, Server(*[(200, body)] * 3))
+    result = _ask(questions, Server(*[(200, body)] * questions.rounds()))
     assert isinstance(result, jev.Result)
     assert result.input_tokens == 0 and result.cost == 0.0
     assert result.resolved_model == ""
@@ -428,7 +431,10 @@ def test_the_result_is_saved_as_plain_json(questions: QuestionSet) -> None:
 
 def test_a_reversed_score_reply_is_mapped_back(questions: QuestionSet) -> None:
     (trend,) = [q for q in questions.questions if q.key == "trend"]
-    raw = {"score": 0.0, "probabilities": {"0": 0.6, "1": 0.3, "2": 0.1, "9": 1.0, "x": 1.0}}
+    raw = {
+        "score": 0.0,
+        "probabilities": {"0": 0.6, "1": 0.3, "2": 0.1, "9": 1.0, "x": 1.0, "01": 1.0},
+    }
     assert trend.unflip(raw, 1) == {"score": 2.0, "probabilities": {"2": 0.6, "1": 0.3, "0": 0.1}}
     assert trend.unflip(raw, 2) is raw  # even repeats were sent in file order
     assert trend.unflip({"score": "high"}, 1) == {"score": "high"}  # left for _one to drop
@@ -439,10 +445,14 @@ def test_varied_score_replies_average_in_file_order(questions: QuestionSet) -> N
         _ok(_answers(0.5, "good", {"good": 1.0}, 2.0, {"0": 0.0, "1": 0.2, "2": 0.8})),
         _ok(_answers(0.5, "good", {"good": 1.0}, 0.0, {"0": 0.9, "1": 0.1, "2": 0.0})),
         _ok(_answers(0.5, "good", {"good": 1.0}, 2.0, {"0": 0.0, "1": 0.0, "2": 1.0})),
+        _ok(_answers(0.5, "good", {"good": 1.0}, 0.0, {"0": 1.0, "1": 0.0, "2": 0.0})),
     )
-    trend = _ask(questions, server).answers["trend"]
-    assert trend.value == pytest.approx(2.0) and trend.spread == 0.0 and trend.agreed == 3
-    assert trend.probabilities == pytest.approx({"0": 0.0, "1": 0.1, "2": 0.9})
+    result = _ask(questions, server)
+    assert result.errors == [] and len(server.calls) == 4
+    trend = result.answers["trend"]
+    assert trend.value == pytest.approx(2.0) and trend.spread == 0.0 and trend.agreed == 4
+    assert trend.probabilities == pytest.approx({"0": 0.0, "1": 0.075, "2": 0.925})
+    assert trend.balanced and trend.first_lift == pytest.approx(0.0)
 
 
 def test_a_redirect_is_never_followed_with_the_key(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -527,3 +537,9 @@ def test_a_choice_too_large_to_balance_is_refused(tmp_path: Path) -> None:
     )
     with pytest.raises(ValueError, match="more than"):
         load_questions(path)
+
+
+def test_a_zero_round_cap_asks_nothing(questions: QuestionSet) -> None:
+    server = Server()
+    result = _ask(questions, server, rounds=0)
+    assert server.calls == [] and result.answers == {}

@@ -52,7 +52,7 @@ REPEATS = 3  # true/false questions: asked this often, averaged against noise
 SCORE_ROUNDS = 4  # scores: twice in file order, twice reversed
 MAX_LABELS = 8  # a choice is asked once per label, so its size sets the request count
 TIMEOUT_S = 30
-ATTEMPTS = 2  # per repeat: one retry on a rate limit, an upstream failure or a timeout
+ATTEMPTS = 2  # per round: one retry on a rate limit, an upstream failure or a timeout
 RETRY_CODES = {429, 500, 502, 503, 524, 529}
 FINAL_CODES = {400, 401, 402, 403, 404, 413}  # the same request would fail the same way
 MODEL_NAME = re.compile(r"[A-Za-z0-9._:/~-]{1,100}")
@@ -87,11 +87,9 @@ class Question:
         return REPEATS
 
     def first(self, repeat: int) -> str:
-        """The option shown first in a round: a choice label, or a score level."""
+        """The choice label shown first in a round ("" for other types)."""
         if self.type == "choice":
             return self.labels()[repeat % len(self.criteria)]
-        if self.type == "score":
-            return str(len(self.criteria) - 1) if repeat % 2 else "0"
         return ""
 
     def to_request(self, repeat: int = 0) -> dict[str, Any]:
@@ -123,10 +121,13 @@ class Question:
         out["score"] = top - level if level is not None else raw.get("score")
         probs = raw.get("probabilities")
         if isinstance(probs, dict):
+            # matched against the known levels, never parsed: a 5000-digit key
+            # would make int() raise
+            levels = {str(i) for i in range(top + 1)}
             flipped: dict[str, Any] = {}
             for k, v in probs.items():
-                if str(k).isascii() and str(k).isdigit() and int(str(k)) <= top:
-                    flipped[str(top - int(str(k)))] = v
+                if k in levels:
+                    flipped[str(top - int(k))] = v
             out["probabilities"] = flipped
         return out
 
@@ -385,8 +386,8 @@ def _first_lift(
 ) -> float | None:
     """How far answers lean toward whichever option was listed first (see Answer)."""
     if q.type == "choice":
-        if not all(p for _, (_, p) in answered):
-            return None
+        # with no probabilities given, a round counts its pick as 1.0, so this
+        # is the rate at which the first-listed label was picked, less 1/n
         shown_first = fmean(p[q.first(i)] for i, (_, p) in answered)
         fair = fmean(fmean(p.values()) for _, (_, p) in answered)
         return shown_first - fair
@@ -410,7 +411,7 @@ def ask(
     """Ask every question about `state` over balanced rounds and average. Never raises.
 
     `rounds` caps the round count (default: as many as the largest question
-    needs); a capped run's answers are not balanced.
+    needs); questions needing more rounds than the cap come back unbalanced.
     """
     model = model or os.environ.get("JEV_MODEL") or DEFAULT_MODEL
     result = Result(questions.version, model)
@@ -425,7 +426,8 @@ def ask(
     responses: list[Mapping[str, Any]] = []
     answered: list[int] = []
     started = time.monotonic()
-    for i in range(min(questions.rounds(), rounds or questions.rounds())):
+    planned = questions.rounds() if rounds is None else min(questions.rounds(), rounds)
+    for i in range(planned):
         body: dict[str, Any] = {
             "model": model,
             "state": state,

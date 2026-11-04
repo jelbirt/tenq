@@ -9,8 +9,9 @@
 # (7 days old or less) in their own sections, apart from older context.
 #
 # Jev leans toward earlier options, so every choice lists its "nothing
-# here" label first, and the adapter rotates choice labels and reverses
-# score levels across the three repeats to cancel the lean.
+# here" label first, and the adapter asks each choice once per label with
+# every label shown first exactly once, and each score as often reversed as
+# in file order, so the lean cancels and is measured (see src/tenq/jev.py).
 #
 # Types (OpenRouter System One): noul is the probability a statement is
 # true; choice picks one label from criteria; score picks a level from an
