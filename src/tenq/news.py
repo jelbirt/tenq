@@ -2,12 +2,13 @@
 
 Two kinds of feed: Yahoo's per-ticker feed, and general business feeds (CNBC,
 MarketWatch). Yahoo's feed for a stock also carries stories about its peers that
-never name it, so every entry, from either kind, must name the stock by symbol or
-company name in its title or summary,
+never name it, so every entry must name the stock by symbol or company name: in its
+title or summary for Yahoo's feed, in its title for a general feed,
 with the rules ticker-sentinel learned the hard way (`src/sentinel/news/matching.py`,
 MIT, same author): a symbol matches only in capitals, so "net income" is never NET;
-a one or two letter symbol needs a cashtag, brackets or an exchange prefix, so the
-"S" in "U.S." is never a stock; a company name matches without its legal suffix.
+a one or two letter symbol, or one that is an English word (NOW, NET, TEAM), needs
+a cashtag, brackets or an exchange prefix, so neither the "S" in "U.S." nor "BUY
+NOW" is a stock; a company name matches without its legal suffix.
 
 Headline text is data from the open web, never instructions. Nothing here raises: a
 dead feed is skipped with a note.
@@ -18,6 +19,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import html
+import io
 import logging
 import re
 import urllib.request
@@ -25,7 +27,7 @@ from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
-from urllib.parse import urlsplit, urlunsplit
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 log = logging.getLogger(__name__)
 
@@ -43,6 +45,11 @@ MAX_TITLE = 300
 MAX_SUMMARY = 600
 
 SHORT_SYMBOL = 2
+# symbols that are also English words get written in capitals in headlines ("BUY NOW",
+# "GAAP NET LOSS", "TEAM USA"), so like short symbols they need a marker
+WORD_SYMBOLS = frozenset({"NOW", "NET", "TEAM", "SHOP", "SNOW", "IOT"})
+TRACKING = re.compile(r"(?:utm_.*|mod|\.tsrc|ncid|guccounter|guce_.*|cmpid|fbclid|gclid)$", re.I)
+PER_TICKER_FAILURES = 3  # consecutive dead per-ticker feeds before the rest are skipped
 MIN_NAME = 4
 EXCHANGES = r"NYSE(?: American)?|NASDAQ|Nasdaq|AMEX"
 LEGAL_SUFFIXES = frozenset(
@@ -121,7 +128,9 @@ def _published(entry: Mapping[str, Any]) -> datetime | None:
 def parse_feed(raw: bytes, source: str) -> list[Entry]:
     import feedparser
 
-    parsed = feedparser.parse(raw)
+    # feedparser treats a bytes argument as a path or URL first; a body from the open
+    # web must never be read as a local file name
+    parsed = feedparser.parse(io.BytesIO(raw))
     if parsed.bozo and not parsed.entries:
         raise ValueError("unreadable feed")
     out = []
@@ -143,9 +152,9 @@ def parse_feed(raw: bytes, source: str) -> list[Entry]:
 
 def symbol_pattern(ticker: str) -> re.Pattern[str]:
     symbol = re.escape(ticker)
-    if len(ticker) <= SHORT_SYMBOL:
-        return re.compile(rf"(?:\${symbol}\b|\({symbol}\)|\b(?:{EXCHANGES}):\s*{symbol}\b)")
-    return re.compile(rf"(?<![\w$.-]){symbol}(?![\w-])|\${symbol}\b")
+    if len(ticker) <= SHORT_SYMBOL or ticker in WORD_SYMBOLS:
+        return re.compile(rf"(?:(?<!\w)\${symbol}\b|\({symbol}\)|\b(?:{EXCHANGES}):\s*{symbol}\b)")
+    return re.compile(rf"(?<![\w$.-]){symbol}(?![\w-])|(?<!\w)\${symbol}\b")
 
 
 def normalise_name(name: str) -> str:
@@ -171,10 +180,13 @@ def mentions(text: str, ticker: str, name: str | None) -> bool:
 
 
 def link_key(entry: Entry) -> str:
-    """Same story, same key: a link without its tracking query, else the title."""
+    """Same story, same key: a link without its tracking parameters, else the title."""
     if entry.link:
         parts = urlsplit(entry.link)
-        return urlunsplit((parts.scheme.lower(), parts.netloc.lower(), parts.path, "", ""))
+        query = urlencode(
+            sorted((k, v) for k, v in parse_qsl(parts.query) if not TRACKING.match(k))
+        )
+        return urlunsplit((parts.scheme.lower(), parts.netloc.lower(), parts.path, query, ""))
     return entry.title.lower()
 
 
@@ -237,17 +249,23 @@ def collect(
             dead.append(url)
             continue
         for entry in entries:
-            text = f"{entry.title} {entry.summary}"
+            # a general feed's summary is where rivals get named ("peers CrowdStrike
+            # and Palo Alto also fell"), so only its title can tie a story to a stock
             for ticker, name in tickers.items():
-                if mentions(text, ticker, name):
+                if mentions(entry.title, ticker, name):
                     add(ticker, entry)
     if per_ticker:
+        failures = 0
         for ticker in tickers:
             url = per_ticker.format(ticker=ticker)
-            entries = _read(url, fetch)
+            # a feed that accepts connections and then hangs costs ATTEMPTS * TIMEOUT_S
+            # per ticker; after a few in a row the rest are counted dead unread
+            entries = _read(url, fetch) if failures < PER_TICKER_FAILURES else None
             if entries is None:
+                failures += 1
                 dead.append(url)
                 continue
+            failures = 0
             for entry in entries:
                 if mentions(f"{entry.title} {entry.summary}", ticker, tickers[ticker]):
                     add(ticker, entry)

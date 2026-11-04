@@ -61,3 +61,9 @@ def test_malformed_names_rejected(tmp_path: Path, names: str) -> None:
     p.write_text("watchlist: [CRWD]\n" + names)
     with pytest.raises(ValueError):
         load_watchlist(p)
+
+
+def test_names_keys_are_upper_cased(tmp_path: Path) -> None:
+    p = tmp_path / "w.yaml"
+    p.write_text("watchlist: [CRWD]\nnames: {crwd: CrowdStrike}\n")
+    assert load_watchlist(p).names == {"CRWD": "CrowdStrike"}
