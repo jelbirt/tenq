@@ -6,6 +6,10 @@ compared on the same basis. The download is adapted from ticker-sentinel's
 `src/sentinel/data/prices.py` (MIT, same author); tenq has no Twelve Data key, so a
 ticker Yahoo cannot serve is left out with a note instead of falling back.
 
+Yahoo rescales past adjusted closes after each later dividend, so a stored close and one
+fetched weeks later are not on the same basis. Scoring a call must take its entry and exit
+closes from one fresh fetch, keyed by date, never from a stored close.
+
 Every number here is computed in code. The model only ever sees the results.
 """
 
@@ -118,36 +122,49 @@ def fetch(
     now: datetime | None = None,
     sleep: Callable[[float], None] = time.sleep,
 ) -> Prices:
-    """Closes for `tickers` plus the benchmark. Never raises: what is missing gets a note."""
-    wanted = list(dict.fromkeys([*tickers, BENCHMARK]))
+    """Closes for `tickers` plus the benchmark. Never raises: what is missing gets a note.
+
+    yfinance reports a ticker it could not fetch as an all-NaN column rather than an
+    error, so each retry asks again for whatever is still missing, not only after a
+    failed batch.
+    """
+    wanted = list(dict.fromkeys(t.upper() for t in [*tickers, BENCHMARK]))
     notes: list[str] = []
-    frame = None
-    failure = "no attempt made"
+    bars: dict[str, tuple[Bar, ...]] = {}
+    failure: str | None = None
     for attempt in range(ATTEMPTS):
+        pending = [t for t in wanted if t not in bars]
+        if not pending:
+            break
+        if attempt:
+            sleep(2.0 ** (attempt - 1))
         try:
-            frame = source.history(wanted, period)
-            if frame is not None and not getattr(frame, "empty", True):
-                break
-            failure = "no data returned"
-        except Exception as exc:
+            frame = source.history(pending, period)
+            got = bars_from_frame(frame, pending)
+            failure = None if got else failure or "no data returned"
+        except Exception as exc:  # a failed or reshaped download must not stop the run
             failure = type(exc).__name__
-        log.warning("price download attempt %d failed: %s", attempt + 1, failure)
-        frame = None
-        if attempt + 1 < ATTEMPTS:
-            sleep(2.0**attempt)
-    if frame is None:
+            got = {}
+        bars.update(got)
+        if len(got) < len(pending):
+            log.warning(
+                "price attempt %d: %d of %d tickers missing",
+                attempt + 1,
+                len(pending) - len(got),
+                len(pending),
+            )
+    if not bars and failure:
         notes.append(f"price download failed ({failure})")
-    try:
-        bars = bars_from_frame(frame, wanted)
-    except Exception as exc:  # a reshaped frame must not stop the run
-        log.warning("price frame unreadable: %s", type(exc).__name__)
-        bars = {}
-        notes.append("price data unreadable")
     stamp = now or datetime.now(UTC)
     bars = {t: kept for t, b in bars.items() if (kept := drop_unfinished(b, stamp))}
     missing = [t for t in wanted if t not in bars]
     if missing and not notes:
         notes.append(f"no prices for {', '.join(missing)}")
+    bench = bars.get(BENCHMARK)
+    if bench:
+        stale = [f"{t} ({b[-1].day})" for t, b in bars.items() if b[-1].day < bench[-1].day]
+        if stale:
+            notes.append(f"prices end before {BENCHMARK}'s {bench[-1].day}: {', '.join(stale)}")
     return Prices(bars=bars, notes=tuple(notes))
 
 

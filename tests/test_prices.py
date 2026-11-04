@@ -28,9 +28,9 @@ DAYS = pd.bdate_range("2026-09-01", periods=30)
 def _frame(series: dict[str, Sequence[float]], days: Any = DAYS) -> pd.DataFrame:
     """A frame shaped like yfinance's batch download: (field, ticker) columns."""
     cols = {}
-    for ticker, closes in series.items():
+    for k, (ticker, closes) in enumerate(series.items()):
         cols[("Close", ticker)] = list(closes)
-        cols[("Volume", ticker)] = [1000.0] * len(closes)
+        cols[("Volume", ticker)] = [1000.0 * (k + 1)] * len(closes)
     frame = pd.DataFrame(cols, index=pd.DatetimeIndex(days[: len(next(iter(series.values())))]))
     frame.columns = pd.MultiIndex.from_tuples(frame.columns)
     return frame
@@ -62,6 +62,7 @@ def test_bars_are_read_per_ticker_and_bad_closes_skipped() -> None:
     assert [b.close for b in bars["CRWD"]] == [100.0, 104.0]
     assert bars["CRWD"][0].day == date(2026, 9, 1)
     assert bars["CRWD"][0].volume == 1000.0
+    assert bars[BENCHMARK][0].volume == 2000.0
     assert "MISSING" not in bars
 
 
@@ -72,10 +73,52 @@ def test_one_ticker_with_flat_columns_is_read() -> None:
 
 
 def test_an_all_nan_ticker_is_left_out_with_a_note() -> None:
-    source = Source(_frame({"CRWD": [1.0, 2.0], "GONE": [math.nan] * 2, BENCHMARK: [1.0, 1.0]}))
+    nan = _frame({"GONE": [math.nan] * 2})
+    source = Source(
+        _frame({"CRWD": [1.0, 2.0], "GONE": [math.nan] * 2, BENCHMARK: [1.0, 1.0]}), nan, nan
+    )
     out = fetch(["CRWD", "GONE"], source, now=AFTER_CLOSE, sleep=_no_sleep)
     assert set(out.bars) == {"CRWD", BENCHMARK}
     assert out.notes == ("no prices for GONE",)
+    assert [c[0] for c in source.calls] == [["CRWD", "GONE", BENCHMARK], ["GONE"], ["GONE"]]
+
+
+def test_tickers_missing_from_a_batch_are_asked_for_again() -> None:
+    slept: list[float] = []
+    source = Source(
+        _frame({"CRWD": [1.0, 2.0], "DDOG": [math.nan] * 2, BENCHMARK: [1.0, 1.0]}),
+        _frame({"DDOG": [3.0, 4.0]}),
+    )
+    out = fetch(["CRWD", "DDOG"], source, now=AFTER_CLOSE, sleep=slept.append)
+    assert [b.close for b in out.bars["DDOG"]] == [3.0, 4.0]
+    assert out.notes == ()
+    assert [c[0] for c in source.calls] == [["CRWD", "DDOG", BENCHMARK], ["DDOG"]]
+    assert slept == [1.0]
+
+
+def test_tickers_are_upper_cased_before_asking() -> None:
+    source = Source(_frame({"CRWD": [1.0], BENCHMARK: [1.0]}))
+    out = fetch(["crwd", "CRWD", "qqq"], source, now=AFTER_CLOSE, sleep=_no_sleep)
+    assert source.calls == [(["CRWD", BENCHMARK], "1y")]
+    assert out.notes == ()
+
+
+def test_fetch_leaves_out_todays_unsettled_bar() -> None:
+    days = pd.bdate_range(end="2026-10-12", periods=3)
+    frame = _frame({"CRWD": [1.0, 2.0, 3.0], BENCHMARK: [1.0, 1.0, 1.0]}, days)
+    frame[("Close", "NEW")] = [math.nan, math.nan, 5.0]
+    open_session = datetime(2026, 10, 12, 19, 0, tzinfo=UTC)  # 15:00 New York
+    source = Source(frame, _frame({"NEW": [5.0]}, days[-1:]), _frame({"NEW": [5.0]}, days[-1:]))
+    out = fetch(["CRWD", "NEW"], source, now=open_session, sleep=_no_sleep)
+    assert out.bars["CRWD"][-1].day == date(2026, 10, 9)
+    assert out.bars[BENCHMARK][-1].day == date(2026, 10, 9)
+    assert out.notes == ("no prices for NEW",)
+
+
+def test_a_stock_whose_prices_stop_early_is_noted() -> None:
+    frame = _frame({"CRWD": [1.0, 2.0, math.nan], "DDOG": [1.0, 2.0, 3.0], BENCHMARK: [1.0] * 3})
+    out = fetch(["CRWD", "DDOG"], Source(frame), now=AFTER_CLOSE, sleep=_no_sleep)
+    assert out.notes == (f"prices end before QQQ's {DAYS[2].date()}: CRWD ({DAYS[1].date()})",)
 
 
 def test_the_benchmark_is_always_asked_for_once() -> None:
@@ -105,23 +148,29 @@ def test_an_unreadable_frame_fails_open() -> None:
         empty = False
         columns = property(lambda self: 1 / 0)
 
-    out = fetch(["CRWD"], Source(Odd()), now=AFTER_CLOSE, sleep=_no_sleep)
+    source = Source(*[Odd()] * prices.ATTEMPTS)
+    out = fetch(["CRWD"], source, now=AFTER_CLOSE, sleep=_no_sleep)
     assert out.bars == {}
-    assert out.notes == ("price data unreadable",)
+    assert out.notes == ("price download failed (ZeroDivisionError)",)
+
+
+OCT12, DEC14 = date(2026, 10, 12), date(2026, 12, 14)
 
 
 @pytest.mark.parametrize(
-    ("now", "kept"),
+    ("now", "last_day", "kept"),
     [
-        (datetime(2026, 10, 12, 19, 0, tzinfo=UTC), 1),  # 15:00 New York, session open
-        (datetime(2026, 10, 12, 20, 29, tzinfo=UTC), 1),  # 16:29, not settled
-        (datetime(2026, 10, 12, 20, 30, tzinfo=UTC), 2),  # 16:30, settled
-        (datetime(2026, 10, 13, 3, 0, tzinfo=UTC), 2),  # 23:00 the same day
-        (datetime(2026, 10, 13, 14, 0, tzinfo=UTC), 2),  # the next morning
+        (datetime(2026, 10, 12, 19, 0, tzinfo=UTC), OCT12, 1),  # 15:00 New York, session open
+        (datetime(2026, 10, 12, 20, 29, tzinfo=UTC), OCT12, 1),  # 16:29, not settled
+        (datetime(2026, 10, 12, 20, 30, tzinfo=UTC), OCT12, 2),  # 16:30, settled
+        (datetime(2026, 10, 13, 3, 0, tzinfo=UTC), OCT12, 2),  # 23:00 the same day
+        (datetime(2026, 10, 13, 14, 0, tzinfo=UTC), OCT12, 2),  # the next morning
+        (datetime(2026, 12, 14, 21, 29, tzinfo=UTC), DEC14, 1),  # 16:29 in winter (UTC-5)
+        (datetime(2026, 12, 14, 21, 30, tzinfo=UTC), DEC14, 2),  # 16:30 in winter
     ],
 )
-def test_todays_bar_waits_for_the_close(now: datetime, kept: int) -> None:
-    bars = (Bar(date(2026, 10, 9), 1.0, None), Bar(date(2026, 10, 12), 2.0, None))
+def test_todays_bar_waits_for_the_close(now: datetime, last_day: date, kept: int) -> None:
+    bars = (Bar(date(2026, 10, 9), 1.0, None), Bar(last_day, 2.0, None))
     assert len(drop_unfinished(bars, now)) == kept
 
 
