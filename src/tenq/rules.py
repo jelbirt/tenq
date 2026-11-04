@@ -2,11 +2,12 @@
 
 config/rules.yaml holds every setting and reads top to bottom: a news part
 (direction times materiality times evidence strength), guidance, the filing
-trend and recent risk, each from -1 to +1, weighted, and each scaled by how
-well Jev's rounds agreed (a choice by the share of rounds that picked the
-winner, so the rotation's own lean is not read as doubt; a yes/no or a score
-by its spread), so an unsure Jev drifts toward Hold rather than hitting a
-cut-off. Risk counts only what the news part has not already scored as bad.
+trend and recent risk, each from -1 to +1 and weighted. A choice's doubt is
+counted once, in its expected value under Jev's averaged probabilities; a
+yes/no or a score is also scaled by 1 less its spread across rounds; and every
+part is scaled by the share of its planned rounds that came back, so an unsure
+or half-answered Jev drifts toward Hold rather than hitting a cut-off. Risk
+counts only what the news part has not already scored as bad news.
 The weighted sum shrinks when the stock has already moved that way against QQQ
 (priced in), and the final score picks Buy, Hold, Sell or Short. Every part's
 contribution is kept, so the email and the record show why.
@@ -14,11 +15,14 @@ contribution is kept, so the email and the record show why.
 Confidence, 0 to 1: for Buy, Sell and Short, the score as a share of the most
 the included parts could reach that way; for Hold, how close the score sits to
 0 within the Hold band (1 at 0, 0 at its edge) times the evidence coverage
-(the weighted certainty that came in), so a Jev that knew nothing is a Hold
+(the weighted certainty that came in, a choice's also scaled by how many rounds
+picked its winner), so a Jev that knew nothing is a Hold
 with no confidence, not full confidence.
 
 A Jev result with no answers is no call (Opus's call goes out alone); a
-missing answer, or one of the wrong type, counts as nothing and is noted.
+missing answer, one of the wrong type, or an unreadable one (a NaN, a wrong
+field type) counts as nothing and is noted, so decide() never raises on what
+Jev or a stored record sends.
 Every call records the rules version and the file's sha256; a test pins one
 hash per version, so an edit without a version bump fails the green bar.
 """
@@ -75,8 +79,12 @@ class Part:
     name: str
     value: float  # -1 to +1, before weight and certainty
     weight: float
-    certainty: float  # 0 to 1: how well Jev's rounds agreed (see certainty())
+    certainty: float  # 0 to 1: how far to trust the answers (see certainty())
     detail: str
+    # choices: the share of rounds whose own pick was the winner. Not in the
+    # contribution (a choice's doubt is already in its value), only in coverage,
+    # so a flat, split choice cannot make a confident Hold.
+    agreement: float = 1.0
 
     @property
     def contribution(self) -> float:
@@ -148,7 +156,10 @@ _StrictLoader.add_constructor(yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG, _n
 def load_rules(questions: QuestionSet, path: Path = DEFAULT_RULES) -> Rules:
     """Validate the rules file, and its questions and labels against `questions`."""
     data = path.read_bytes()
-    raw = yaml.load(data.decode("utf-8"), Loader=_StrictLoader)  # a SafeLoader subclass
+    try:
+        raw = yaml.load(data.decode("utf-8"), Loader=_StrictLoader)  # a SafeLoader subclass
+    except (yaml.YAMLError, UnicodeDecodeError, TypeError) as exc:
+        raise ValueError(f"rules file unreadable ({type(exc).__name__})") from exc
     if not isinstance(raw, dict) or set(raw) != TOP_LEVEL:
         raise ValueError(f"rules file must hold exactly {sorted(TOP_LEVEL)}")
     version = raw["version"]
@@ -191,11 +202,13 @@ def load_rules(questions: QuestionSet, path: Path = DEFAULT_RULES) -> Rules:
 
 
 def _reach(weights: dict[str, float], *, with_fundamentals: bool) -> tuple[float, float]:
-    """The highest and the lowest (as a size) score the parts can reach."""
-    up = weights["news"] + weights["guidance"]
-    if with_fundamentals:
-        up += weights["fundamentals"]
-    return up, up + weights["risk"]
+    """The highest and the lowest (as a size) score the parts can reach.
+
+    Down, news and risk never both count in full: fully bad news switches the
+    risk part off, so the lower bound takes the larger of the two.
+    """
+    shared = weights["guidance"] + (weights["fundamentals"] if with_fundamentals else 0.0)
+    return shared + weights["news"], shared + max(weights["news"], weights["risk"])
 
 
 def check_against(rules: Rules, questions: QuestionSet) -> None:
@@ -211,18 +224,42 @@ def check_against(rules: Rules, questions: QuestionSet) -> None:
             raise ValueError(f"rules {name} labels must be exactly {sorted(labels)}")
 
 
-def certainty(answer: Answer, levels: int) -> float:
-    """How well Jev's rounds agreed, 0 to 1.
+def certainty(answer: Answer, levels: int, rounds: int) -> float:
+    """How far to trust an answer, 0 to 1.
 
-    A choice: the share of rounds whose own pick was the winner. Its spread is
-    not used, because balanced rounds move the first-listed label on purpose
-    and the lean toward it would read as doubt. A yes/no or a score: 1 less
-    the spread across rounds, a score's spread put on a 0 to 1 scale.
+    Every type: the share of its planned rounds that came back, since a lone
+    round neither cancels the position lean nor shows any agreement. A choice
+    adds nothing more: its doubt is already in its expected value, and its
+    spread moves with the rotation's lean on purpose. A yes/no or a score is
+    also scaled by 1 less its spread across rounds, a score's on a 0 to 1 scale.
     """
+    done = min(1.0, answer.repeats / rounds) if rounds > 0 else 0.0
     if answer.type == "choice":
-        return min(1.0, answer.agreed / answer.repeats) if answer.repeats > 0 else 0.0
+        return done
     spread = answer.spread / (levels - 1) if answer.type == "score" else answer.spread
-    return min(1.0, max(0.0, 1.0 - spread))
+    return min(1.0, max(0.0, 1.0 - spread)) * done
+
+
+def _finite(x: Any) -> bool:
+    return isinstance(x, int | float) and not isinstance(x, bool) and math.isfinite(x)
+
+
+def usable(answer: Any) -> bool:
+    """An answer whose fields the rules can read; anything else counts as missing."""
+    if not isinstance(answer, Answer):
+        return False
+    if not _finite(answer.spread) or answer.spread < 0:
+        return False
+    if any(isinstance(n, bool) or not isinstance(n, int) for n in (answer.repeats, answer.agreed)):
+        return False
+    probs = answer.probabilities
+    if not isinstance(probs, dict) or not all(
+        isinstance(k, str) and _finite(v) and 0.0 <= v <= 1.0 for k, v in probs.items()
+    ):
+        return False
+    if answer.type == "choice":
+        return isinstance(answer.value, str)
+    return _finite(answer.value)
 
 
 def expected(answer: Answer, values: dict[str, float]) -> float:
@@ -241,14 +278,24 @@ def _unit(x: float) -> float:
     return min(1.0, max(-1.0, x))
 
 
+def _agreement(answer: Answer) -> float:
+    return min(1.0, answer.agreed / answer.repeats) if answer.repeats > 0 else 0.0
+
+
 def _missing(name: str, weight: float, keys: list[str]) -> Part:
     return Part(name, 0.0, weight, 0.0, f"no answer for {', '.join(keys)}")
 
 
 def _parts(pack: Pack, result: Result, rules: Rules, questions: QuestionSet) -> list[Part]:
-    a = {k: v for k, v in result.answers.items() if QUESTION_TYPES.get(k) == v.type}
-    levels = {q.key: len(q.criteria) for q in questions.questions}
+    a = {k: v for k, v in result.answers.items() if usable(v) and QUESTION_TYPES.get(k) == v.type}
+    by_key = {q.key: q for q in questions.questions}
+
+    def sure(x: Answer) -> float:
+        q = by_key[x.key]
+        return certainty(x, len(q.labels()), q.rounds())
+
     w = rules.weights
+    news_bad = 0.0  # how much bad news the news part scored, 0 to 1
     out: list[Part] = []
 
     need = [k for k in ("direction", "material", "source") if k not in a]
@@ -257,17 +304,20 @@ def _parts(pack: Pack, result: Result, rules: Rules, questions: QuestionSet) -> 
     else:
         d, m, s = a["direction"], a["material"], a["source"]
         good = expected(d, rules.direction)
-        material = float(m.value)
+        material = min(1.0, max(0.0, float(m.value)))
         strength = expected(s, rules.evidence)
         out.append(
             Part(
                 "news",
                 _unit(good * material * strength),
                 w["news"],
-                min(certainty(x, levels[x.key]) for x in (d, m, s)),
+                min(sure(x) for x in (d, m, s)),
                 f"good {good:+.2f}, material {material:.0%}, evidence {strength:.2f}",
+                _agreement(d),
             )
         )
+        bad = expected(d, {k: max(0.0, -v) for k, v in rules.direction.items()})
+        news_bad = min(1.0, max(0.0, bad * material * strength))
 
     if "guidance" not in a:
         out.append(_missing("guidance", w["guidance"], ["guidance"]))
@@ -278,8 +328,9 @@ def _parts(pack: Pack, result: Result, rules: Rules, questions: QuestionSet) -> 
                 "guidance",
                 _unit(expected(g, rules.guidance)),
                 w["guidance"],
-                certainty(g, levels["guidance"]),
+                sure(g),
                 f"most likely {g.value}",
+                _agreement(g),
             )
         )
 
@@ -289,14 +340,14 @@ def _parts(pack: Pack, result: Result, rules: Rules, questions: QuestionSet) -> 
         out.append(_missing("fundamentals", w["fundamentals"], ["fundamentals"]))
     else:
         f = a["fundamentals"]
-        top = levels["fundamentals"] - 1
+        top = len(by_key["fundamentals"].labels()) - 1
         level = min(float(top), max(0.0, float(f.value)))
         out.append(
             Part(
                 "fundamentals",
                 2.0 * level / top - 1.0,
                 w["fundamentals"],
-                certainty(f, levels["fundamentals"]),
+                sure(f),
                 f"trend level {level:.1f} of {top}",
             )
         )
@@ -306,18 +357,15 @@ def _parts(pack: Pack, result: Result, rules: Rules, questions: QuestionSet) -> 
     else:
         r = a["risk"]
         risk = min(1.0, max(0.0, float(r.value)))
-        # a risk event the news part already scored as bad is not counted twice
-        bad = 0.0
-        if "direction" in a:
-            bad = expected(a["direction"], {k: max(0.0, -v) for k, v in rules.direction.items()})
-        new = risk * (1.0 - min(1.0, bad))
+        # the bad news the news part already scored is not counted again here
+        new = risk * (1.0 - news_bad)
         out.append(
             Part(
                 "risk",
                 -new,
                 w["risk"],
-                certainty(r, levels["risk"]),
-                f"risk event {risk:.0%}, {1.0 - bad:.0%} of it not already in news",
+                sure(r),
+                f"risk event {risk:.0%}, {1.0 - news_bad:.0%} of it not already in news",
             )
         )
     return out
@@ -328,7 +376,13 @@ def priced_in(pack: Pack, raw: float, rules: Rules) -> tuple[float, str | None]:
     t = pack.ticker
     excess = pack.number(f"px:{t}:excess_{rules.sessions}d")
     vol = pack.number(f"px:{t}:vol_20d")
-    if excess is None or vol is None or not vol.value > 0:
+    if (
+        excess is None
+        or vol is None
+        or not _finite(excess.value)
+        or not _finite(vol.value)
+        or not vol.value > 0
+    ):
         return 0.0, "no price move to check whether the news is priced in"
     usual = vol.value * math.sqrt(rules.sessions / SESSIONS_PER_YEAR)
     moves = excess.value / usual
@@ -349,9 +403,10 @@ def name_call(score: float, rules: Rules) -> CallName:
 
 
 def coverage(parts: list[Part]) -> float:
-    """The weighted certainty of the parts the rules included, 0 to 1."""
+    """The weighted certainty (and choice agreement) of the included parts, 0 to 1."""
     total = sum(p.weight for p in parts)
-    return sum(p.weight * p.certainty for p in parts) / total if total > 0 else 0.0
+    sure = sum(p.weight * p.certainty * p.agreement for p in parts)
+    return sure / total if total > 0 else 0.0
 
 
 def confidence(score: float, call: CallName, rules: Rules, parts: list[Part]) -> float:
@@ -376,16 +431,15 @@ def decide(pack: Pack, result: Result, rules: Rules, questions: QuestionSet) -> 
     score = min(1.0, max(-1.0, raw * (1.0 - cut)))
     call = name_call(score, rules)
     notes = [note] if note else []
-    notes += [
-        f"{k} answer is a {ans.type}, the rules read a {QUESTION_TYPES[k]}"
-        for k, ans in result.answers.items()
-        if k in QUESTION_TYPES and ans.type != QUESTION_TYPES[k]
-    ]
-    notes += [
-        f"{k} answer unbalanced ({ans.repeats} rounds)"
-        for k, ans in result.answers.items()
-        if k in QUESTION_TYPES and not ans.balanced
-    ]
+    for k, ans in result.answers.items():
+        if k not in QUESTION_TYPES:
+            continue
+        if not usable(ans):
+            notes.append(f"{k} answer unreadable")
+        elif ans.type != QUESTION_TYPES[k]:
+            notes.append(f"{k} answer is a {ans.type}, the rules read a {QUESTION_TYPES[k]}")
+        elif not ans.balanced:
+            notes.append(f"{k} answer unbalanced ({ans.repeats} rounds)")
     if result.version != questions.version:
         notes.append(f"answers are {result.version}, questions are {questions.version}")
     return Call(

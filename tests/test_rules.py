@@ -32,6 +32,7 @@ FIN = Number("fin:ACME:revenue:yoy_pct", "Revenue change from a year ago", 0.2, 
 # version fails here; after a bump, add the new version and its file's hash.
 KNOWN_RULES = {
     "rules-v2": "ac1b87982703da0f24f361deb9b3e6214c5e5afbda6818365f96a1368e726b3a",
+    "rules-v3": "4ed506bcd451cf06d5f3eaeae41adffdf0e12b0c37323c2bf0d39c18e53a91e7",
 }
 
 
@@ -103,13 +104,14 @@ def test_good_news_is_a_buy_worked_by_hand() -> None:
     # the most the parts could reach upward is 0.45 + 0.25 + 0.15
     assert call.call == "Buy" and call.confidence == pytest.approx(0.634 / 0.85)
     assert call.coverage == pytest.approx(1.0)
-    assert call.version == "rules-v2" and call.rules_sha == RULES.sha256
+    assert call.version == "rules-v3" and call.rules_sha == RULES.sha256
     assert call.day == "2026-11-03"
     assert call.notes == ["no price move to check whether the news is priced in"]
 
 
 def test_bad_news_is_not_counted_again_as_risk() -> None:
     result = _good(
+        material=_noul("material", 1.0),
         direction=_choice("direction", {"bad": 1.0}),
         guidance=_choice("guidance", {"lowered": 1.0}),
         fundamentals=_score(1.0),
@@ -119,9 +121,28 @@ def test_bad_news_is_not_counted_again_as_risk() -> None:
     assert call is not None
     (risk,) = [p for p in call.parts if p.name == "risk"]
     assert risk.contribution == 0.0  # the news part already scored it as bad
-    # -0.36 - 0.25 - 0.075
-    assert call.score == pytest.approx(-0.685) and call.call == "Short"
-    assert call.confidence == pytest.approx(0.685)
+    # -0.45 - 0.25 - 0.075; down, news and risk never both count, so the reach is 0.85
+    assert call.score == pytest.approx(-0.775) and call.call == "Short"
+    assert call.confidence == pytest.approx(0.775 / 0.85)
+
+
+def test_risk_counts_what_the_news_part_left_unscored() -> None:
+    weak = _good(
+        direction=_choice("direction", {"bad": 1.0}),
+        source=_choice("source", {"opinion": 1.0}),
+        risk=_noul("risk", 1.0),
+    )
+    call = decide(_pack(), weak, RULES, QUESTIONS)
+    assert call is not None
+    (risk,) = [p for p in call.parts if p.name == "risk"]
+    # the news part scored bad 1.0 x material 0.8 x evidence 0.4 = 0.32 of it
+    assert risk.contribution == pytest.approx(-0.15 * 0.68)
+    unread = _good(direction=_choice("direction", {"bad": 1.0}), risk=_noul("risk", 1.0))
+    del unread.answers["source"]
+    call = decide(_pack(), unread, RULES, QUESTIONS)
+    assert call is not None
+    (risk,) = [p for p in call.parts if p.name == "risk"]
+    assert risk.contribution == pytest.approx(-0.15)  # no news part, so none of it scored
 
 
 def test_a_risk_event_beside_good_news_still_counts() -> None:
@@ -134,14 +155,15 @@ def test_a_risk_event_beside_good_news_still_counts() -> None:
 def test_mildly_bad_news_is_a_hold_and_firmer_bad_news_a_sell() -> None:
     mild = _good(
         direction=_choice("direction", {"bad": 0.8, "neutral": 0.2}),
-        source=_choice("source", {"reporting": 1.0}),
+        source=_choice("source", {"opinion": 1.0}),
         guidance=_choice("guidance", {"none": 1.0}),
         fundamentals=_score(2.0),
     )
     call = decide(_pack(), mild, RULES, QUESTIONS)
     assert call is not None
-    # news -0.8 x 0.8 x 0.6 x 0.45 = -0.1728; risk 0.1 x 0.2 not yet in news x 0.15
-    assert call.score == pytest.approx(-0.1758) and call.call == "Hold"
+    # news -0.8 x 0.8 x 0.4 = -0.256, x 0.45; risk 0.1 x (1 - 0.256) x 0.15
+    assert call.score == pytest.approx(-0.256 * 0.45 - 0.1 * 0.744 * 0.15)
+    assert call.call == "Hold"
     worse = _good(
         direction=_choice("direction", {"bad": 1.0}),
         guidance=_choice("guidance", {"none": 1.0}),
@@ -149,7 +171,8 @@ def test_mildly_bad_news_is_a_hold_and_firmer_bad_news_a_sell() -> None:
     )
     call = decide(_pack(), worse, RULES, QUESTIONS)
     assert call is not None
-    assert call.score == pytest.approx(-0.36) and call.call == "Sell"
+    # news -0.8 x 0.45; risk 0.1 x (1 - 0.8) x 0.15
+    assert call.score == pytest.approx(-0.363) and call.call == "Sell"
 
 
 def test_an_unsure_jev_drifts_toward_hold_without_a_cut_off() -> None:
@@ -170,10 +193,12 @@ def test_an_unsure_jev_drifts_toward_hold_without_a_cut_off() -> None:
 
 
 def test_the_news_part_is_as_certain_as_its_least_certain_answer() -> None:
+    src = dataclasses.replace(_choice("source", {"reported": 1.0}), repeats=2)
+    way = dataclasses.replace(_choice("direction", {"good": 0.9, "mixed": 0.1}), repeats=2)
     overs: list[dict[str, Answer]] = [
         {"material": _noul("material", 0.8, 0.5)},
-        {"source": _choice("source", {"reported": 1.0}, agreed=2)},  # 2 of 5
-        {"direction": _choice("direction", {"good": 0.9, "mixed": 0.1}, agreed=2)},  # 2 of 4
+        {"source": src},  # 2 of its 5 planned rounds came back
+        {"direction": way},  # 2 of 4
     ]
     expected_certainty = [0.5, 2 / 5, 0.5]
     for over, want in zip(overs, expected_certainty, strict=True):
@@ -183,18 +208,24 @@ def test_the_news_part_is_as_certain_as_its_least_certain_answer() -> None:
 
 
 def test_certainty_reads_each_answer_on_its_own_scale() -> None:
-    assert certainty(_score(2.0, spread=2.0), 5) == pytest.approx(0.5)
-    assert certainty(_noul("risk", 0.5, spread=0.3), 2) == pytest.approx(0.7)
-    assert certainty(_noul("risk", 0.5, spread=1.5), 2) == 0.0
-    # a choice by agreement: a spread from the rotation's lean is not doubt
-    lean = dataclasses.replace(_choice("direction", {"good": 0.7}, agreed=3), spread=0.25)
-    assert certainty(lean, 4) == pytest.approx(0.75)
-    assert certainty(dataclasses.replace(lean, repeats=0), 4) == 0.0
+    assert certainty(_score(2.0, spread=2.0), 5, 4) == pytest.approx(0.5)
+    assert certainty(_noul("risk", 0.5, spread=0.3), 0, 3) == pytest.approx(0.7)
+    assert certainty(_noul("risk", 0.5, spread=1.5), 0, 3) == 0.0
+    # a choice's doubt is in its value: neither a split nor the rotation's lean
+    # counts again here, only how many of its rounds came back
+    lean = dataclasses.replace(_choice("direction", {"good": 0.7}, agreed=1), spread=0.25)
+    assert certainty(lean, 4, 4) == 1.0
+    assert certainty(dataclasses.replace(lean, repeats=1), 4, 4) == pytest.approx(0.25)
+    assert certainty(dataclasses.replace(lean, repeats=0), 4, 4) == 0.0
+    # one round of three: no agreement to read, and the position lean uncancelled
+    assert certainty(dataclasses.replace(_noul("risk", 0.5), repeats=1), 0, 3) == pytest.approx(
+        1 / 3
+    )
 
 
 def test_probabilities_are_made_to_add_up_to_one() -> None:
     every = Answer("source", "choice", "none", dict.fromkeys(RULES.evidence, 1.0), 0.0, 5)
-    assert expected(every, RULES.evidence) == pytest.approx(2.6 / 5)
+    assert expected(every, RULES.evidence) == pytest.approx(3.05 / 5)
     half = Answer("direction", "choice", "good", {"good": 0.5, "bad": 0.0}, 0.0, 4)
     assert expected(half, RULES.direction) == pytest.approx(1.0)
     empty = Answer("direction", "choice", "bad", {"good": 0.0}, 0.0, 4)
@@ -242,16 +273,18 @@ def test_no_answers_is_no_call() -> None:
 
 
 def test_a_jev_that_knew_nothing_is_a_hold_without_confidence() -> None:
+    flat_way = dict.fromkeys(RULES.direction, 0.25)
+    flat_guide = dict.fromkeys(RULES.guidance, 1 / 6)
     result = _good(
         material=_noul("material", 0.5, 1.0),
-        direction=_choice("direction", {"good": 0.3}, agreed=0),
-        guidance=_choice("guidance", {"raised": 0.3}, agreed=0),
+        direction=_choice("direction", flat_way, agreed=0),
+        guidance=_choice("guidance", flat_guide, agreed=0),
         fundamentals=_score(2.0, 4.0),
         risk=_noul("risk", 0.5, 1.0),
     )
     call = decide(_pack(), result, RULES, QUESTIONS)
     assert call is not None
-    assert call.call == "Hold" and call.score == 0.0
+    assert call.call == "Hold" and abs(call.score) < 0.01  # kept guidance's 0.2 / 6
     assert call.coverage == 0.0 and call.confidence == 0.0
 
 
