@@ -43,6 +43,9 @@ class Source:
             raise TimeoutError("slow")
         return f"FORM 8-K\n\nItem 2.02 Results\n\nEXHIBIT 99.1\n\nRevenue grew ({meta.accession})\n"
 
+    def accepted_at(self, meta: FilingMeta) -> str:
+        return "2026-11-03T16:05:00-05:00"
+
 
 def test_8ks_filed_since_the_date_are_saved_with_passage_ids(tmp_path: Path) -> None:
     store = FilingStore(tmp_path)
@@ -53,6 +56,7 @@ def test_8ks_filed_since_the_date_are_saved_with_passage_ids(tmp_path: Path) -> 
     assert source.fetched == [NEW.accession, MID.accession]  # OLD never fetched
     saved = store.filings("CRWD")
     assert {m.items for m in saved} == {"2.02,9.01", "5.02"}
+    assert {m.accepted for m in saved} == {"2026-11-03T16:05:00-05:00"}
     assert store.facts(saved[0]) == []  # 8-Ks carry no checked numbers
     exhibit = [p for p in store.passages(NEW) if "Revenue grew" in p.text]
     assert exhibit and exhibit[0].id == f"CRWD-{NEW.accession}:7"
@@ -63,13 +67,14 @@ def test_a_saved_8k_is_reported_again_but_not_refetched(tmp_path: Path) -> None:
     sync_current(Source([NEW]), store, "CRWD", date(2026, 11, 1))
     again = Source([NEW])
     got = sync_current(again, store, "CRWD", date(2026, 11, 1))
-    assert again.fetched == [] and got.new == [] and got.reports == [NEW]
+    assert again.fetched == [] and got.new == []
+    assert got.reports == store.filings("CRWD")  # as saved, with its acceptance time
 
 
 def test_a_failed_8k_is_a_note_and_the_others_still_save(tmp_path: Path) -> None:
     store = FilingStore(tmp_path)
     got = sync_current(Source([NEW, MID], {NEW.accession}), store, "CRWD", date(2026, 11, 1))
-    assert got.reports == [MID]
+    assert [m.accession for m in got.reports] == [MID.accession]
     assert got.notes == [f"8-K {NEW.accession} unavailable for CRWD"]
     assert not store.has("CRWD", NEW.accession)  # next run retries it
 
@@ -105,7 +110,7 @@ def test_the_cli_lists_reports(
 def test_an_8k_without_a_filing_date_is_a_note(tmp_path: Path) -> None:
     undated = _meta("0001535527-26-000041", "")
     got = sync_current(Source([undated, NEW]), FilingStore(tmp_path), "CRWD", date(2026, 11, 1))
-    assert got.reports == [NEW]
+    assert [m.accession for m in got.reports] == [NEW.accession]
     assert got.notes == [f"8-K {undated.accession} has no filing date"]
 
 

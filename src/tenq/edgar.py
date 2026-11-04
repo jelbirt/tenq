@@ -10,11 +10,15 @@ import logging
 import math
 import os
 from collections.abc import Iterator
+from dataclasses import replace
+from datetime import datetime
 from typing import Any, Protocol
+from zoneinfo import ZoneInfo
 
 from tenq.filings import Fact, FilingMeta
 
 log = logging.getLogger(__name__)
+EASTERN = ZoneInfo("America/New_York")  # where EDGAR stamps acceptance times
 
 FORMS = ("10-Q", "10-K")
 CURRENT = "8-K"
@@ -30,6 +34,10 @@ class CurrentSource(Protocol):
         """The 8-K's text followed by its EX-99 exhibits' text."""
         ...
 
+    def accepted_at(self, meta: FilingMeta) -> str:
+        """EDGAR's acceptance time, ISO with offset; "" when not known."""
+        ...
+
 
 class FilingSource(Protocol):
     def list_filings(self, ticker: str, limit: int) -> list[FilingMeta]:
@@ -39,6 +47,33 @@ class FilingSource(Protocol):
     def fetch(self, meta: FilingMeta) -> tuple[str, list[Fact]]:
         """The filing's main-document text and its undimensioned numeric facts."""
         ...
+
+    def accepted_at(self, meta: FilingMeta) -> str:
+        """EDGAR's acceptance time, ISO with offset; "" when not known."""
+        ...
+
+
+class _Stamps(Protocol):
+    def accepted_at(self, meta: FilingMeta) -> str: ...
+
+
+def stamped(source: _Stamps, meta: FilingMeta) -> FilingMeta:
+    """`meta` with its acceptance time. Never raises: unknown stays "" (the
+    filing date is then the fallback), which costs only replay precision."""
+    try:
+        return replace(meta, accepted=source.accepted_at(meta))
+    except Exception as exc:
+        log.warning("acceptance time unknown for %s (%s)", meta.accession, type(exc).__name__)
+        return meta
+
+
+def _eastern(value: Any) -> str:
+    """An SGML header's acceptance time, naive Eastern, as ISO text with its offset."""
+    if not isinstance(value, datetime):
+        return ""
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=EASTERN)
+    return str(value.isoformat())
 
 
 def _opt_str(v: Any) -> str | None:
@@ -163,6 +198,13 @@ class EdgarSource:
         frame = xbrl.facts.to_dataframe()
         facts = facts_from_frame(r for r in frame.to_dict("records"))
         return text, facts
+
+    def accepted_at(self, meta: FilingMeta) -> str:
+        # The listing's acceptanceDateTime (submissions JSON) is labelled UTC
+        # but is hours off for some filers, so a replayed pack could see a
+        # filing before it existed. The filing's own SGML header holds the
+        # time SEC's index page shows, in Eastern time, for one request more.
+        return _eastern(self._filing(meta).header.acceptance_datetime)
 
     def fetch_current(self, meta: FilingMeta) -> str:
         filing = self._filing(meta)

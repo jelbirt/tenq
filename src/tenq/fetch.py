@@ -6,7 +6,7 @@ import argparse
 import logging
 from pathlib import Path
 
-from tenq.edgar import FilingSource
+from tenq.edgar import FilingSource, stamped
 from tenq.filings import FilingMeta, FilingStore
 
 log = logging.getLogger(__name__)
@@ -29,6 +29,7 @@ def sync(source: FilingSource, store: FilingStore, ticker: str, depth: int) -> l
         except Exception:  # one bad filing must not stop the rest; next run retries it
             log.exception("fetch failed %s %s", meta.ticker, meta.accession)
             continue
+        meta = stamped(source, meta)
         store.save(meta, text, facts)
         log.info("saved %s %s %s (%s facts)", meta.ticker, meta.form, meta.accession, len(facts))
         new.append(meta)

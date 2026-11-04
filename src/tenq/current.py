@@ -16,7 +16,7 @@ from datetime import date
 from pathlib import Path
 
 from tenq.config import REPO_ROOT
-from tenq.edgar import CurrentSource
+from tenq.edgar import CurrentSource, stamped
 from tenq.filings import FilingMeta, FilingStore
 
 log = logging.getLogger(__name__)
@@ -91,10 +91,19 @@ def sync_current(
             recent.append(m)
     if listed and len(listed) == depth and len(recent) == depth:
         notes.append(f"more than {depth} 8-Ks since {since} for {ticker}; older ones not checked")
+    try:  # report a saved 8-K as saved, with its acceptance time
+        saved = {m.accession: m for m in store.filings(ticker)}
+    except Exception as exc:
+        log.warning("8-K store unreadable for %s (%s)", ticker, type(exc).__name__)
+        saved = {}
     for meta in recent:
-        if not store.has(meta.ticker, meta.accession):
+        if meta.accession in saved:
+            meta = saved[meta.accession]
+        elif not store.has(meta.ticker, meta.accession):
             try:
-                store.save(meta, source.fetch_current(meta), [])
+                text = source.fetch_current(meta)
+                meta = stamped(source, meta)
+                store.save(meta, text, [])
             except Exception as exc:
                 kind = type(exc).__name__
                 log.warning("8-K fetch failed %s %s (%s)", ticker, meta.accession, kind)
