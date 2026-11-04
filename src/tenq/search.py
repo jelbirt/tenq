@@ -1,7 +1,7 @@
 """Text search over saved text with xerj: lexical (BM25) passages with file:line.
 
 xerj runs as a local node on loopback for the length of a job. `xerj autoindex`
-indexes one text directory (a ticker's filings, or one FinanceBench document);
+indexes one text directory (a ticker's filings);
 a query is a BM25 `match` on the chunk text. xerj picks its own schema per
 corpus (the text field is `body` for some, `text` for others), so the field is
 read from the index mapping. xerj chunks files its own way,

@@ -4,14 +4,14 @@ Personal SEC filings analyst: on each new 10-Q/10-K from the watchlist it emails
 what-changed brief, every claim cited to a filing passage and every number checked in code
 against tagged XBRL data. Public repo; credentials and recipients live only in Actions secrets.
 Not investment advice. The approved spec and plan live outside the repo, in
-`~/projects/tenq-plan/` (SPEC.md, PLAN.md revision 2).
+`~/projects/tenq-plan/` (SPEC.md and PLAN.md for the quarterly brief;
+PLAN-recommendations.md, approved 2026-11-04, for the daily Buy/Hold/Sell/Short calls).
 
 ## Commands
 - Install: `uv sync` (the committed `uv.lock` is the pin set; `--locked` everywhere else)
 - Tests: `uv run pytest` (tests must never touch the network)
 - Green bar: `scripts/checks.sh` (the single definition; CI runs this exact script):
   `bash -n` over `scripts/*.sh`, `ruff check`, `ruff format --check`, `mypy` (strict), `pytest`
-  (plus a guard that `.github/workflows/evals.yml` stays read only and uploads no artifact)
 
 ## Conventions
 - No em dashes anywhere: code, comments, docs, prompts, email text, commits, PRs.

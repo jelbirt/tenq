@@ -17,7 +17,7 @@ The written-number rules lean strict on purpose: a false drop costs one
 sentence of the brief, a false accept puts a wrong number in an email.
 
 What this cannot catch: a real passage that does not support the claim. That
-is measured by evals (slice 2), not asserted here.
+is left to Jake's review of the briefs, not asserted here.
 """
 
 from __future__ import annotations
