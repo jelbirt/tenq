@@ -11,6 +11,7 @@ Not investment advice. The approved spec and plan live outside the repo, in
 - Tests: `uv run pytest` (tests must never touch the network)
 - Green bar: `scripts/checks.sh` (the single definition; CI runs this exact script):
   `bash -n` over `scripts/*.sh`, `ruff check`, `ruff format --check`, `mypy` (strict), `pytest`
+  (plus a guard that `.github/workflows/evals.yml` stays read only and uploads no artifact)
 
 ## Conventions
 - No em dashes anywhere: code, comments, docs, prompts, email text, commits, PRs.

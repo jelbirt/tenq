@@ -16,6 +16,17 @@ for f in scripts/*.sh; do
   bash -n "$f"
 done
 
+# Eval answers and grades are private: the eval workflow stays read only and
+# never uploads an artifact (it writes to the private evals repo instead).
+evals=.github/workflows/evals.yml
+if [ -f "$evals" ]; then
+  if grep -Eq 'upload-artifact|contents: *write|: *write-all' "$evals" \
+    || ! grep -Eq '^  contents: read$' "$evals"; then
+    echo "checks.sh: $evals must be read only and upload no artifact" >&2
+    exit 1
+  fi
+fi
+
 uv run --locked ruff check .
 uv run --locked ruff format --check .
 uv run --locked mypy

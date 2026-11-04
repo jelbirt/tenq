@@ -221,3 +221,5 @@ __marimo__/
 /data/
 # FinanceBench is CC BY-NC: never commit a copy, wherever it was downloaded
 **/data/financebench/
+# the private evals repo, checked out here by the eval workflow
+/evals-state/
