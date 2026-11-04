@@ -245,6 +245,7 @@ class Result:
     answers: dict[str, Answer] = field(default_factory=dict)
     resolved_model: str = ""
     rounds: int = 0  # requests that returned usable answers
+    answered: list[int] = field(default_factory=list)  # which rounds those were
     input_tokens: int = 0
     output_tokens: int = 0
     cost: float = 0.0
@@ -466,6 +467,7 @@ def ask(
             result.cost += _finite(usage.get("cost")) or 0.0
     result.duration_ms = int((time.monotonic() - started) * 1000)
     result.rounds = len(responses)
+    result.answered = answered
     try:
         result.answers = average(questions, responses, answered)
     except Exception as exc:  # the never-raises backstop: a reply nothing above foresaw

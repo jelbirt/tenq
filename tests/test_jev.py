@@ -241,6 +241,7 @@ def test_a_failed_repeat_is_left_out_of_the_average(questions: QuestionSet) -> N
     )
     result = _ask(questions, server)
     assert len(server.calls) == 5 and result.rounds == 3
+    assert result.answered == [0, 2, 3]  # the failed round keeps its place
     assert result.errors == ["HTTP 429"]
     assert result.answers["material"].value == pytest.approx(0.7)
     assert result.answers["material"].spread == pytest.approx(0.4)
