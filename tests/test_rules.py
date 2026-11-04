@@ -12,16 +12,21 @@ from typing import Any
 import pytest
 import yaml
 
+import tenq.rules as rules_mod
+from tenq import jev
 from tenq.jev import QUESTIONS_PATH, Answer, Result, load_questions
 from tenq.pack import Number, Pack
 from tenq.rules import (
     DEFAULT_RULES,
+    Part,
     certainty,
     confidence,
     decide,
+    decisive,
     expected,
     load_rules,
     name_call,
+    priced_in,
 )
 
 QUESTIONS = load_questions()
@@ -33,6 +38,7 @@ FIN = Number("fin:ACME:revenue:yoy_pct", "Revenue change from a year ago", 0.2, 
 KNOWN_RULES = {
     "rules-v2": "ac1b87982703da0f24f361deb9b3e6214c5e5afbda6818365f96a1368e726b3a",
     "rules-v3": "4ed506bcd451cf06d5f3eaeae41adffdf0e12b0c37323c2bf0d39c18e53a91e7",
+    "rules-v4": "21d1ba4bf231fabbd4dfe12e2c5112ae6fca22b4b562a65271aa3a47f67e6df5",
 }
 
 
@@ -103,8 +109,10 @@ def test_good_news_is_a_buy_worked_by_hand() -> None:
     assert call.raw == pytest.approx(0.634) and call.score == pytest.approx(0.634)
     # the most the parts could reach upward is 0.45 + 0.25 + 0.15
     assert call.call == "Buy" and call.confidence == pytest.approx(0.634 / 0.85)
-    assert call.coverage == pytest.approx(1.0)
-    assert call.version == "rules-v3" and call.rules_sha == RULES.sha256
+    # coverage: material 80% sits 0.6 from a coin flip (the news part's least
+    # decisive answer), 10% risk sits 0.8 from one, the rest are one-sided
+    assert call.coverage == pytest.approx(0.45 * 0.6 + 0.25 + 0.15 + 0.15 * 0.8)
+    assert call.version == "rules-v4" and call.rules_sha == RULES.sha256
     assert call.day == "2026-11-03"
     assert call.notes == ["no price move to check whether the news is priced in"]
 
@@ -193,8 +201,10 @@ def test_an_unsure_jev_drifts_toward_hold_without_a_cut_off() -> None:
 
 
 def test_the_news_part_is_as_certain_as_its_least_certain_answer() -> None:
-    src = dataclasses.replace(_choice("source", {"reported": 1.0}), repeats=2)
-    way = dataclasses.replace(_choice("direction", {"good": 0.9, "mixed": 0.1}), repeats=2)
+    src = dataclasses.replace(_choice("source", {"reported": 1.0}), repeats=2, agreed=2)
+    way = dataclasses.replace(
+        _choice("direction", {"good": 0.9, "mixed": 0.1}), repeats=2, agreed=2
+    )
     overs: list[dict[str, Answer]] = [
         {"material": _noul("material", 0.8, 0.5)},
         {"source": src},  # 2 of its 5 planned rounds came back
@@ -247,7 +257,7 @@ def test_a_missing_answer_counts_as_nothing_and_is_named() -> None:
     assert parts["news"].contribution == 0.0 and parts["news"].detail == "no answer for source"
     assert parts["guidance"].detail == "no answer for guidance"
     assert call.score == pytest.approx(0.06) and call.call == "Hold"
-    assert call.coverage == pytest.approx(0.30)  # fundamentals and risk only
+    assert call.coverage == pytest.approx(0.15 + 0.15 * 0.8)  # fundamentals and risk only
 
 
 def test_an_answer_of_the_wrong_type_is_missing_and_noted() -> None:
@@ -340,7 +350,7 @@ def test_hold_confidence_is_measured_against_its_own_side_of_the_band() -> None:
     lopsided = dataclasses.replace(RULES, buy=0.30)
     call = decide(_pack(), _good(), RULES, QUESTIONS)
     assert call is not None
-    parts = call.parts  # full coverage
+    parts = [dataclasses.replace(p, decisive=1.0) for p in call.parts]  # full coverage
     assert confidence(0.15, "Hold", lopsided, parts) == pytest.approx(0.5)  # half of 0.30
     assert confidence(-0.10, "Hold", lopsided, parts) == pytest.approx(0.5)  # half of 0.20
     assert confidence(0.0, "Hold", lopsided, parts) == pytest.approx(1.0)
@@ -364,7 +374,7 @@ def test_the_record_and_the_email_lines_show_every_part() -> None:
     d = call.to_dict()
     assert [p["name"] for p in d["parts"]] == ["news", "guidance", "fundamentals", "risk"]
     assert d["parts"][0]["contribution"] == pytest.approx(0.324)
-    assert d["rules_sha"] == RULES.sha256 and d["coverage"] == pytest.approx(1.0)
+    assert d["rules_sha"] == RULES.sha256 and d["coverage"] == pytest.approx(0.79)
     lines = call.explain()
     assert lines[0] == (
         "news: +0.32 (good +0.90, material 80%, evidence 1.00; weight 0.45, certainty 100%)"
@@ -463,3 +473,176 @@ def test_the_rules_need_each_question_they_read_with_its_type(
     path.write_text(yaml.safe_dump(raw), encoding="utf-8")
     with pytest.raises(ValueError, match=message):
         load_rules(load_questions(path))
+
+
+def _flat_rounds() -> dict[str, Answer]:
+    """What jev.average makes of a Jev that knew nothing: flat answers every round."""
+    responses = []
+    for _ in range(QUESTIONS.rounds()):
+        answers: dict[str, object] = {}
+        for q in QUESTIONS.questions:
+            labels = q.labels()
+            flat = {label: 1.0 / len(labels) for label in labels} if labels else {}
+            if q.type == "noul":
+                answers[q.key] = {"noul": 0.5}
+            elif q.type == "choice":
+                answers[q.key] = {"choice": labels[0], "probabilities": flat}
+            else:
+                answers[q.key] = {"score": (len(labels) - 1) / 2, "probabilities": flat}
+        responses.append(answers)
+    return jev.average(QUESTIONS, responses)
+
+
+@pytest.mark.parametrize("risk", [0.0, 0.5])
+def test_a_jev_that_knew_nothing_every_round_is_a_hold_with_no_confidence(risk: float) -> None:
+    answers = _flat_rounds()
+    answers["risk"] = dataclasses.replace(answers["risk"], value=risk)
+    result = Result(QUESTIONS.version, "jev-latest", answers)
+    call = decide(_pack(), result, RULES, QUESTIONS)
+    assert call is not None and call.call == "Hold"
+    # flat ties pick the same label every round, so agreement alone looked sure
+    assert all(answers[k].agreed == answers[k].repeats for k in ("direction", "source"))
+    # a confident "no risk" is the only decisive answer, so it is all the coverage
+    assert call.coverage == pytest.approx(0.15 * abs(2 * risk - 1))
+    assert call.confidence <= 0.15
+
+
+def test_decisive_measures_the_distance_from_a_coin_flip() -> None:
+    labels = QUESTIONS.questions[1].labels()
+    flat = _choice("direction", {k: 0.25 for k in labels})
+    assert decisive(flat, labels) == pytest.approx(0.0)
+    assert decisive(_choice("direction", {"good": 1.0}), labels) == pytest.approx(1.0)
+    half = _choice("direction", {"good": 0.5, "bad": 0.5})
+    assert decisive(half, labels) == pytest.approx(0.5 / 0.75)
+    split = dataclasses.replace(_choice("direction", {"good": 1.0}), agreed=2)
+    assert decisive(split, labels) == pytest.approx(0.5)  # two of four rounds agreed
+    assert decisive(_noul("risk", 0.5), []) == 0.0
+    assert decisive(_noul("risk", 0.9), []) == pytest.approx(0.8)
+    assert decisive(_score(2.0), []) == 1.0  # no probabilities: spread carries the doubt
+
+
+def test_unsure_bad_news_leaves_the_risk_event_counted() -> None:
+    def run(spread: float) -> dict[str, float]:
+        call = decide(
+            _pack(fin=False),
+            _good(
+                direction=_choice("direction", {"bad": 1.0}),
+                material=_noul("material", 1.0, spread),
+                guidance=_choice("guidance", {"none": 1.0}),
+                risk=_noul("risk", 1.0),
+            ),
+            RULES,
+            QUESTIONS,
+        )
+        assert call is not None
+        return {p.name: p.contribution for p in call.parts}
+
+    sure = run(0.0)
+    assert sure["news"] == pytest.approx(-0.45) and sure["risk"] == pytest.approx(0.0)
+    noisy = run(0.8)  # material certainty 0.2: the news part scored a fifth of it
+    assert noisy["news"] == pytest.approx(-0.45 * 0.2)
+    assert noisy["risk"] == pytest.approx(-0.15 * 0.8)
+    gone = run(1.0)  # nothing scored as news, so the lawsuit counts in full
+    assert gone["news"] == 0.0 and gone["risk"] == pytest.approx(-0.15)
+
+
+def test_risk_is_reduced_by_the_chance_of_bad_news_not_the_net() -> None:
+    call = decide(
+        _pack(fin=False),
+        _good(
+            direction=_choice("direction", {"good": 0.5, "bad": 0.5}),
+            material=_noul("material", 1.0),
+            risk=_noul("risk", 1.0),
+        ),
+        RULES,
+        QUESTIONS,
+    )
+    assert call is not None
+    parts = {p.name: p.contribution for p in call.parts}
+    assert parts["news"] == pytest.approx(0.0)  # good and bad cancel in the news part
+    assert parts["risk"] == pytest.approx(-0.15 * 0.5)  # half of it was scored bad news
+
+
+@pytest.mark.parametrize(
+    "broken",
+    [
+        {"key": "zzz"},
+        {"repeats": 10**400},
+        {"repeats": -3},
+        {"repeats": 0},
+        {"repeats": True},
+        {"agreed": -1},
+        {"agreed": 99},
+        {"spread": math.nan},
+        {"spread": -0.1},
+        {"value": math.inf},
+        {"probabilities": {"good": 1.5}},
+        {"probabilities": {"good": math.nan}},
+    ],
+)
+def test_an_unreadable_answer_counts_as_nothing_and_is_noted(broken: dict[str, object]) -> None:
+    bad = dataclasses.replace(_choice("direction", {"good": 1.0}), **broken)  # type: ignore[arg-type]
+    if "value" in broken:
+        bad = dataclasses.replace(_noul("material", 0.8), **broken)  # type: ignore[arg-type]
+    key = "material" if "value" in broken else "direction"
+    call = decide(_pack(), _good(**{key: bad}), RULES, QUESTIONS)
+    assert call is not None
+    news = call.parts[0]
+    assert news.contribution == 0.0 and news.detail == f"no answer for {key}"
+    assert f"{key} answer unreadable" in call.notes
+    assert -1.0 <= call.score <= 1.0 and 0.0 <= call.confidence <= 1.0
+
+
+def test_out_of_range_values_are_clamped() -> None:
+    call = decide(
+        _pack(),
+        _good(
+            material=_noul("material", 1.0),
+            fundamentals=_score(9.0),
+            risk=_noul("risk", 0.0),
+        ),
+        RULES,
+        QUESTIONS,
+    )
+    high = decide(_pack(), _good(material=_noul("material", 7.0)), RULES, QUESTIONS)
+    assert call is not None and high is not None
+    parts = {p.name: p for p in call.parts}
+    assert parts["fundamentals"].value == pytest.approx(1.0)
+    assert high.parts[0].value == pytest.approx(call.parts[0].value)
+
+
+def test_an_unexpected_failure_is_no_call(monkeypatch: pytest.MonkeyPatch) -> None:
+    def boom(*_: object) -> list[Part]:
+        raise RuntimeError("bug")
+
+    monkeypatch.setattr(rules_mod, "_parts", boom)
+    assert decide(_pack(), _good(), RULES, QUESTIONS) is None
+
+
+def test_sell_and_short_confidence_use_the_downward_reach() -> None:
+    tilted = dataclasses.replace(
+        RULES, weights={"news": 0.2, "guidance": 0.25, "fundamentals": 0.15, "risk": 0.4}
+    )
+    call = decide(_pack(), _good(), RULES, QUESTIONS)
+    assert call is not None
+    # up: 0.25 + 0.15 + 0.2 = 0.6; down: 0.25 + 0.15 + max(0.2, 0.4) = 0.8
+    assert confidence(0.3, "Buy", tilted, call.parts) == pytest.approx(0.5)
+    assert confidence(-0.4, "Sell", tilted, call.parts) == pytest.approx(0.5)
+    assert confidence(-0.6, "Short", tilted, call.parts) == pytest.approx(0.75)
+
+
+def test_a_scores_reversal_lean_is_not_doubt() -> None:
+    leaned = Answer("fundamentals", "score", 2.0, {}, 1.0, 4, balanced=True, first_lift=0.5)
+    assert certainty(leaned, 5, 4) == pytest.approx(1.0)
+    partial = dataclasses.replace(leaned, first_lift=0.25)
+    assert certainty(partial, 5, 4) == pytest.approx(1.0 - 0.5 / 4)
+    unbalanced = dataclasses.replace(leaned, balanced=False)
+    assert certainty(unbalanced, 5, 4) == pytest.approx(1.0 - 1.0 / 4)
+
+
+def test_priced_in_reads_nothing_into_a_zero_score_or_an_unreadable_move() -> None:
+    assert priced_in(_pack(*_move(2.0 * USUAL_5D)), 0.0, RULES) == (0.0, None)
+    # a zero score with a vanishing volatility is 0 times infinity: still no cut
+    assert priced_in(_pack(*_move(0.05, vol=1e-320)), 0.0, RULES) == (0.0, None)
+    cut, note = priced_in(_pack(*_move(0.05, vol=1e-320)), 0.3, RULES)
+    assert cut == 0.0 and note == "price move too large to read against its volatility"

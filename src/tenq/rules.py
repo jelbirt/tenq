@@ -6,23 +6,26 @@ trend and recent risk, each from -1 to +1 and weighted. A choice's doubt is
 counted once, in its expected value under Jev's averaged probabilities; a
 yes/no or a score is also scaled by 1 less its spread across rounds; and every
 part is scaled by the share of its planned rounds that came back, so an unsure
-or half-answered Jev drifts toward Hold rather than hitting a cut-off. Risk
-counts only what the news part has not already scored as bad news.
+or half-answered Jev drifts toward Hold rather than hitting a cut-off. A
+score's spread leaves out the reversal lean the rounds measured. Risk counts
+only the bad news the news part did not already score (after its certainty).
 The weighted sum shrinks when the stock has already moved that way against QQQ
 (priced in), and the final score picks Buy, Hold, Sell or Short. Every part's
 contribution is kept, so the email and the record show why.
 
 Confidence, 0 to 1: for Buy, Sell and Short, the score as a share of the most
 the included parts could reach that way; for Hold, how close the score sits to
-0 within the Hold band (1 at 0, 0 at its edge) times the evidence coverage
-(the weighted certainty that came in, a choice's also scaled by how many rounds
-picked its winner), so a Jev that knew nothing is a Hold
-with no confidence, not full confidence.
+0 within the Hold band (1 at 0, 0 at its edge) times the evidence coverage:
+the weighted certainty that came in, each part also scaled by how decisive its
+answers were (how far from a coin flip, and for a choice how many rounds picked
+its winner). A Jev that knew nothing, flat answers every round, is a Hold with
+no confidence, not full confidence.
 
 A Jev result with no answers is no call (Opus's call goes out alone); a
 missing answer, one of the wrong type, or an unreadable one (a NaN, a wrong
-field type) counts as nothing and is noted, so decide() never raises on what
-Jev or a stored record sends.
+field type, round counts out of range, a key that is not its own) counts as
+nothing and is noted, and anything else unexpected makes no call, so decide()
+never raises on what Jev or a stored record sends.
 Every call records the rules version and the file's sha256; a test pins one
 hash per version, so an edit without a version bump fails the green bar.
 """
@@ -30,6 +33,7 @@ hash per version, so an edit without a version bump fails the green bar.
 from __future__ import annotations
 
 import hashlib
+import logging
 import math
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
@@ -42,7 +46,10 @@ from tenq.jev import Answer, QuestionSet, Result
 from tenq.pack import Pack
 from tenq.prices import SESSIONS_PER_YEAR, WINDOWS
 
+log = logging.getLogger(__name__)
+
 DEFAULT_RULES = REPO_ROOT / "config" / "rules.yaml"
+MAX_ROUNDS = 64  # far above any planned round count; more is a corrupt record
 CallName = Literal["Buy", "Hold", "Sell", "Short"]
 PARTS = ("news", "guidance", "fundamentals", "risk")
 TOP_LEVEL = {"version", "direction", "evidence", "guidance", "weights", "priced_in", "calls"}
@@ -81,10 +88,10 @@ class Part:
     weight: float
     certainty: float  # 0 to 1: how far to trust the answers (see certainty())
     detail: str
-    # choices: the share of rounds whose own pick was the winner. Not in the
-    # contribution (a choice's doubt is already in its value), only in coverage,
-    # so a flat, split choice cannot make a confident Hold.
-    agreement: float = 1.0
+    # how far the answers sit from a coin flip, 0 to 1 (see decisive()). Not in
+    # the contribution (doubt is already in the value and certainty), only in
+    # coverage, so flat answers cannot make a confident Hold.
+    decisive: float = 1.0
 
     @property
     def contribution(self) -> float:
@@ -231,12 +238,19 @@ def certainty(answer: Answer, levels: int, rounds: int) -> float:
     round neither cancels the position lean nor shows any agreement. A choice
     adds nothing more: its doubt is already in its expected value, and its
     spread moves with the rotation's lean on purpose. A yes/no or a score is
-    also scaled by 1 less its spread across rounds, a score's on a 0 to 1 scale.
+    also scaled by 1 less its spread across rounds, a score's on a 0 to 1 scale
+    and less the reversal lean (reversed rounds sit about twice the measured
+    lean from file-order ones, which is not doubt).
     """
     done = min(1.0, answer.repeats / rounds) if rounds > 0 else 0.0
     if answer.type == "choice":
         return done
-    spread = answer.spread / (levels - 1) if answer.type == "score" else answer.spread
+    spread = answer.spread
+    if answer.type == "score":
+        lift = answer.first_lift
+        if answer.balanced and lift is not None and _finite(lift):
+            spread = max(0.0, spread - 2.0 * abs(float(lift)))
+        spread /= levels - 1
     return min(1.0, max(0.0, 1.0 - spread)) * done
 
 
@@ -244,13 +258,15 @@ def _finite(x: Any) -> bool:
     return isinstance(x, int | float) and not isinstance(x, bool) and math.isfinite(x)
 
 
-def usable(answer: Any) -> bool:
-    """An answer whose fields the rules can read; anything else counts as missing."""
-    if not isinstance(answer, Answer):
+def usable(answer: Any, key: str) -> bool:
+    """An answer to `key` whose fields the rules can read; anything else is missing."""
+    if not isinstance(answer, Answer) or answer.key != key:
         return False
     if not _finite(answer.spread) or answer.spread < 0:
         return False
     if any(isinstance(n, bool) or not isinstance(n, int) for n in (answer.repeats, answer.agreed)):
+        return False
+    if not 0 < answer.repeats <= MAX_ROUNDS or not 0 <= answer.agreed <= answer.repeats:
         return False
     probs = answer.probabilities
     if not isinstance(probs, dict) or not all(
@@ -282,17 +298,46 @@ def _agreement(answer: Answer) -> float:
     return min(1.0, answer.agreed / answer.repeats) if answer.repeats > 0 else 0.0
 
 
+def decisive(answer: Answer, labels: list[str]) -> float:
+    """How far an answer sits from a coin flip, 0 (flat) to 1 (all on one side).
+
+    The averaged probabilities' distance from an even spread over the labels,
+    scaled so one label at 1.0 is 1; a yes/no is |2p - 1|, the same measure on
+    two sides. A choice is also scaled by its share of agreeing rounds. With
+    no probabilities to read, a choice or score counts as decisive and its
+    spread and agreement carry the doubt.
+    """
+    if answer.type == "noul":
+        return min(1.0, abs(2.0 * float(answer.value) - 1.0))
+    probs = answer.probabilities
+    total = sum(probs.values())
+    n = len(labels)
+    d = 1.0
+    if total > 0 and n > 1:
+        even = 1.0 / n
+        gap = sum(abs(probs.get(label, 0.0) / total - even) for label in labels) / 2.0
+        d = min(1.0, gap / (1.0 - even))
+    if answer.type == "choice":
+        d *= _agreement(answer)
+    return d
+
+
 def _missing(name: str, weight: float, keys: list[str]) -> Part:
     return Part(name, 0.0, weight, 0.0, f"no answer for {', '.join(keys)}")
 
 
 def _parts(pack: Pack, result: Result, rules: Rules, questions: QuestionSet) -> list[Part]:
-    a = {k: v for k, v in result.answers.items() if usable(v) and QUESTION_TYPES.get(k) == v.type}
+    a = {
+        k: v for k, v in result.answers.items() if usable(v, k) and QUESTION_TYPES.get(k) == v.type
+    }
     by_key = {q.key: q for q in questions.questions}
 
     def sure(x: Answer) -> float:
         q = by_key[x.key]
         return certainty(x, len(q.labels()), q.rounds())
+
+    def firm(*xs: Answer) -> float:
+        return min(decisive(x, by_key[x.key].labels()) for x in xs)
 
     w = rules.weights
     news_bad = 0.0  # how much bad news the news part scored, 0 to 1
@@ -306,18 +351,20 @@ def _parts(pack: Pack, result: Result, rules: Rules, questions: QuestionSet) -> 
         good = expected(d, rules.direction)
         material = min(1.0, max(0.0, float(m.value)))
         strength = expected(s, rules.evidence)
+        news_sure = min(sure(x) for x in (d, m, s))
         out.append(
             Part(
                 "news",
                 _unit(good * material * strength),
                 w["news"],
-                min(sure(x) for x in (d, m, s)),
+                news_sure,
                 f"good {good:+.2f}, material {material:.0%}, evidence {strength:.2f}",
-                _agreement(d),
+                firm(d, m, s),
             )
         )
+        # only the bad news the news part actually scored, after its certainty
         bad = expected(d, {k: max(0.0, -v) for k, v in rules.direction.items()})
-        news_bad = min(1.0, max(0.0, bad * material * strength))
+        news_bad = min(1.0, max(0.0, bad * material * strength * news_sure))
 
     if "guidance" not in a:
         out.append(_missing("guidance", w["guidance"], ["guidance"]))
@@ -330,7 +377,7 @@ def _parts(pack: Pack, result: Result, rules: Rules, questions: QuestionSet) -> 
                 w["guidance"],
                 sure(g),
                 f"most likely {g.value}",
-                _agreement(g),
+                firm(g),
             )
         )
 
@@ -349,6 +396,7 @@ def _parts(pack: Pack, result: Result, rules: Rules, questions: QuestionSet) -> 
                 w["fundamentals"],
                 sure(f),
                 f"trend level {level:.1f} of {top}",
+                firm(f),
             )
         )
 
@@ -366,6 +414,7 @@ def _parts(pack: Pack, result: Result, rules: Rules, questions: QuestionSet) -> 
                 w["risk"],
                 sure(r),
                 f"risk event {risk:.0%}, {1.0 - news_bad:.0%} of it not already in news",
+                firm(r),
             )
         )
     return out
@@ -384,8 +433,12 @@ def priced_in(pack: Pack, raw: float, rules: Rules) -> tuple[float, str | None]:
         or not vol.value > 0
     ):
         return 0.0, "no price move to check whether the news is priced in"
+    if raw == 0:
+        return 0.0, None
     usual = vol.value * math.sqrt(rules.sessions / SESSIONS_PER_YEAR)
     moves = excess.value / usual
+    if not math.isfinite(moves):
+        return 0.0, "price move too large to read against its volatility"
     if raw * moves <= 0:
         return 0.0, None
     return min(rules.most, rules.per_move * abs(moves)), None
@@ -403,9 +456,9 @@ def name_call(score: float, rules: Rules) -> CallName:
 
 
 def coverage(parts: list[Part]) -> float:
-    """The weighted certainty (and choice agreement) of the included parts, 0 to 1."""
+    """The weighted certainty times decisiveness of the included parts, 0 to 1."""
     total = sum(p.weight for p in parts)
-    sure = sum(p.weight * p.certainty * p.agreement for p in parts)
+    sure = sum(p.weight * p.certainty * p.decisive for p in parts)
     return sure / total if total > 0 else 0.0
 
 
@@ -422,7 +475,15 @@ def confidence(score: float, call: CallName, rules: Rules, parts: list[Part]) ->
 
 
 def decide(pack: Pack, result: Result, rules: Rules, questions: QuestionSet) -> Call | None:
-    """Jev's call on one pack, or None when Jev gave no answers."""
+    """Jev's call on one pack, or None when Jev gave no answers or could not be read."""
+    try:
+        return _decide(pack, result, rules, questions)
+    except Exception as exc:  # a backstop: no call beats a crash or a wrong call
+        log.warning("no Jev call for %s: %s", pack.ticker, type(exc).__name__)
+        return None
+
+
+def _decide(pack: Pack, result: Result, rules: Rules, questions: QuestionSet) -> Call | None:
     if not result.answers:
         return None
     parts = _parts(pack, result, rules, questions)
@@ -434,7 +495,7 @@ def decide(pack: Pack, result: Result, rules: Rules, questions: QuestionSet) -> 
     for k, ans in result.answers.items():
         if k not in QUESTION_TYPES:
             continue
-        if not usable(ans):
+        if not usable(ans, k):
             notes.append(f"{k} answer unreadable")
         elif ans.type != QUESTION_TYPES[k]:
             notes.append(f"{k} answer is a {ans.type}, the rules read a {QUESTION_TYPES[k]}")
