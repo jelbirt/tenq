@@ -40,6 +40,9 @@ class StoreSource:
     def fetch(self, meta: FilingMeta) -> tuple[str, list[Fact]]:
         raise AssertionError("everything is already saved")
 
+    def accepted_at(self, meta: FilingMeta) -> str:
+        return "2026-11-03T16:05:00-05:00"
+
 
 def _agent(error: str | None = None) -> AgentRun:
     run = AgentRun(

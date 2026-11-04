@@ -23,6 +23,9 @@ class FakeSource:
             raise RuntimeError("EDGAR hiccup")
         return f"Text of {meta.accession}\n", []
 
+    def accepted_at(self, meta: FilingMeta) -> str:
+        return "2026-11-03T16:05:00-05:00"
+
 
 def _meta(n: int) -> FilingMeta:
     return FilingMeta(
@@ -52,6 +55,24 @@ def test_sync_skips_a_failed_filing_and_retries_it_next_run(tmp_path: Path) -> N
     assert [m.accession for m in sync(source, store, "TEST", depth=2)] == ["0000000001-26-000001"]
     source.broken.clear()
     assert [m.accession for m in sync(source, store, "TEST", depth=2)] == ["0000000001-26-000002"]
+
+
+def test_sync_saves_each_filings_acceptance_time(tmp_path: Path) -> None:
+    store = FilingStore(tmp_path)
+    sync(FakeSource([_meta(1)]), store, "TEST", depth=1)
+    assert [m.accepted for m in store.filings("TEST")] == ["2026-11-03T16:05:00-05:00"]
+
+
+def test_an_unknown_acceptance_time_still_saves_the_filing(tmp_path: Path) -> None:
+    class NoStamp(FakeSource):
+        def accepted_at(self, meta: FilingMeta) -> str:
+            raise TimeoutError("slow header")
+
+    store = FilingStore(tmp_path)
+    assert [m.accession for m in sync(NoStamp([_meta(1)]), store, "TEST", depth=1)] == [
+        "0000000001-26-000001"
+    ]
+    assert [m.accepted for m in store.filings("TEST")] == [""]
 
 
 def test_facts_from_frame_keeps_the_most_precise_duplicate() -> None:

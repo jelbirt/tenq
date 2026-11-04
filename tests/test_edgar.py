@@ -28,6 +28,7 @@ class FakeFiling:
     homepage_url: str = "https://www.sec.gov/x"
     acceptance_datetime: Any = None
     attachments: list[Att] = field(default_factory=list)
+    header: Any = None
 
     def text(self) -> str:
         return "FORM 8-K"
@@ -102,20 +103,31 @@ def test_an_unreadable_or_empty_exhibit_keeps_the_8k_text(source: EdgarSource) -
     assert source.fetch_current(meta) == "FORM 8-K\n\nEXHIBIT 99.3\n\nLetter"
 
 
-def test_the_acceptance_time_is_kept_when_it_has_a_zone(source: EdgarSource) -> None:
+@dataclass
+class Header:
+    acceptance_datetime: Any
+
+
+def test_the_acceptance_time_comes_from_the_header_in_eastern_time(
+    source: EdgarSource,
+) -> None:
     from datetime import UTC, datetime
 
     FakeCompany.filings = [
+        # the listing's own value is ignored: it is hours off for some filers
         FakeFiling(
             "8-K",
             "0001535527-26-000040",
-            acceptance_datetime=datetime(2026, 11, 3, 21, 5, tzinfo=UTC),
+            acceptance_datetime=datetime(2026, 11, 4, 2, 5, tzinfo=UTC),
+            header=Header(datetime(2026, 11, 3, 16, 5)),
         ),
-        FakeFiling("8-K", "0001535527-26-000041", acceptance_datetime=datetime(2026, 11, 3, 21, 5)),
-        FakeFiling("8-K", "0001535527-26-000042", acceptance_datetime="2026-11-03"),
+        FakeFiling("8-K", "0001535527-26-000041", header=Header(datetime(2026, 7, 3, 16, 5))),
+        FakeFiling("8-K", "0001535527-26-000042", header=Header("2026-11-03")),
     ]
-    assert [m.accepted for m in source.list_current("CRWD", 5)] == [
-        "2026-11-03T21:05:00+00:00",
-        "",
+    metas = source.list_current("CRWD", 5)
+    assert [m.accepted for m in metas] == ["", "", ""]
+    assert [source.accepted_at(m) for m in metas] == [
+        "2026-11-03T16:05:00-05:00",
+        "2026-07-03T16:05:00-04:00",
         "",
     ]
