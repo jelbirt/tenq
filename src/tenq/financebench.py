@@ -255,6 +255,7 @@ class GradedAnswer:
     question_id: str
     model_answer: str
     label: str  # Correct Answer, Incorrect Answer or Refusal
+    gold_answer: str  # the gold the label was given against, as the file has it
 
     @property
     def key(self) -> str:
@@ -266,7 +267,18 @@ def parse_results(rows: list[dict[str, Any]], source: str) -> list[GradedAnswer]
     for r in rows:
         if r["label"] not in PAPER_LABELS:
             raise ValueError(f"{source}: unknown label {r['label']!r}")
-        out.append(GradedAnswer(source, r["financebench_id"], r["model_answer"] or "", r["label"]))
+        gold = r["gold_answer"]
+        if (
+            isinstance(gold, bool)
+            or not isinstance(gold, (str, int, float))
+            or not str(gold).strip()
+        ):
+            raise ValueError(f"{source}: a gold answer is missing")
+        out.append(
+            GradedAnswer(
+                source, r["financebench_id"], r["model_answer"] or "", r["label"], str(gold)
+            )
+        )
     if len({a.question_id for a in out}) != len(out):
         raise ValueError(f"{source}: a question is answered twice")
     return out

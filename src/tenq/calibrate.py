@@ -27,11 +27,13 @@ import hashlib
 import json
 import logging
 import math
+import os
 import random
 import sys
 import time
 from collections import Counter
 from collections.abc import Callable, Iterable
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -128,8 +130,29 @@ def kappa_interval(
     return draws[int(0.025 * (len(draws) - 1))], draws[int(0.975 * (len(draws) - 1))]
 
 
-def finished(record: dict[str, Any]) -> bool:
-    return record.get("status") in (GRADED, MODEL_FAILURE)
+def finished(record: dict[str, Any], prompt_version: str, model: str) -> bool:
+    """Graded, or failed by the grader itself, by this prompt version and model.
+
+    A record from another version or model is stale: the item is graded again,
+    so a gate is never decided over a mix of graders.
+    """
+    return (
+        record.get("status") in (GRADED, MODEL_FAILURE)
+        and record.get("prompt_version") == prompt_version
+        and record.get("model") == model
+    )
+
+
+def _append(path: Path, record: dict[str, Any]) -> None:
+    """Append one JSON line, first ending a line a crash left open."""
+    with path.open("a+b") as f:
+        if f.tell():
+            f.seek(-1, os.SEEK_END)
+            if f.read(1) != b"\n":
+                f.write(b"\n")
+        f.write((json.dumps(record) + "\n").encode("utf-8"))
+        f.flush()
+        os.fsync(f.fileno())
 
 
 def load_records(path: Path) -> dict[str, dict[str, Any]]:
@@ -180,7 +203,7 @@ def grade_items(
     Returns (graded this run, stopped on an infrastructure failure). An
     infrastructure failure is not recorded: that item is graded again later.
     """
-    done = {k for k, r in load_records(records).items() if finished(r)}
+    done = {k for k, r in load_records(records).items() if finished(r, prompt.version, model)}
     records.parent.mkdir(parents=True, exist_ok=True)
     count = 0
     for item in run_order(items):
@@ -188,11 +211,13 @@ def grade_items(
             continue
         if limit is not None and count >= limit:
             break
-        run, g = grader(questions[item.question_id], item.model_answer, prompt, model=model)
+        # grade against the gold the people saw: the questions file has since
+        # reformatted some golds and reversed one
+        q = replace(questions[item.question_id], answer=item.gold_answer)
+        run, g = grader(q, item.model_answer, prompt, model=model)
         if g.status == INFRA_FAILURE:
             return count, True
-        with records.open("a", encoding="utf-8") as f:
-            f.write(json.dumps(_record(item, run, g, prompt, model)) + "\n")
+        _append(records, _record(item, run, g, prompt, model))
         count += 1
     return count, False
 
@@ -202,9 +227,22 @@ def _rate(k: int, n: int) -> dict[str, Any]:
     return {"agree": k, "n": n, "rate": k / n if n else None, "ci95": list(ci) if ci else None}
 
 
-def report(items: list[GradedAnswer], records: dict[str, dict[str, Any]]) -> dict[str, Any]:
-    """Agreement with the human grades, counts and rates only, and the gate."""
-    done = [(a, records[a.key]) for a in items if a.key in records and finished(records[a.key])]
+def report(
+    items: list[GradedAnswer],
+    records: dict[str, dict[str, Any]],
+    *,
+    prompt_version: str,
+    model: str,
+) -> dict[str, Any]:
+    """Agreement with the human grades, counts and rates only, and the gate.
+
+    Only records by this prompt version and model count.
+    """
+    done = [
+        (a, records[a.key])
+        for a in items
+        if a.key in records and finished(records[a.key], prompt_version, model)
+    ]
     pairs = [(a.label, r.get("label") or FAILED) for a, r in done]
     matrix: dict[str, dict[str, int]] = {}
     for h, g in pairs:
@@ -232,7 +270,9 @@ def report(items: list[GradedAnswer], records: dict[str, dict[str, Any]]) -> dic
         "items": len(items),
         "finished": len(done),
         "grader_failed": sum(g == FAILED for _, g in pairs),
-        "prompt_versions": sorted({str(r.get("prompt_version")) for _, r in done}),
+        "prompt_version": prompt_version,
+        "model": model,
+        "stale": sum(a.key in records for a in items) - len(done),
         "kappa": k,
         "kappa_ci95": list(ci) if ci else None,
         "agreement": _rate(sum(h == g for h, g in pairs), len(pairs)),
@@ -266,16 +306,17 @@ def main(argv: list[str] | None = None) -> int:
         results = download_results(args.root)
         items = calibration_set(results) if args.set == "singlestore" else held_out_set(results)
         questions = {q.id: q for q in ds.questions}
+        prompt = load_prompt(PROMPT_PATH)
         graded, stopped = grade_items(
             items,
             questions,
             records,
-            load_prompt(PROMPT_PATH),
+            prompt,
             model=args.model,
             limit=args.limit,
             grader=grade,  # looked up here, so a test can stand in for the model
         )
-        rep = report(items, load_records(records))
+        rep = report(items, load_records(records), prompt_version=prompt.version, model=args.model)
         if args.report:
             args.report.parent.mkdir(parents=True, exist_ok=True)
             args.report.write_text(json.dumps(rep, indent=1) + "\n", encoding="utf-8")

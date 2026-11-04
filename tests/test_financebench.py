@@ -280,6 +280,7 @@ def test_result_files_are_fetched_checked_and_parsed(tmp_path: Path, remote: Rem
         "made-up answer",
     )
     assert (a2.label, a2.model_answer) == ("Refusal", "")  # a null answer reads as empty
+    assert a1.gold_answer == "$1.00"
 
 
 def test_a_tampered_result_file_is_refused(tmp_path: Path, remote: Remote) -> None:
@@ -294,6 +295,8 @@ def test_a_tampered_result_file_is_refused(tmp_path: Path, remote: Remote) -> No
     [
         [_result("q1", "Partly Right")],
         [_result("q1", "Refusal"), _result("q1", "Correct Answer")],
+        [_result("q1", "Refusal") | {"gold_answer": None}],
+        [_result("q1", "Refusal") | {"gold_answer": " "}],
     ],
 )
 def test_a_result_file_with_an_unknown_label_or_a_repeat_is_refused(

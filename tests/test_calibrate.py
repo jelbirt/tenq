@@ -27,10 +27,11 @@ from tenq.calibrate import (
 )
 from tenq.financebench import GradedAnswer, Question
 from tenq.grade import CORRECT, GRADED, INCORRECT, REFUSAL, Grade
-from tenq.llm import AgentRun
+from tenq.llm import DEFAULT_MODEL, AgentRun
 from tenq.qa import INFRA_FAILURE, MODEL_FAILURE
 
 PROMPT = Prompt("grade-test", "grade it")
+CURRENT = {"prompt_version": "grade-test", "model": DEFAULT_MODEL}
 
 
 def _q(qid: str) -> Question:
@@ -38,7 +39,10 @@ def _q(qid: str) -> Question:
 
 
 def _answers(source: str, labels: list[str]) -> list[GradedAnswer]:
-    return [GradedAnswer(source, f"q{i}", f"answer {i}", lab) for i, lab in enumerate(labels)]
+    return [
+        GradedAnswer(source, f"q{i}", f"answer {i}", lab, f"gold {i}")
+        for i, lab in enumerate(labels)
+    ]
 
 
 RESULTS = {
@@ -154,19 +158,20 @@ def test_a_record_cut_short_by_a_crash_is_graded_again(tmp_path: Path) -> None:
     records.write_text(lines[0] + "\n" + lines[1][:20])
     seen: list[str] = []
     assert grade_items(items, QUESTIONS, records, PROMPT, grader=_grader({}, seen))[0] == 11
+    assert len(load_records(records)) == 12
 
 
 def _records(items: list[GradedAnswer], label: Any = None) -> dict[str, dict[str, Any]]:
     return {
         a.key: {"key": a.key, "status": GRADED, "label": label(a) if label else a.label,
-                "prompt_version": "grade-test"}
+                "prompt_version": "grade-test", "model": DEFAULT_MODEL}
         for a in items
     }  # fmt: skip
 
 
 def test_full_agreement_passes_the_gate() -> None:
     items = calibration_set(RESULTS)
-    rep = report(items, _records(items))
+    rep = report(items, _records(items), **CURRENT)
     assert rep["kappa"] == pytest.approx(1.0) and rep["gate"] == {
         "kappa_at_least": 0.8,
         "non_refusal_agreement_at_least": 0.9,
@@ -180,15 +185,17 @@ def test_a_grader_failure_is_a_disagreement_in_its_own_column() -> None:
     items = calibration_set(RESULTS)
     recs = _records(items)
     first = items[0]
-    recs[first.key] = {"key": first.key, "status": MODEL_FAILURE, "label": None}
-    rep = report(items, recs)
+    recs[first.key] = {"key": first.key, "status": MODEL_FAILURE, "label": None, **CURRENT}
+    rep = report(items, recs, **CURRENT)
     assert rep["grader_failed"] == 1 and rep["matrix"][first.label][FAILED] == 1
     assert rep["agreement"]["agree"] == 11 and not rep["gate"]["passed"]
 
 
 def test_refusals_graded_incorrect_fail_on_kappa_alone() -> None:
     items = calibration_set(RESULTS)
-    rep = report(items, _records(items, lambda a: INCORRECT if a.label == REFUSAL else a.label))
+    rep = report(
+        items, _records(items, lambda a: INCORRECT if a.label == REFUSAL else a.label), **CURRENT
+    )
     assert rep["non_refusal_agreement"]["rate"] == 1.0
     assert rep["kappa"] < 0.8 and not rep["gate"]["passed"]
 
@@ -198,14 +205,14 @@ def test_the_gate_is_not_decided_until_every_item_is_finished() -> None:
     recs = _records(items)
     recs[items[3].key]["status"] = INFRA_FAILURE  # never written in practice, but not finished
     del recs[items[4].key]
-    rep = report(items, recs)
+    rep = report(items, recs, **CURRENT)
     assert rep["finished"] == 10 and rep["gate"]["decided"] is False
     assert rep["gate"]["passed"] is False and rep["kappa"] == pytest.approx(1.0)
 
 
 def test_the_single_store_comparison_counts_correct_by_source() -> None:
     items = calibration_set(RESULTS)
-    rep = report(items, _records(items, lambda a: CORRECT))
+    rep = report(items, _records(items, lambda a: CORRECT), **CURRENT)
     assert rep["per_source"][SINGLE_STORE[0]] == {"n": 4, "human_correct": 2, "grader_correct": 4}
 
 
@@ -213,7 +220,7 @@ def test_the_report_carries_no_answer_or_reason_text(tmp_path: Path) -> None:
     items = calibration_set(RESULTS)
     records = tmp_path / "cal.jsonl"
     grade_items(items, QUESTIONS, records, PROMPT, grader=_grader({}, []))
-    text = json.dumps(report(items, load_records(records)))
+    text = json.dumps(report(items, load_records(records), **CURRENT))
     assert "answer 0" not in text and "made-up reason" not in text and "q q0" not in text
 
 
@@ -258,3 +265,53 @@ def test_a_crash_logs_only_its_type(
     with caplog.at_level(logging.DEBUG):
         assert calibrate.main(["--records", str(cli / "r.jsonl")]) == 1
     assert "ValueError" in caplog.text and "answer 0" not in caplog.text and "$1" not in caplog.text
+
+
+def test_kappa_counts_a_grader_failure_as_a_disagreement_across_three_labels() -> None:
+    # 10 items; agree 7. Human margins C 4, I 3, R 3; grader C 4, I 3, R 2, failed 1.
+    # pe = (4*4 + 3*3 + 3*2) / 100 = 0.31, so kappa = (0.7 - 0.31) / 0.69
+    pairs = (
+        [(CORRECT, CORRECT)] * 3 + [(CORRECT, FAILED)]
+        + [(INCORRECT, INCORRECT)] * 2 + [(INCORRECT, CORRECT)]
+        + [(REFUSAL, REFUSAL)] * 2 + [(REFUSAL, INCORRECT)]
+    )  # fmt: skip
+    assert kappa(pairs) == pytest.approx(0.39 / 0.69)
+
+
+def test_records_from_another_prompt_version_or_model_are_stale(tmp_path: Path) -> None:
+    items = calibration_set(RESULTS)
+    records = tmp_path / "cal.jsonl"
+    grade_items(items, QUESTIONS, records, PROMPT, grader=_grader({}, []))
+    assert report(items, load_records(records), **CURRENT)["gate"]["decided"]
+    v2 = Prompt("grade-v2-test", "grade it again")
+    rep = report(items, load_records(records), prompt_version=v2.version, model=DEFAULT_MODEL)
+    assert (rep["finished"], rep["stale"], rep["gate"]["decided"]) == (0, 12, False)
+    rep = report(items, load_records(records), prompt_version="grade-test", model="haiku")
+    assert rep["finished"] == 0 and not rep["gate"]["passed"]
+    seen: list[str] = []
+    assert grade_items(items, QUESTIONS, records, v2, grader=_grader({}, seen))[0] == 12
+    rep = report(items, load_records(records), prompt_version=v2.version, model=DEFAULT_MODEL)
+    assert rep["finished"] == 12 and rep["gate"]["decided"]
+
+
+def test_the_grader_sees_the_gold_the_people_graded_against(tmp_path: Path) -> None:
+    golds: list[str] = []
+
+    def grader(q: Question, answer: str, prompt: Prompt, *, model: str) -> tuple[None, Grade]:
+        golds.append(q.answer)
+        return None, Grade(GRADED, CORRECT)
+
+    grade_items(calibration_set(RESULTS), QUESTIONS, tmp_path / "r.jsonl", PROMPT, grader=grader)
+    assert sorted(set(golds)) == ["gold 0", "gold 1", "gold 2", "gold 3"]
+
+
+@pytest.mark.parametrize("cut", [20, None])  # mid-record, or after the JSON but before its newline
+def test_a_line_left_open_by_a_crash_loses_no_later_record(tmp_path: Path, cut: int | None) -> None:
+    items = calibration_set(RESULTS)
+    records = tmp_path / "cal.jsonl"
+    grade_items(items, QUESTIONS, records, PROMPT, limit=2, grader=_grader({}, []))
+    first, second = records.read_text().splitlines()
+    records.write_text(first + "\n" + (second[:cut] if cut else second))
+    graded, _ = grade_items(items, QUESTIONS, records, PROMPT, grader=_grader({}, []))
+    assert graded == (11 if cut else 10)
+    assert len(load_records(records)) == 12
