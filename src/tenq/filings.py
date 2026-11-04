@@ -38,6 +38,7 @@ class FilingMeta:
     period: str  # ISO date the reporting period ends (an 8-K: the event date)
     url: str
     items: str = ""  # an 8-K's item numbers as EDGAR lists them, e.g. "2.02,9.01"
+    accepted: str = ""  # EDGAR's acceptance time, ISO with offset; "" when not known
 
     @property
     def doc(self) -> str:

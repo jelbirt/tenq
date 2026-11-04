@@ -10,6 +10,7 @@ import logging
 import math
 import os
 from collections.abc import Iterator
+from datetime import datetime
 from typing import Any, Protocol
 
 from tenq.filings import Fact, FilingMeta
@@ -39,6 +40,13 @@ class FilingSource(Protocol):
     def fetch(self, meta: FilingMeta) -> tuple[str, list[Fact]]:
         """The filing's main-document text and its undimensioned numeric facts."""
         ...
+
+
+def _accepted(value: Any) -> str:
+    """An aware acceptance time as ISO text, else "" (a naive or odd value is not trusted)."""
+    if isinstance(value, datetime) and value.tzinfo is not None:
+        return value.isoformat()
+    return ""
 
 
 def _opt_str(v: Any) -> str | None:
@@ -135,6 +143,7 @@ class EdgarSource:
                     period=str(f.period_of_report),
                     url=str(f.homepage_url),
                     items=(_opt_str(getattr(f, "items", None)) or "") if f.form == CURRENT else "",
+                    accepted=_accepted(getattr(f, "acceptance_datetime", None)),
                 )
             )
             if len(out) == limit:

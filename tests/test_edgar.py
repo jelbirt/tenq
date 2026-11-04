@@ -26,6 +26,7 @@ class FakeFiling:
     filing_date: str = "2026-11-03"
     period_of_report: str = "2026-11-03"
     homepage_url: str = "https://www.sec.gov/x"
+    acceptance_datetime: Any = None
     attachments: list[Att] = field(default_factory=list)
 
     def text(self) -> str:
@@ -99,3 +100,22 @@ def test_an_unreadable_or_empty_exhibit_keeps_the_8k_text(source: EdgarSource) -
     ]
     (meta,) = source.list_current("CRWD", 1)
     assert source.fetch_current(meta) == "FORM 8-K\n\nEXHIBIT 99.3\n\nLetter"
+
+
+def test_the_acceptance_time_is_kept_when_it_has_a_zone(source: EdgarSource) -> None:
+    from datetime import UTC, datetime
+
+    FakeCompany.filings = [
+        FakeFiling(
+            "8-K",
+            "0001535527-26-000040",
+            acceptance_datetime=datetime(2026, 11, 3, 21, 5, tzinfo=UTC),
+        ),
+        FakeFiling("8-K", "0001535527-26-000041", acceptance_datetime=datetime(2026, 11, 3, 21, 5)),
+        FakeFiling("8-K", "0001535527-26-000042", acceptance_datetime="2026-11-03"),
+    ]
+    assert [m.accepted for m in source.list_current("CRWD", 5)] == [
+        "2026-11-03T21:05:00+00:00",
+        "",
+        "",
+    ]
