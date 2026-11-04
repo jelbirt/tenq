@@ -90,7 +90,10 @@ def fake_claude(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
         " 'env': sorted(os.environ)},"
         " open(out + '.call', 'w'))\n"
         "time.sleep(float(os.environ.get('FAKE_SLEEP', '0')))\n"
+        "sys.stderr.write(os.environ.get('FAKE_STDERR', ''))\n"
         "sys.stdout.write(open(out).read())\n"
+        "sys.stdout.flush()\n"
+        "time.sleep(float(os.environ.get('FAKE_SLEEP_AFTER', '0')))\n"
         "sys.exit(int(os.environ.get('FAKE_EXIT', '0')))\n"
     )
     script.chmod(script.stat().st_mode | stat.S_IEXEC)
@@ -251,7 +254,7 @@ def test_call_failures_say_their_kind(fake_claude: Path, monkeypatch: pytest.Mon
     assert _call().failure == INFRA  # a clean stream but a non-zero exit
     monkeypatch.setenv("FAKE_EXIT", "0")
     monkeypatch.setenv("FAKE_SLEEP", "5")
-    assert _call(timeout=1).failure == MODEL
+    assert _call(timeout=1).failure == INFRA  # hung before the model said anything
     monkeypatch.setenv("PATH", "/nonexistent")
     assert _call().failure == INFRA
     monkeypatch.setenv("PATH", f"{fake_claude.parent / 'bin'}{os.pathsep}{os.environ['PATH']}")
@@ -263,14 +266,76 @@ def test_call_failures_say_their_kind(fake_claude: Path, monkeypatch: pytest.Mon
 def test_quiet_logs_carry_no_model_text(
     fake_claude: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
-    secret = "the answer is 1,577 million"
+    secret = "the answer is 4,321 widgets"
     fake_claude.write_text(_result(is_error=True, result=secret))
     monkeypatch.setenv("FAKE_EXIT", "1")
     with caplog.at_level(logging.DEBUG, logger="tenq.llm"):
         run = _call(log_detail=False)
     assert run.error is not None and secret in run.error  # kept for the private record
-    assert caplog.records and secret not in caplog.text and "1,577" not in caplog.text
+    assert caplog.records and secret not in caplog.text and "4,321" not in caplog.text
     caplog.clear()
     with caplog.at_level(logging.DEBUG, logger="tenq.llm"):
         _call()
     assert secret in caplog.text  # briefs keep the detail; their records are public anyway
+
+
+def test_a_timeout_after_the_model_started_is_the_models(
+    fake_claude: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake_claude.write_text(_events().rsplit("\n", 2)[0] + "\n")  # all but the result
+    monkeypatch.setenv("FAKE_SLEEP_AFTER", "5")
+    run = _call(timeout=1)
+    assert (run.failure, run.error) == (MODEL, "timed out after 1s")
+    assert run.tools_offered == ALLOWED and run.tool_calls  # the partial stream is kept
+
+
+def test_a_run_whose_server_never_started_is_infrastructure(fake_claude: Path) -> None:
+    fake_claude.write_text(_events([]))  # claude went on without tenq's tools
+    run = _call()
+    assert run.text is None and run.failure == INFRA and "not offered" in str(run.error)
+
+
+def test_an_api_error_on_the_last_message_is_infrastructure() -> None:
+    stream = _events(text="API Error: 529 Overloaded").replace(
+        '{"type": "assistant", "message": {"content": [{"type": "text", "text": "API Error',
+        '{"type": "assistant", "error": "server_error", "message": {"content": '
+        '[{"type": "text", "text": "API Error',
+    )
+    run = AgentRun(model="opus")
+    parse_stream(stream, run)
+    assert run.text is None and run.failure == INFRA and run.error == "api error: server_error"
+    assert not run.usage_limit
+
+
+def test_a_usage_limit_is_seen_without_a_result_event(
+    fake_claude: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    run = AgentRun(model="opus")
+    limited = _events().replace(
+        '{"type": "assistant", "message"',
+        '{"type": "assistant", "error": "rate_limit", "message"',
+        1,
+    )
+    parse_stream(limited.rsplit("\n", 2)[0], run)
+    assert (run.failure, run.usage_limit) == (INFRA, True)
+
+    fake_claude.write_text("")
+    monkeypatch.setenv("FAKE_EXIT", "1")
+    monkeypatch.setenv("FAKE_STDERR", "Claude usage limit reached")
+    run = _call()
+    assert (run.failure, run.usage_limit) == (INFRA, True)
+
+
+def test_quiet_logs_leave_out_stderr(
+    fake_claude: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    fake_claude.write_text("")
+    monkeypatch.setenv("FAKE_EXIT", "1")
+    monkeypatch.setenv("FAKE_STDERR", "quoted 4,321 widgets")
+    with caplog.at_level(logging.DEBUG, logger="tenq.llm"):
+        _call(log_detail=False)
+    assert caplog.records and "4,321" not in caplog.text
+    caplog.clear()
+    with caplog.at_level(logging.DEBUG, logger="tenq.llm"):
+        _call()
+    assert "4,321" in caplog.text

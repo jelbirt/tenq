@@ -16,10 +16,12 @@ Guardrails:
   result, no text) comes back as an AgentRun with `error` set and `text`
   None, so the caller FAILS OPEN to a numbers-only email.
 
-Each failure also says its kind. A model failure (MODEL: timed out, empty
-answer, out of turns) is the model's own result; an infrastructure failure
-(INFRA: CLI missing or exiting, auth, API errors, a missing init event, an
-unreadable stream, tools outside the allowlist) says nothing about the model.
+Each failure also says its kind. A model failure (MODEL: timed out after the
+model started, empty answer, out of turns) is the model's own result; an
+infrastructure failure (INFRA: CLI missing or exiting, auth, API errors, a
+hang before the model started, a missing init event, an unreadable stream,
+tools outside the allowlist, allowed tools never offered because tenq's
+server did not start) says nothing about the model.
 `usage_limit` marks an infrastructure failure from the plan's usage limit.
 Evals grade the first kind as a refusal and stop on the second.
 
@@ -29,6 +31,7 @@ for the trace and the run record.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import re
@@ -116,6 +119,7 @@ def parse_stream(stdout: str, run: AgentRun, times: Sequence[float] | None = Non
     result: dict[str, Any] | None = None
     saw_init = False
     limited = False
+    api_error: str | None = None  # on the last assistant message
     for i, line in enumerate(stdout.splitlines()):
         at = times[i] if times is not None and i < len(times) else None
         try:
@@ -133,7 +137,8 @@ def parse_stream(stdout: str, run: AgentRun, times: Sequence[float] | None = Non
         elif kind == "assistant":
             # the CLI marks an API failure on the message: "rate_limit",
             # "authentication_failed", ...
-            limited = limited or "rate_limit" in str(event.get("error") or "")
+            api_error = str(event.get("error") or "") or None
+            limited = limited or "rate_limit" in (api_error or "")
             # the text of every assistant message, not just the last: a long
             # answer split by an output-token continuation is otherwise cut
             for b in _blocks(event):
@@ -155,6 +160,7 @@ def parse_stream(stdout: str, run: AgentRun, times: Sequence[float] | None = Non
                         done.done_at = at
         elif kind == "result":
             result = event
+    run.usage_limit = limited
     if result is None:
         run.fail(INFRA, "no result event")
         return
@@ -171,11 +177,40 @@ def parse_stream(stdout: str, run: AgentRun, times: Sequence[float] | None = Non
         own = result.get("subtype") in MODEL_RESULT_SUBTYPES and not run.usage_limit
         run.fail(MODEL if own else INFRA, f"error result: {said}")
         return
+    if api_error:  # an API failure the result did not flag: its text is the CLI's, not the model's
+        run.fail(INFRA, f"api error: {api_error}")
+        return
     text = "".join(chunks).strip() or str(result.get("result") or "").strip()
     if not text:
         run.fail(MODEL, "empty response")
         return
     run.text = text
+
+
+class StreamTimeout(Exception):
+    """The process was killed at the timeout; carries what it had streamed."""
+
+    def __init__(self, stdout: str, times: list[float]) -> None:
+        super().__init__("timed out")
+        self.stdout, self.times = stdout, times
+
+
+def model_started(stdout: str) -> bool:
+    """Whether a stream got as far as the model: an init event, then an
+    assistant message. A hang before that is the CLI's or the API's."""
+    init = False
+    for line in stdout.splitlines():
+        try:
+            event = json.loads(line)
+        except ValueError:
+            continue
+        if not isinstance(event, dict):
+            continue
+        if event.get("type") == "system" and event.get("subtype") == "init":
+            init = True
+        elif event.get("type") == "assistant" and init and not event.get("error"):
+            return True
+    return False
 
 
 def _run_streaming(
@@ -184,7 +219,7 @@ def _run_streaming(
     """Run `cmd`, timestamping each stdout line as it arrives.
 
     Returns (stdout, arrival time per line, stderr, exit code); raises
-    TimeoutExpired after killing the process.
+    StreamTimeout, with the lines read so far, after killing the process.
     """
     proc = subprocess.Popen(
         cmd,
@@ -220,13 +255,16 @@ def _run_streaming(
         except BrokenPipeError:  # it exited before reading; its exit code says why
             pass
         code = proc.wait(timeout=timeout)
-    except BaseException:
+    except BaseException as exc:
         proc.kill()
         proc.wait()
-        raise
-    finally:
         for r in readers:
             r.join(timeout=5)
+        if isinstance(exc, subprocess.TimeoutExpired):
+            raise StreamTimeout("".join(lines), list(times)) from exc
+        raise
+    for r in readers:
+        r.join(timeout=5)
     return "".join(lines), times, "".join(err), code
 
 
@@ -267,8 +305,12 @@ def call_claude(
             stdout, times, stderr, code = _run_streaming(cmd, prompt, env, cwd, timeout)
         except FileNotFoundError:
             run.fail(INFRA, "claude CLI not installed")
-        except subprocess.TimeoutExpired:
-            run.fail(MODEL, f"timed out after {timeout}s")
+        except StreamTimeout as t:
+            with contextlib.suppress(Exception):  # the partial stream is for the record only
+                parse_stream(t.stdout, run, t.times)
+            # a model that took too long is the model's failure; a CLI or API
+            # that never got the model going is not
+            run.fail(MODEL if model_started(t.stdout) else INFRA, f"timed out after {timeout}s")
         except Exception as exc:  # never let the model path break a run
             run.fail(INFRA, f"{type(exc).__name__}: {exc}")
         else:
@@ -278,6 +320,8 @@ def call_claude(
                 run.fail(INFRA, f"unreadable stream: {type(exc).__name__}")
             if code != 0 and run.error is None:
                 run.fail(INFRA, f"exit {code}")
+            if code != 0 and USAGE_LIMIT.search(stderr):
+                run.usage_limit = True
             if run.error and code != 0:
                 # the CLI prints auth/config errors on stdout as well as stderr
                 if log_detail:
@@ -289,6 +333,9 @@ def call_claude(
     extra = sorted((set(run.tools_offered) | used) - set(allowed_tools))
     if extra:
         run.fail(INFRA, f"offered tools outside the allowlist: {extra}")
+    missing = sorted(set(allowed_tools) - set(run.tools_offered))
+    if missing and run.error is None:  # tenq's server did not start: the model had no tools
+        run.fail(INFRA, f"allowed tools not offered: {missing}")
     if run.error:
         shown = run.error if log_detail else run.error.split(":")[0]
         log.warning("claude run failed (%s): %s", run.failure, shown)
