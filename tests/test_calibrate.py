@@ -20,13 +20,13 @@ from tenq.calibrate import (
     held_out_set,
     kappa,
     kappa_interval,
-    load_records,
     report,
     run_order,
     wilson,
 )
 from tenq.financebench import GradedAnswer, Question
 from tenq.grade import CORRECT, GRADED, INCORRECT, REFUSAL, Grade
+from tenq.jsonl import load_records
 from tenq.llm import DEFAULT_MODEL, AgentRun
 from tenq.qa import INFRA_FAILURE, MODEL_FAILURE
 

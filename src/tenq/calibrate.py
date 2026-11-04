@@ -27,7 +27,6 @@ import hashlib
 import json
 import logging
 import math
-import os
 import random
 import sys
 import time
@@ -46,6 +45,7 @@ from tenq.financebench import (
     download_results,
 )
 from tenq.grade import GRADED, PROMPT_PATH, Grade, grade
+from tenq.jsonl import append, load_records
 from tenq.llm import DEFAULT_MODEL, AgentRun
 from tenq.qa import INFRA_FAILURE, MODEL_FAILURE
 
@@ -143,33 +143,6 @@ def finished(record: dict[str, Any], prompt_version: str, model: str) -> bool:
     )
 
 
-def _append(path: Path, record: dict[str, Any]) -> None:
-    """Append one JSON line, first ending a line a crash left open."""
-    with path.open("a+b") as f:
-        if f.tell():
-            f.seek(-1, os.SEEK_END)
-            if f.read(1) != b"\n":
-                f.write(b"\n")
-        f.write((json.dumps(record) + "\n").encode("utf-8"))
-        f.flush()
-        os.fsync(f.fileno())
-
-
-def load_records(path: Path) -> dict[str, dict[str, Any]]:
-    """The latest record per item; a line cut short by a crash is skipped."""
-    out: dict[str, dict[str, Any]] = {}
-    if not path.is_file():
-        return out
-    for line in path.read_text(encoding="utf-8").splitlines():
-        try:
-            rec = json.loads(line)
-        except ValueError:
-            continue
-        if isinstance(rec, dict) and isinstance(rec.get("key"), str):
-            out[rec["key"]] = rec
-    return out
-
-
 def _record(
     item: GradedAnswer, run: AgentRun | None, g: Grade, prompt: Prompt, model: str
 ) -> dict[str, Any]:
@@ -197,11 +170,14 @@ def grade_items(
     model: str = DEFAULT_MODEL,
     limit: int | None = None,
     grader: Grader = grade,
+    stop: Callable[[], bool] = lambda: False,
+    on_run: Callable[[AgentRun | None], None] = lambda run: None,
 ) -> tuple[int, bool]:
     """Grade unfinished items in run order, appending a record for each.
 
     Returns (graded this run, stopped on an infrastructure failure). An
     infrastructure failure is not recorded: that item is graded again later.
+    `stop` is asked before each item (a deadline); `on_run` sees every call.
     """
     done = {k for k, r in load_records(records).items() if finished(r, prompt.version, model)}
     records.parent.mkdir(parents=True, exist_ok=True)
@@ -209,15 +185,16 @@ def grade_items(
     for item in run_order(items):
         if item.key in done:
             continue
-        if limit is not None and count >= limit:
+        if (limit is not None and count >= limit) or stop():
             break
         # grade against the gold the people saw: the questions file has since
         # reformatted some golds and reversed one
         q = replace(questions[item.question_id], answer=item.gold_answer)
         run, g = grader(q, item.model_answer, prompt, model=model)
+        on_run(run)
         if g.status == INFRA_FAILURE:
             return count, True
-        _append(records, _record(item, run, g, prompt, model))
+        append(records, _record(item, run, g, prompt, model))
         count += 1
     return count, False
 
