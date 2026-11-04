@@ -83,3 +83,19 @@ def test_an_8k_text_carries_its_press_release_exhibits_only(source: EdgarSource)
     assert text == (
         "FORM 8-K\n\nEXHIBIT 99.1\n\nPress release: revenue grew\n\nEXHIBIT 99.2\n\nSlides"
     )
+
+
+def test_an_unreadable_or_empty_exhibit_keeps_the_8k_text(source: EdgarSource) -> None:
+    class Broken(Att):
+        def text(self) -> str:
+            raise ValueError("bad encoding")
+
+    FakeCompany.filings = [
+        FakeFiling(
+            "8-K",
+            "0001535527-26-000040",
+            attachments=[Broken("EX-99.1", ""), Att("EX-99.2", ""), Att("EX-99.3", "Letter")],
+        )
+    ]
+    (meta,) = source.list_current("CRWD", 1)
+    assert source.fetch_current(meta) == "FORM 8-K\n\nEXHIBIT 99.3\n\nLetter"

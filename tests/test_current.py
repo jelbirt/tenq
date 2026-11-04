@@ -100,3 +100,33 @@ def test_the_cli_lists_reports(
     monkeypatch.setattr(tenq.edgar, "EdgarSource", lambda: Source([NEW]))
     assert current.main(["crwd", "--since", "2026-11-01", "--root", str(tmp_path)]) == 0
     assert f"2026-11-03 {NEW.accession} 2.02 results of operations" in capsys.readouterr().out
+
+
+def test_an_8k_without_a_filing_date_is_a_note(tmp_path: Path) -> None:
+    undated = _meta("0001535527-26-000041", "")
+    got = sync_current(Source([undated, NEW]), FilingStore(tmp_path), "CRWD", date(2026, 11, 1))
+    assert got.reports == [NEW]
+    assert got.notes == [f"8-K {undated.accession} has no filing date"]
+
+
+def test_a_full_listing_since_the_date_says_older_ones_were_not_checked(tmp_path: Path) -> None:
+    got = sync_current(Source([NEW, MID]), FilingStore(tmp_path), "CRWD", date(2026, 11, 1), 2)
+    assert got.notes == ["more than 2 8-Ks since 2026-11-01 for CRWD; older ones not checked"]
+    short = sync_current(Source([NEW, OLD]), FilingStore(tmp_path), "CRWD", date(2026, 11, 1), 2)
+    assert short.notes == []  # the listing reached back past the date
+
+
+def test_a_failed_save_is_a_note(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    store = FilingStore(tmp_path)
+
+    def full(*args: object) -> None:
+        raise OSError("disk full")
+
+    monkeypatch.setattr(store, "save", full)
+    got = sync_current(Source([NEW]), store, "CRWD", date(2026, 11, 1))
+    assert got.reports == [] and got.notes == [f"8-K {NEW.accession} unavailable for CRWD"]
+
+
+def test_8k_indexes_are_tagged_apart_from_10q_ones(tmp_path: Path) -> None:
+    assert FilingStore(tmp_path).index_prefix("CRWD") == "tenq-crwd-t"
+    assert FilingStore(tmp_path, tag=current.CURRENT_TAG).index_prefix("CRWD") == "tenq-crwd-c"

@@ -88,10 +88,10 @@ def xerj_prefix(name: str, tag: str) -> str:
     return "tenq-" + "-".join(INDEX_WORD.findall(name.lower())) + "-" + tag
 
 
-def index_prefix(ticker: str) -> str:
+def index_prefix(ticker: str, tag: str = "t") -> str:
     if not TICKER.fullmatch(ticker):
         raise ValueError(f"not a ticker: {ticker!r}")
-    return xerj_prefix(ticker, "t")
+    return xerj_prefix(ticker, tag)
 
 
 def split_passages(doc: str, text: str) -> list[Passage]:
@@ -117,14 +117,15 @@ def split_passages(doc: str, text: str) -> list[Passage]:
 
 
 class FilingStore:
-    def __init__(self, root: Path) -> None:
+    def __init__(self, root: Path, tag: str = "t") -> None:
         self.root = root
+        self.tag = tag  # ends the store's xerj index prefix; "t" for 10-Q/10-K
 
     def text_dir(self, ticker: str) -> Path:
         return self.root / ticker / "text"
 
     def index_prefix(self, ticker: str) -> str:
-        return index_prefix(ticker)
+        return index_prefix(ticker, self.tag)
 
     def owns(self, ticker: str, doc: str) -> bool:
         """Whether a text file stem found by search is one of this ticker's filings."""

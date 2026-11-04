@@ -14,6 +14,8 @@ from typing import Any, Protocol
 
 from tenq.filings import Fact, FilingMeta
 
+log = logging.getLogger(__name__)
+
 FORMS = ("10-Q", "10-K")
 CURRENT = "8-K"
 EXHIBIT_PREFIX = "EX-99"  # press releases and other material an 8-K furnishes
@@ -108,6 +110,8 @@ class EdgarSource:
         return self._list(ticker, FORMS, limit)
 
     def list_current(self, ticker: str, limit: int) -> list[FilingMeta]:
+        # 8-K/A amendments are skipped like 10-Q/A: a correction worth a call is
+        # usually re-reported in an 8-K or the next 10-Q
         return self._list(ticker, (CURRENT,), limit)
 
     def _list(self, ticker: str, forms: tuple[str, ...], limit: int) -> list[FilingMeta]:
@@ -167,5 +171,11 @@ class EdgarSource:
             kind = str(getattr(att, "document_type", "") or "")
             if not kind.startswith(EXHIBIT_PREFIX):
                 continue
-            parts.append(f"EXHIBIT {kind.removeprefix('EX-')}\n\n{att.text()}")
+            try:  # one unreadable exhibit must not cost the 8-K's own text
+                body = att.text()
+            except Exception as exc:
+                log.warning("8-K exhibit %s unreadable (%s)", kind, type(exc).__name__)
+                continue
+            if body:  # a PDF or binary exhibit has no text
+                parts.append(f"EXHIBIT {kind.removeprefix('EX-')}\n\n{body}")
         return "\n\n".join(parts)

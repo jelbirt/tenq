@@ -2,6 +2,8 @@
 
 8-Ks are saved in their own store (default ./data/current) with the same layout and
 passage ids as 10-Q/10-K filings, so a citation to an 8-K is checked the same way.
+The store's search indexes carry their own tag ("c"), so a ticker's 8-K indexes
+never mix with its 10-Q/10-K ones.
 They carry no facts: the numbers tenq checks come from 10-Q/10-K tagged data only.
 """
 
@@ -21,6 +23,7 @@ log = logging.getLogger(__name__)
 
 DEFAULT_ROOT = REPO_ROOT / "data" / "current"
 LIST_DEPTH = 10
+CURRENT_TAG = "c"
 
 # Plain names for the 8-K items a daily call cares about (SEC Form 8-K instructions).
 ITEM_NAMES = {
@@ -74,20 +77,29 @@ def sync_current(
     except Exception as exc:
         log.warning("8-K listing failed for %s (%s)", ticker, type(exc).__name__)
         return Synced([], [], [f"8-K list unavailable for {ticker}"])
-    recent = [m for m in listed if date.fromisoformat(m.filed) >= since]
     reports: list[FilingMeta] = []
     new: list[FilingMeta] = []
     notes: list[str] = []
+    recent: list[FilingMeta] = []
+    for m in listed:
+        try:
+            filed = date.fromisoformat(m.filed)
+        except ValueError:
+            notes.append(f"8-K {m.accession} has no filing date")
+            continue
+        if filed >= since:
+            recent.append(m)
+    if listed and len(listed) == depth and len(recent) == depth:
+        notes.append(f"more than {depth} 8-Ks since {since} for {ticker}; older ones not checked")
     for meta in recent:
         if not store.has(meta.ticker, meta.accession):
             try:
-                text = source.fetch_current(meta)
+                store.save(meta, source.fetch_current(meta), [])
             except Exception as exc:
                 kind = type(exc).__name__
                 log.warning("8-K fetch failed %s %s (%s)", ticker, meta.accession, kind)
                 notes.append(f"8-K {meta.accession} unavailable for {ticker}")
                 continue
-            store.save(meta, text, [])
             new.append(meta)
         reports.append(meta)
     return Synced(reports, new, notes)
@@ -102,7 +114,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--root", type=Path, default=DEFAULT_ROOT)
     args = ap.parse_args(argv)
     logging.basicConfig(level=logging.WARNING, format="%(levelname)s %(name)s: %(message)s")
-    synced = sync_current(EdgarSource(), FilingStore(args.root), args.ticker.upper(), args.since)
+    store = FilingStore(args.root, tag=CURRENT_TAG)
+    synced = sync_current(EdgarSource(), store, args.ticker.upper(), args.since)
     for note in synced.notes:
         print(f"note: {note}")
     for meta in synced.reports:
