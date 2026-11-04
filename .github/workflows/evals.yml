@@ -36,12 +36,12 @@ jobs:
       - uses: astral-sh/setup-uv@v6
         with: {python-version: "3.12", enable-cache: true}
       - run: uv sync --locked
-      - name: FinanceBench download and extracted text
+      - name: restore FinanceBench download and extracted text
         # public dataset files and their extracted text only, never answers or grades
-        uses: actions/cache@v4
+        uses: actions/cache/restore@v4
         with:
           path: data/financebench
-          key: financebench-${{ hashFiles('config/financebench.json') }}-${{ github.run_id }}
+          key: financebench-${{ hashFiles('config/financebench.json') }}-start
           restore-keys: financebench-${{ hashFiles('config/financebench.json') }}-
       - name: install xerj
         run: |
@@ -64,12 +64,23 @@ jobs:
           CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
         # prints counts only; exit 2 is a night stopped by infrastructure, still committed
         run: uv run --locked python -m tenq.evals --state evals-state --hours "${HOURS:-4.5}"
+      - name: save FinanceBench download and extracted text
+        # saved even after a stopped night, under a key that changes only when
+        # a new document was extracted, so an unchanged night saves nothing
+        if: ${{ always() }}
+        uses: actions/cache/save@v4
+        with:
+          path: data/financebench
+          key: financebench-${{ hashFiles('config/financebench.json') }}-${{ hashFiles('data/financebench/docs/**') }}
       - name: commit the night to the evals repo
         if: ${{ always() }}
         working-directory: evals-state
         run: |
           git config user.name tenq-bot
           git config user.email bot@users.noreply.github.com
+          # records are append-only lines: two nights' appends merge without a conflict
+          grep -qxF '*.jsonl merge=union' .gitattributes 2>/dev/null \
+            || echo '*.jsonl merge=union' >> .gitattributes
           git add -A
           if git diff --cached --quiet; then
             echo "nothing new"
@@ -84,4 +95,7 @@ jobs:
             git rebase --abort 2>/dev/null || true
             sleep 5
           done
+          # never lose a night that was paid for: keep it on its own branch to merge by hand
+          git push -q origin "HEAD:refs/heads/night-${GITHUB_RUN_ID}"
+          echo "::warning::night kept on branch night-${GITHUB_RUN_ID} of the evals repo"
           exit 1

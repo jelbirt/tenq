@@ -16,13 +16,18 @@ for f in scripts/*.sh; do
   bash -n "$f"
 done
 
-# Eval answers and grades are private: the eval workflow stays read only and
-# never uploads an artifact (it writes to the private evals repo instead).
+# Eval answers and grades are private: the eval workflow stays read only, never
+# uploads an artifact, and names the private checkout in one path only (its
+# checkout step); every cache holds data/financebench and nothing else.
 evals=.github/workflows/evals.yml
 if [ -f "$evals" ]; then
-  if grep -Eq 'upload-artifact|contents: *write|: *write-all' "$evals" \
-    || ! grep -Eq '^  contents: read$' "$evals"; then
-    echo "checks.sh: $evals must be read only and upload no artifact" >&2
+  if grep -Eq 'upload-artifact|:[[:space:]]*write' "$evals" \
+    || ! grep -Eq '^  contents: read$' "$evals" \
+    || [ "$(grep -Ec 'path:.*evals-state' "$evals")" != 1 ] \
+    || ! awk '/uses: actions\/cache/ { c = 1; next }
+              c && /path:/ { if ($0 !~ /path: data\/financebench$/) bad = 1; c = 0 }
+              END { exit bad }' "$evals"; then
+    echo "checks.sh: $evals must be read only, upload no artifact, cache no evals-state" >&2
     exit 1
   fi
 fi
