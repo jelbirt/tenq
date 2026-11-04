@@ -5,19 +5,22 @@
 # the call; anything that needs a threshold (how big a move is, whether news
 # is already in the price) is decided there, in code, not asked here.
 #
-# "Recent" means an 8-K or headline whose printed age is 7 days old or less;
-# the pack keeps 8-Ks for 30 days, so older items are context only.
+# "Recent" is decided in code: the pack prints recent 8-Ks and headlines
+# (7 days old or less) in their own sections, apart from older context.
+#
+# Jev leans toward earlier options, so every choice lists its "nothing
+# here" label first, and the adapter rotates choice labels and reverses
+# score levels across the three repeats to cancel the lean.
 #
 # Types (OpenRouter System One): noul is the probability a statement is
 # true; choice picks one label from criteria; score picks a level from an
 # ordered list (0 is the first). Changing any question bumps the version.
-version: jev-q1
+version: jev-q2
 questions:
   material:
     type: noul
     instructions: >-
-      Does any recent headline or 8-K (7 days old or less, by its printed age)
-      report something that could change the company's revenue, profit or risk
+      Does any item in the recent 8-K or recent headline sections report something that could change the company's revenue, profit or risk
       by more than a routine amount (results, guidance, a large deal, an
       acquisition, a security incident, a lawsuit, an executive departure, an
       index change)?
@@ -27,34 +30,37 @@ questions:
   direction:
     type: choice
     instructions: >-
-      Taken together, is the information in the recent headlines and 8-Ks
-      (7 days old or less) good or bad for this company's business (not for
-      its stock price)?
+      Taken together, is the information in the recent 8-K and recent headline
+      sections good or bad for this company's business (not for its stock
+      price)?
     criteria:
-      good: Mostly good for the business.
-      bad: Mostly bad for the business.
-      mixed: Real good and bad items that roughly offset.
       neutral: Nothing recent that moves the business either way.
+      mixed: Real good and bad items that roughly offset.
+      bad: Mostly bad for the business.
+      good: Mostly good for the business.
   source:
     type: choice
     instructions: >-
-      What is the strongest kind of evidence behind the most important recent
-      item (7 days old or less)?
+      What is the strongest kind of evidence behind the most important item
+      in the recent 8-K and recent headline sections?
     criteria:
-      reported: Reported results or a filed document (10-Q, 10-K, 8-K).
-      company: A company announcement or guidance.
-      reporting: News reporting of a specific event.
-      opinion: Analyst or columnist opinion, previews, or speculation.
       none: There is no recent item.
+      opinion: Analyst or columnist opinion, previews, or speculation.
+      reporting: News reporting of a specific event.
+      company: A company announcement or guidance.
+      reported: Reported results or a filed document (10-Q, 10-K, 8-K).
   guidance:
     type: choice
     instructions: >-
-      Did the company change its outlook (guidance) in the facts given?
+      Did the company give or change its outlook (guidance) in the recent 8-K
+      or recent headline sections? Ignore guidance in older items.
     criteria:
-      raised: Guidance was raised.
-      lowered: Guidance was lowered.
+      none: No recent item gives guidance.
       kept: Guidance was reaffirmed.
-      none: No guidance appears in the facts.
+      issued: New guidance was given with nothing earlier to compare.
+      mixed: Some figures were raised and others lowered.
+      lowered: Guidance was lowered.
+      raised: Guidance was raised.
   fundamentals:
     # Rules ignore this answer when the pack has no fin: numbers.
     type: score
@@ -70,18 +76,9 @@ questions:
   risk:
     type: noul
     instructions: >-
-      Is there a recent risk event for this company (7 days old or less, by
-      its printed age): a lawsuit, investigation, outage or breach, a
+      Does the recent 8-K or recent headline section report a risk event for
+      this company: a lawsuit, investigation, outage or breach, a
       downgrade, an executive leaving, or a customer loss?
     criteria:
       "true": A recent risk event appears.
       "false": No recent risk event appears.
-  catalyst:
-    type: noul
-    instructions: >-
-      Do the facts name a specific upcoming company event with a date (an
-      earnings date, an investor day, a product launch, an index change taking
-      effect)?
-    criteria:
-      "true": An upcoming dated company event is named.
-      "false": No upcoming dated event is named.

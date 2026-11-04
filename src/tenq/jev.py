@@ -70,11 +70,41 @@ class Question:
             return [str(i) for i in range(len(self.criteria))]
         return []
 
-    def to_request(self) -> dict[str, Any]:
+    def to_request(self, repeat: int = 0) -> dict[str, Any]:
+        """The question as sent on one repeat, with its options moved to cancel position bias.
+
+        Jev leans toward earlier options, so each repeat starts a choice's
+        labels at a different place, and odd repeats list a score's levels in
+        reverse (`unflip` maps those answers back).
+        """
         body: dict[str, Any] = {"type": self.type, "instructions": self.instructions}
-        if self.criteria is not None:
-            body["criteria"] = self.criteria
+        criteria = self.criteria
+        if self.type == "choice":
+            items = list(criteria.items())
+            shift = repeat % len(items)
+            criteria = dict(items[shift:] + items[:shift])
+        elif self.type == "score" and repeat % 2:
+            criteria = list(reversed(criteria))
+        if criteria is not None:
+            body["criteria"] = criteria
         return body
+
+    def unflip(self, raw: Any, repeat: int) -> Any:
+        """A score answer from a reversed repeat, mapped back to the file's level order."""
+        if self.type != "score" or not repeat % 2 or not isinstance(raw, dict):
+            return raw
+        top = len(self.criteria) - 1
+        out = dict(raw)
+        level = _finite(raw.get("score"))
+        out["score"] = top - level if level is not None else raw.get("score")
+        probs = raw.get("probabilities")
+        if isinstance(probs, dict):
+            flipped: dict[str, Any] = {}
+            for k, v in probs.items():
+                if str(k).isascii() and str(k).isdigit() and int(str(k)) <= top:
+                    flipped[str(top - int(str(k)))] = v
+            out["probabilities"] = flipped
+        return out
 
 
 @dataclass(frozen=True)
@@ -82,8 +112,12 @@ class QuestionSet:
     version: str
     questions: tuple[Question, ...]
 
-    def to_request(self) -> dict[str, Any]:
-        return {q.key: q.to_request() for q in self.questions}
+    def to_request(self, repeat: int = 0) -> dict[str, Any]:
+        return {q.key: q.to_request(repeat) for q in self.questions}
+
+    def unflip(self, answers: Mapping[str, Any], repeat: int) -> dict[str, Any]:
+        by_key = {q.key: q for q in self.questions}
+        return {k: by_key[k].unflip(v, repeat) if k in by_key else v for k, v in answers.items()}
 
 
 def load_questions(path: Path = QUESTIONS_PATH) -> QuestionSet:
@@ -142,6 +176,11 @@ class Answer:
     probabilities: choice and score, the mean per label (levels as "0".."n-1").
     spread: max minus min across repeats of the headline number (noul
     probability, choice top-label probability, score level); 0 for one repeat.
+    margin: choice only, the winning label's mean probability less the
+    runner-up's (how decisive the average is); None for noul and score.
+    agreed: repeats whose own answer matches `value` (choice: the same top
+    label; score: the same level when rounded half up; noul: the same side
+    of 0.5).
     """
 
     key: str
@@ -150,6 +189,8 @@ class Answer:
     probabilities: dict[str, float]
     spread: float
     repeats: int
+    margin: float | None = None
+    agreed: int = 0
 
     def to_dict(self) -> dict[str, Any]:
         return vars(self).copy()
@@ -168,6 +209,7 @@ class Result:
     duration_ms: int = 0
     errors: list[str] = field(default_factory=list)  # one per failed request
     notes: list[str] = field(default_factory=list)  # e.g. the state was cut
+    down: bool = False  # the service or the key failed: skip Jev for the rest of the run
     error: str | None = None  # set when no usable answer came back
 
     def to_dict(self) -> dict[str, Any]:
@@ -176,10 +218,20 @@ class Result:
         return out
 
 
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    """A redirect comes back as its status: urllib would resend the key to any host."""
+
+    def redirect_request(self, *args: Any, **kwargs: Any) -> None:
+        return None
+
+
+_OPENER = urllib.request.build_opener(_NoRedirect)
+
+
 def _post(url: str, headers: dict[str, str], body: bytes) -> tuple[int, str]:
     req = urllib.request.Request(url, data=body, headers=headers, method="POST")
     try:
-        with urllib.request.urlopen(req, timeout=TIMEOUT_S) as resp:
+        with _OPENER.open(req, timeout=TIMEOUT_S) as resp:
             return int(resp.status), resp.read().decode("utf-8", "replace")
     except urllib.error.HTTPError as exc:
         return exc.code, exc.read().decode("utf-8", "replace")
@@ -247,12 +299,24 @@ def average(questions: QuestionSet, responses: list[Mapping[str, Any]]) -> dict[
                 else {}
             )
             if q.type == "choice":
-                # ties go to the earlier label, as the question file orders them
-                value = max(q.labels(), key=lambda label: (probs[label], -q.labels().index(label)))
+                # max keeps the first of equal labels: the file lists "nothing here" first
+                value = max(q.labels(), key=lambda label: probs[label])
                 heads = [p.get(str(value), 0.0) for _, p in got]
             else:
                 value = fmean(heads)
-        out[q.key] = Answer(q.key, q.type, value, probs, max(heads) - min(heads), len(got))
+        margin: float | None = None
+        if q.type == "noul":
+            agreed = sum((h >= 0.5) == (float(value) >= 0.5) for h in heads)
+        elif q.type == "choice":
+            ranked = sorted(probs.values(), reverse=True)
+            margin = ranked[0] - ranked[1]
+            agreed = sum(max(q.labels(), key=lambda label: p[label]) == value for _, p in got)
+        else:
+            # half up, not Python's half-to-even, so 0.5 and 1.5 round alike
+            agreed = sum(math.floor(h + 0.5) == math.floor(float(value) + 0.5) for h in heads)
+        out[q.key] = Answer(
+            q.key, q.type, value, probs, max(heads) - min(heads), len(got), margin, agreed
+        )
     return out
 
 
@@ -276,14 +340,18 @@ def ask(
     if len(state) > MAX_STATE_CHARS:
         state = state[:MAX_STATE_CHARS]
         result.notes.append(f"state cut to {MAX_STATE_CHARS} characters")
-    body: dict[str, Any] = {"model": model, "state": state, "questions": questions.to_request()}
-    if session_id:
-        body["session_id"] = session_id[:256]
-    data = json.dumps(body).encode()
     headers = {"Authorization": f"Bearer {key}", "Content-Type": "application/json"}
     responses: list[Mapping[str, Any]] = []
     started = time.monotonic()
     for i in range(repeats):
+        body: dict[str, Any] = {
+            "model": model,
+            "state": state,
+            "questions": questions.to_request(i),
+        }
+        if session_id:
+            body["session_id"] = session_id[:256]
+        data = json.dumps(body).encode()
         for attempt in range(ATTEMPTS):
             status, text = _request(post, headers, data)
             if (status in RETRY_CODES or status == 0) and attempt + 1 < ATTEMPTS:
@@ -297,9 +365,10 @@ def ask(
             # a bad request, key or credit fails the same way again, and a
             # service still down after its retry would only spend the run's time
             if status in FINAL_CODES or status == 0 or status >= 500:
+                result.down = status in {0, 401, 402, 403} or status >= 500
                 break
             continue
-        responses.append(parsed["answers"])
+        responses.append(questions.unflip(parsed["answers"], i))
         model_name = parsed.get("model")
         if isinstance(model_name, str) and MODEL_NAME.fullmatch(model_name):
             result.resolved_model = model_name

@@ -48,11 +48,23 @@ def key(monkeypatch: pytest.MonkeyPatch) -> str:
     return "sk-or-test-key"
 
 
-def _answers(noul: float, choice: str, probs: dict[str, float], score: float) -> dict[str, Any]:
+def _answers(
+    noul: float,
+    choice: str,
+    probs: dict[str, float],
+    score: float,
+    levels: dict[str, float] | None = None,
+) -> dict[str, Any]:
+    """One reply. On odd repeats the score levels were sent reversed, so a
+    reply means level 0 as the file's last level: pass those as Jev sees them."""
     return {
         "material": {"type": "noul", "noul": noul},
         "direction": {"type": "choice", "choice": choice, "probabilities": probs},
-        "trend": {"type": "score", "score": score, "probabilities": {"0": 0.1, "1": 0.2, "2": 0.7}},
+        "trend": {
+            "type": "score",
+            "score": score,
+            "probabilities": levels or {"0": 0.1, "1": 0.2, "2": 0.7},
+        },
     }
 
 
@@ -85,8 +97,8 @@ def _ask(questions: QuestionSet, server: Server, **kw: Any) -> jev.Result:
 
 def test_the_committed_question_file_loads() -> None:
     q = load_questions()
-    assert q.version == "jev-q1"
-    assert len(q.questions) == 7
+    assert q.version == "jev-q2"
+    assert len(q.questions) == 6
     assert {x.type for x in q.questions} == {"noul", "choice", "score"}
     assert "\u2014" not in jev.QUESTIONS_PATH.read_text(encoding="utf-8")
 
@@ -148,7 +160,16 @@ def test_no_key_is_no_call(questions: QuestionSet, monkeypatch: pytest.MonkeyPat
 def test_each_question_is_asked_three_times_and_averaged(questions: QuestionSet) -> None:
     server = Server(
         _ok(_answers(0.9, "good", {"good": 0.8, "bad": 0.1, "neutral": 0.1}, 2.0)),
-        _ok(_answers(0.6, "good", {"good": 0.6, "bad": 0.3, "neutral": 0.1}, 1.5)),
+        # repeat 2 saw the levels reversed: its 0.5 is the file's 1.5
+        _ok(
+            _answers(
+                0.6,
+                "good",
+                {"good": 0.6, "bad": 0.3, "neutral": 0.1},
+                0.5,
+                {"0": 0.7, "1": 0.2, "2": 0.1},
+            )
+        ),
         _ok(_answers(0.6, "bad", {"good": 0.4, "bad": 0.5, "neutral": 0.1}, 1.0)),
     )
     result = _ask(questions, server, session_id="run-1")
@@ -159,18 +180,29 @@ def test_each_question_is_asked_three_times_and_averaged(questions: QuestionSet)
     assert body == {
         "model": "jev-latest",
         "state": "Facts for CrowdStrike (CRWD).",
-        "questions": questions.to_request(),
+        "questions": questions.to_request(0),
         "session_id": "run-1",
     }
+    sent = [c[2]["questions"] for c in server.calls]
+    assert [list(q["direction"]["criteria"]) for q in sent] == [
+        ["good", "bad", "neutral"],
+        ["bad", "neutral", "good"],
+        ["neutral", "good", "bad"],
+    ]
+    assert [q["trend"]["criteria"][0] for q in sent] == ["Worse.", "Better.", "Worse."]
     material = result.answers["material"]
     assert material.value == pytest.approx(0.7) and material.spread == pytest.approx(0.3)
     direction = result.answers["direction"]
     assert direction.value == "good"
     assert direction.probabilities == pytest.approx({"good": 0.6, "bad": 0.3, "neutral": 0.1})
     assert direction.spread == pytest.approx(0.4)  # good's probability: 0.8 down to 0.4
+    assert direction.margin == pytest.approx(0.3)  # good 0.6 against bad 0.3
+    assert direction.agreed == 2  # the third repeat picked bad
+    assert material.margin is None and material.agreed == 3
     trend = result.answers["trend"]
     assert trend.value == pytest.approx(1.5) and trend.spread == pytest.approx(1.0)
     assert trend.probabilities == pytest.approx({"0": 0.1, "1": 0.2, "2": 0.7})
+    assert trend.agreed == 2  # levels 2, 1.5 and 1 round half up to 2, 2, 1; the mean 1.5 to 2
     assert result.resolved_model == "typesafe/jev-1.13-20260917"
     assert (result.input_tokens, result.output_tokens) == (1500, 210)
     assert result.cost == pytest.approx(0.00006)
@@ -220,6 +252,7 @@ def test_a_service_still_down_after_its_retry_ends_the_repeats(
     assert len(server.calls) == 2 and slept == [2.0]  # one retry, no sleep after the last
     assert result.errors == [error]
     assert result.error == f"Jev gave no usable answer ({error})"
+    assert result.down  # the caller skips Jev for the rest of the run
 
 
 @pytest.mark.parametrize("status", [400, 404, 413])
@@ -227,6 +260,7 @@ def test_a_request_the_service_refuses_is_not_repeated(questions: QuestionSet, s
     server = Server((status, "{}"))
     result = _ask(questions, server)
     assert len(server.calls) == 1 and result.errors == [f"HTTP {status}"]
+    assert not result.down  # this request was bad; the next stock's may not be
 
 
 @pytest.mark.parametrize("status", [401, 402, 403])
@@ -235,6 +269,7 @@ def test_a_bad_key_or_no_credit_stops_at_once(questions: QuestionSet, status: in
     result = _ask(questions, server)
     assert len(server.calls) == 1
     assert result.answers == {} and result.error == f"Jev gave no usable answer (HTTP {status})"
+    assert result.down
 
 
 @pytest.mark.parametrize(
@@ -379,3 +414,48 @@ def test_the_result_is_saved_as_plain_json(questions: QuestionSet) -> None:
     assert saved["version"] == "test-q1"
     assert saved["answers"]["direction"]["value"] == "good"
     assert saved["answers"]["material"]["probabilities"] == {}
+
+
+def test_a_reversed_score_reply_is_mapped_back(questions: QuestionSet) -> None:
+    (trend,) = [q for q in questions.questions if q.key == "trend"]
+    raw = {"score": 0.0, "probabilities": {"0": 0.6, "1": 0.3, "2": 0.1, "9": 1.0, "x": 1.0}}
+    assert trend.unflip(raw, 1) == {"score": 2.0, "probabilities": {"2": 0.6, "1": 0.3, "0": 0.1}}
+    assert trend.unflip(raw, 2) is raw  # even repeats were sent in file order
+    assert trend.unflip({"score": "high"}, 1) == {"score": "high"}  # left for _one to drop
+
+
+def test_varied_score_replies_average_in_file_order(questions: QuestionSet) -> None:
+    server = Server(
+        _ok(_answers(0.5, "good", {"good": 1.0}, 2.0, {"0": 0.0, "1": 0.2, "2": 0.8})),
+        _ok(_answers(0.5, "good", {"good": 1.0}, 0.0, {"0": 0.9, "1": 0.1, "2": 0.0})),
+        _ok(_answers(0.5, "good", {"good": 1.0}, 2.0, {"0": 0.0, "1": 0.0, "2": 1.0})),
+    )
+    trend = _ask(questions, server).answers["trend"]
+    assert trend.value == pytest.approx(2.0) and trend.spread == 0.0 and trend.agreed == 3
+    assert trend.probabilities == pytest.approx({"0": 0.0, "1": 0.1, "2": 0.9})
+
+
+def test_a_redirect_is_never_followed_with_the_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    import email.message
+    import io
+    import urllib.error
+    import urllib.request
+
+    seen: list[str] = []
+
+    class Opener:
+        def open(self, req: Any, timeout: float) -> Any:
+            seen.append(req.full_url)
+            hdrs = email.message.Message()
+            raise urllib.error.HTTPError(req.full_url, 307, "moved", hdrs, io.BytesIO(b"{}"))
+
+    monkeypatch.setattr(jev, "_OPENER", Opener())
+    assert jev._post(jev.URL, {"Authorization": "Bearer k"}, b"{}") == (307, "{}")
+    assert seen == [jev.URL]
+    monkeypatch.undo()
+    redirects = [
+        h
+        for h in vars(jev._OPENER)["handlers"]
+        if isinstance(h, urllib.request.HTTPRedirectHandler)
+    ]
+    assert [type(h) for h in redirects] == [jev._NoRedirect]
