@@ -1,0 +1,85 @@
+# Jev's questions about one stock's facts pack. Each is narrow on purpose:
+# Jev answers typed questions well and open "what should I do" questions
+# badly, and it is weak at arithmetic and dates, so every number and every
+# item's age was computed in code. Rules (task 6) combine the answers into
+# the call; anything that needs a threshold (how big a move is, whether news
+# is already in the price) is decided there, in code, not asked here.
+#
+# "Recent" is decided in code: the pack prints recent 8-Ks and headlines
+# (7 days old or less) in their own sections, apart from older context.
+#
+# Jev leans toward earlier options, so every choice lists its "nothing
+# here" label first, and the adapter asks each choice once per label with
+# every label shown first exactly once, and each score as often reversed as
+# in file order, so the lean cancels and is measured (see src/tenq/jev.py).
+#
+# Types (OpenRouter System One): noul is the probability a statement is
+# true; choice picks one label from criteria; score picks a level from an
+# ordered list (0 is the first). Changing any question bumps the version.
+version: jev-q2
+questions:
+  material:
+    type: noul
+    instructions: >-
+      Does any item in the recent 8-K or recent headline sections report something that could change the company's revenue, profit or risk
+      by more than a routine amount (results, guidance, a large deal, an
+      acquisition, a security incident, a lawsuit, an executive departure, an
+      index change)?
+    criteria:
+      "true": At least one recent item is material news about this company.
+      "false": Only routine items, opinion pieces, older items, or nothing.
+  direction:
+    type: choice
+    instructions: >-
+      Taken together, is the information in the recent 8-K and recent headline
+      sections good or bad for this company's business (not for its stock
+      price)?
+    criteria:
+      neutral: Nothing recent that moves the business either way.
+      mixed: Real good and bad items that roughly offset.
+      bad: Mostly bad for the business.
+      good: Mostly good for the business.
+  source:
+    type: choice
+    instructions: >-
+      What is the strongest kind of evidence behind the most important item
+      in the recent 8-K and recent headline sections?
+    criteria:
+      none: There is no recent item.
+      opinion: Analyst or columnist opinion, previews, or speculation.
+      reporting: News reporting of a specific event.
+      company: A company announcement or guidance.
+      reported: Reported results or a filed document (10-Q, 10-K, 8-K).
+  guidance:
+    type: choice
+    instructions: >-
+      Did the company give or change its outlook (guidance) in the recent 8-K
+      or recent headline sections? Ignore guidance in older items.
+    criteria:
+      none: No recent item gives guidance.
+      kept: Guidance was reaffirmed.
+      issued: New guidance was given with nothing earlier to compare.
+      mixed: Some figures were raised and others lowered.
+      lowered: Guidance was lowered.
+      raised: Guidance was raised.
+  fundamentals:
+    # Rules ignore this answer when the pack has no fin: numbers.
+    type: score
+    instructions: >-
+      From the latest 10-Q or 10-K numbers (growth from a year ago, margins,
+      cash flow), how is the business trending?
+    criteria:
+      - Clearly worsening.
+      - Somewhat worsening.
+      - Steady.
+      - Somewhat improving.
+      - Clearly improving.
+  risk:
+    type: noul
+    instructions: >-
+      Does the recent 8-K or recent headline section report a risk event for
+      this company: a lawsuit, investigation, outage or breach, a
+      downgrade, an executive leaving, or a customer loss?
+    criteria:
+      "true": A recent risk event appears.
+      "false": No recent risk event appears.
