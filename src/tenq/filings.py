@@ -20,6 +20,8 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 
 MAX_PASSAGE_LINES = 40
+TICKER = re.compile(r"[A-Z][A-Z0-9.\-]{0,9}")
+INDEX_WORD = re.compile(r"[a-z0-9]+")
 PASSAGE_ID = re.compile(
     r"^(?P<doc>[A-Z][A-Z0-9.\-]*-[0-9]{10}-[0-9]{2}-[0-9]{6}):(?P<line>[0-9]+)$", re.ASCII
 )
@@ -78,6 +80,19 @@ def normalise_text(text: str) -> str:
     return "\n".join(out) + "\n"
 
 
+def xerj_prefix(name: str, tag: str) -> str:
+    """xerj's own prefix form ([a-z0-9] runs joined by "-"), ended with "-<tag>"
+    so `<prefix>-*` for BRK can never match BRK.B's `tenq-brk-b-t-*` indices,
+    and a ticker's indices never match a document's."""
+    return "tenq-" + "-".join(INDEX_WORD.findall(name.lower())) + "-" + tag
+
+
+def index_prefix(ticker: str) -> str:
+    if not TICKER.fullmatch(ticker):
+        raise ValueError(f"not a ticker: {ticker!r}")
+    return xerj_prefix(ticker, "t")
+
+
 def split_passages(doc: str, text: str) -> list[Passage]:
     passages: list[Passage] = []
     block: list[str] = []
@@ -106,6 +121,13 @@ class FilingStore:
 
     def text_dir(self, ticker: str) -> Path:
         return self.root / ticker / "text"
+
+    def index_prefix(self, ticker: str) -> str:
+        return index_prefix(ticker)
+
+    def owns(self, ticker: str, doc: str) -> bool:
+        """Whether a text file stem found by search is one of this ticker's filings."""
+        return doc.rsplit("-", 3)[0] == ticker
 
     def _dir(self, ticker: str, accession: str) -> Path:
         return self.root / ticker / accession

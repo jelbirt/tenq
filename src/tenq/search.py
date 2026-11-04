@@ -1,10 +1,12 @@
-"""Text search over saved filings with xerj: lexical (BM25) passages with file:line.
+"""Text search over saved text with xerj: lexical (BM25) passages with file:line.
 
 xerj runs as a local node on loopback for the length of a job. `xerj autoindex`
-indexes a ticker's text directory; a query is a BM25 `match` on the passage
-body. xerj chunks files its own way, so each hit's file and start line is
-mapped back to the tenq passage that contains it: the ids a brief cites are
-always tenq's, never xerj's.
+indexes one text directory (a ticker's filings, or one FinanceBench document);
+a query is a BM25 `match` on the chunk text. xerj picks its own schema per
+corpus (the text field is `body` for some, `text` for others), so the field is
+read from the index mapping. xerj chunks files its own way,
+so each hit's file and start line is mapped back to the tenq passage that
+contains it: the ids a brief or an answer cites are always tenq's, never xerj's.
 """
 
 from __future__ import annotations
@@ -23,18 +25,18 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Protocol
 
 from tenq.env import MODEL_ENV, PRIVATE_ENV, scrubbed
-from tenq.filings import FilingStore
+from tenq.filings import FilingStore, Passage
 
 START_TIMEOUT_S = 30
 INDEX_TIMEOUT_S = 600
 WORD = re.compile(r"[a-z0-9]+")
-TICKER = re.compile(r"[A-Z][A-Z0-9.\-]{0,9}")
 # autoindex exit codes that mean "indexed": 3 is done with some junk records skipped
 INDEX_OK = {0, 3}
 STEM_CHARS = 5
+TEXT_FIELDS = ("body", "text")  # xerj names the chunk text either way
 # xerj asks agents to file usage reports; tenq never sends any
 XERJ_ENV = {"XERJ_DISABLE_FEEDBACK": "true"}
 
@@ -46,12 +48,13 @@ class SearchHit:
     text: str
 
 
-def index_prefix(ticker: str) -> str:
-    """xerj's own prefix form ([a-z0-9] runs joined by "-"), ended with "-t" so
-    `<prefix>-*` for BRK can never match BRK.B's `tenq-brk-b-t-*` indices."""
-    if not TICKER.fullmatch(ticker):
-        raise ValueError(f"not a ticker: {ticker!r}")
-    return "tenq-" + "-".join(WORD.findall(ticker.lower())) + "-t"
+class Corpus(Protocol):
+    """Saved text that xerj can index under one key: a ticker or a document."""
+
+    def text_dir(self, key: str) -> Path: ...
+    def index_prefix(self, key: str) -> str: ...
+    def owns(self, key: str, doc: str) -> bool: ...
+    def passages_between(self, doc: str, first: int, last: int) -> list[Passage]: ...
 
 
 def _request(url: str, body: dict[str, Any] | None = None, timeout: float = 10) -> Any:
@@ -67,27 +70,30 @@ def _stems(text: str) -> set[str]:
 
 
 def hits_from_response(
-    resp: dict[str, Any], store: FilingStore, query: str, k: int, ticker: str | None = None
+    resp: dict[str, Any], store: Corpus, query: str, k: int, key: str | None = None
 ) -> list[SearchHit]:
     """Map raw xerj hits to tenq passages, best first, one hit per passage.
 
     A xerj chunk can span several tenq passages (a heading and the paragraph
     under it), so of the passages the chunk covers, the one sharing the most
-    query words wins; ties go to the earlier one. With `ticker`, hits from
-    another company's filings are dropped.
+    query words wins; ties go to the earlier one. With `key`, hits from text
+    the store does not file under that key (another company's filings) are dropped.
     """
     want = _stems(query)
     out: list[SearchHit] = []
     seen: set[str] = set()
     for h in resp.get("hits", {}).get("hits", []):
         src = h.get("_source", {})
-        path, line, body = src.get("ax_path"), src.get("start_line"), src.get("body")
+        path, line, end = src.get("ax_path"), src.get("start_line"), src.get("end_line")
+        body = next((src[f] for f in TEXT_FIELDS if isinstance(src.get(f), str)), "")
         if not isinstance(path, str) or line is None:
             continue
         first = int(line)
-        last = first + (body.count("\n") if isinstance(body, str) else 0)
+        last = first + body.count("\n")
+        if isinstance(end, int) and end >= first:
+            last = end
         doc = Path(path).stem
-        if ticker is not None and doc.rsplit("-", 3)[0] != ticker:
+        if key is not None and not store.owns(key, doc):
             continue
         covered = store.passages_between(doc, first, last)
         if not covered:
@@ -104,17 +110,32 @@ def hits_from_response(
     return out
 
 
+def text_field(mapping: dict[str, Any]) -> str:
+    """The searchable text field of an index pattern's mapping response."""
+    found = {
+        f
+        for index in mapping.values()
+        if isinstance(index, dict)
+        for f in index.get("mappings", {}).get("properties", {})
+    }
+    for f in TEXT_FIELDS:
+        if f in found:
+            return f
+    raise RuntimeError(f"no text field among {sorted(found)}")
+
+
 class Xerj:
     """Client for a running xerj node."""
 
-    def __init__(self, url: str, store: FilingStore) -> None:
+    def __init__(self, url: str, store: Corpus) -> None:
         self.url = url.rstrip("/")
         self.store = store
+        self._fields: dict[str, str] = {}
 
-    def index(self, ticker: str, state_dir: Path) -> None:
+    def index(self, key: str, state_dir: Path) -> None:
         cmd = [
-            "xerj", "autoindex", str(self.store.text_dir(ticker)),
-            "--prefix", index_prefix(ticker),
+            "xerj", "autoindex", str(self.store.text_dir(key)),
+            "--prefix", self.store.index_prefix(key),
             "--url", self.url,
             "--state-dir", str(state_dir),
             # pure BM25, no link graph, and never stop to ask about a time estimate
@@ -131,11 +152,14 @@ class Xerj:
             tail = (done.stderr or done.stdout).strip().splitlines()[-5:]
             raise RuntimeError(f"xerj autoindex failed ({done.returncode}): " + " | ".join(tail))
 
-    def search(self, ticker: str, query: str, k: int = 5) -> list[SearchHit]:
+    def search(self, key: str, query: str, k: int = 5) -> list[SearchHit]:
         # over-fetch: several xerj chunks can fall in one tenq passage
-        body = {"size": k * 4, "query": {"match": {"body": query}}}
-        resp = _request(f"{self.url}/{index_prefix(ticker)}-*/_search", body)
-        return hits_from_response(resp, self.store, query, k, ticker)
+        pattern = f"{self.url}/{self.store.index_prefix(key)}-*"
+        if key not in self._fields:
+            self._fields[key] = text_field(_request(f"{pattern}/_mapping"))
+        body = {"size": k * 4, "query": {"match": {self._fields[key]: query}}}
+        resp = _request(f"{pattern}/_search", body)
+        return hits_from_response(resp, self.store, query, k, key)
 
 
 def _taken(port: int) -> bool:
