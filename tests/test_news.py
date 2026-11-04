@@ -368,10 +368,20 @@ def test_a_release_without_a_company_name_is_never_the_companys_own() -> None:
 
 def test_the_cap_keeps_the_companys_release_over_newer_opinion() -> None:
     columns = [
-        (f"Is CrowdStrike a Buy? Take {n}", f"https://www.fool.com/{n}", LATER, "")
+        (
+            f"Is CrowdStrike a Buy? Take {n}",
+            f"https://www.fool.com/{n}",
+            f"Wed, 04 Nov 2026 0{n}:00:00 GMT",
+            "",
+        )
         for n in range(5)
     ]
-    release = ("CrowdStrike Announces Results", "https://finance.yahoo.com/r", LATE, "")
+    release = (
+        "CrowdStrike Announces Third Quarter Results",
+        "https://finance.yahoo.com/r",
+        LATE,
+        "",
+    )
     report = ("CrowdStrike shares fall", "https://www.cnbc.com/r", LATE, "")
     got = collect(
         {"CRWD": "CrowdStrike"},
@@ -382,9 +392,9 @@ def test_the_cap_keeps_the_companys_release_over_newer_opinion() -> None:
         cap=3,
     )
     assert [(i.kind, i.title) for i in got.items["CRWD"]] == [
-        (news.KIND_COMPANY, "CrowdStrike Announces Results"),
+        (news.KIND_COMPANY, "CrowdStrike Announces Third Quarter Results"),
         (news.KIND_REPORT, "CrowdStrike shares fall"),
-        (news.KIND_OPINION, "Is CrowdStrike a Buy? Take 0"),  # newest of its kind first
+        (news.KIND_OPINION, "Is CrowdStrike a Buy? Take 4"),  # newest of its kind first
     ]
 
 
@@ -460,7 +470,12 @@ def test_video_and_podcast_hosts_are_dropped() -> None:
             "Boost ROI with scalable cloud",
             news.KIND_RELEASE,
         ),
-        ("CrowdStrike Market Share Analysis", "https://finance.yahoo.com/x", "", news.KIND_RELEASE),
+        (
+            "Global Security Software Market Size to Reach $90B, CAGR 12%",
+            "https://finance.yahoo.com/x",
+            "",
+            news.KIND_RELEASE,
+        ),
         # stock-site templates syndicated through Yahoo
         (
             "Here\u2019s Why CrowdStrike Fell More Than Broader Market",
@@ -486,3 +501,74 @@ def test_a_release_is_told_from_reporting_by_its_text(
     title: str, link: str, summary: str, kind: str
 ) -> None:
     assert kind_of(_entry(title, link, summary), "CRWD", "CrowdStrike") == kind
+
+
+@pytest.mark.parametrize(
+    ("title", "summary"),
+    [
+        # a reporter's title-case results headline
+        ("CrowdStrike Reports Strong Results, Shares Jump", ""),
+        ("CrowdStrike Reports Mixed Results as Guidance Disappoints", ""),
+        # a reporter's summary that says "announced today" or quotes the listing
+        (
+            "CrowdStrike stock rises",
+            "Shares climbed after CrowdStrike announced today a deal with Google",
+        ),
+        (
+            "CrowdStrike stock falls",
+            "Shares of CrowdStrike (NASDAQ: CRWD), the cybersecurity firm, fell 5%",
+        ),
+        # "--" as a dash in plain-text copy is not a dateline
+        (
+            "CrowdStrike agrees to buy Onum",
+            "CrowdStrike said Tuesday it agreed to buy Onum. The deal, expected to close in fiscal 2026 -- pending",
+        ),
+        # a columnist's title on Yahoo's own site, and a lawsuit, are not releases
+        ("CrowdStrike vs. Delta lawsuit heads to trial", ""),
+        ("CrowdStrike gains market share from SentinelOne", ""),
+    ],
+)
+def test_reporting_is_never_the_companys_own_release(title: str, summary: str) -> None:
+    kind = kind_of(_entry(title, summary=summary), "CRWD", "CrowdStrike")
+    assert kind == news.KIND_REPORT
+
+
+@pytest.mark.parametrize(
+    "title",
+    [
+        "Why CrowdStrike Stock Soared Today",
+        "Prediction: CrowdStrike Will Double",
+        "CrowdStrike vs. Okta?",
+    ],
+)
+def test_syndicated_column_shapes_are_opinion(title: str) -> None:
+    assert kind_of(_entry(title), "CRWD", "CrowdStrike") == news.KIND_OPINION
+
+
+def test_a_partners_release_led_by_the_stocks_name_is_not_its_own() -> None:
+    entry = _entry(
+        "CrowdStrike Falcon Now on Acme Marketplace",
+        summary="SAN FRANCISCO, November 02, 2026--Acme today announced a listing",
+    )
+    assert kind_of(entry, "CRWD", "CrowdStrike") == news.KIND_RELEASE
+
+
+def test_a_look_alike_host_is_not_the_site() -> None:
+    assert kind_of(
+        _entry("CrowdStrike shares rise", "https://notfool.com/x"), "CRWD", "CrowdStrike"
+    ) == (news.KIND_REPORT)
+    assert kind_of(
+        _entry("CrowdStrike shares rise", "https://m.fool.com/x"), "CRWD", "CrowdStrike"
+    ) == (news.KIND_OPINION)
+
+
+def test_a_link_that_is_not_a_url_never_sinks_the_run() -> None:
+    pages: dict[str, bytes | Exception] = {
+        GENERAL: _rss(
+            ("Zscaler falls", "http://[oops/x", LATE, ""),
+            ("CRWD rises", "http://[oops/y", LATE, ""),
+        )
+    }
+    got = _collect(pages, {"CRWD": "CrowdStrike", "ZS": "Zscaler"})
+    assert [i.title for i in got.items["CRWD"]] == ["CRWD rises"]
+    assert [i.title for i in got.items["ZS"]] == ["Zscaler falls"]

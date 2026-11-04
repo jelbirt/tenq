@@ -86,32 +86,43 @@ OPINION_TITLE = re.compile(
     r"|time to (?:buy|sell|hold)|facts to (?:know|note)|bigger fall than|as market (?:rises|dips)"
     r"|stocks? to (?:buy|watch)|fair value|overvalued|undervalued|price i'?d pay"
     r"|what'?s in (?:store|the cards)|beat estimates again|read this before|worth the wait"
-    r"|billionaire|\bvs\.?\s|top analyst calls|brokers suggest|could derail"
+    r"|billionaire|\bvs\.?\s[^?]*\?|top analyst calls|brokers suggest|could derail"
     # stock-site templates syndicated through Yahoo, whose links hide the site
     r"|\bzacks\b|here[\u2019']?s why|don[\u2019']?t overlook|compared to estimates|on the horizon"
-    r"|look at key metrics|doubters",
+    r"|look at key metrics|doubters|^prediction:"
+    r"|^why\b.*\bstock\b.*\b(?:today|this week|on (?:monday|tuesday|wednesday|thursday|friday))\b",
     re.IGNORECASE,
 )
 # a market-research firm's promotion that lists companies in its headline
 RESEARCH_TITLE = re.compile(
-    r"\bmarket (?:report|size|share|forecast|outlook|analysis)\b|\bmarket 20[0-9]{2}\b",
+    r"\bmarket (?:report|size|forecast)\b|\bmarket 20[0-9]{2}\b|\bcagr\b|\bto reach \$",
     re.IGNORECASE,
 )
 # the transcript or summary of an earnings call reports what was said, whatever the site
 CALL_TITLE = re.compile(r"earnings call (?:transcript|summary|highlights)", re.IGNORECASE)
-# a press release opens with a dateline ("AUSTIN, Texas, November 04, 2026--") or a
-# wire service's mark, says it was announced today, or describes itself after its
-# listing ("(NASDAQ: PANW), the global ..."); reporters write "(NASDAQ:CRWD) fell"
+# a press release opens with a dateline, an all-caps city then the date ("AUSTIN,
+# Texas, November 04, 2026--"), or with its own name and listing, then "today
+# announced" or a description of itself ("Palo Alto Networks (NASDAQ: PANW), the
+# global ..."). Reporters write "Shares of CrowdStrike (NASDAQ: CRWD) fell", "said
+# Tuesday it agreed", and use "--" as a dash in plain-text copy.
+MONTH = r"(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\.?"
+LISTING = r"\((?:NASDAQ|Nasdaq|NYSE)(?: Global Select Market)?: ?[A-Z.]{1,6}\)"
 RELEASE_TEXT = re.compile(
-    r"^[^\n]{0,120}?\b20[0-9]{2}\s*(?:--|\(GLOBE NEWSWIRE\)|/PRNewswire/|\(BUSINESS WIRE\))"
-    r"|\b(?:today announced|announced today)\b"
-    r"|^[^\n]{0,80}?\((?:NASDAQ|Nasdaq|NYSE)(?: Global Select Market)?: [A-Z.]{1,6}\),"
-    r"\s+(?:the|a|an)\s"
+    rf"^[A-Z]{{2}}[A-Z .'-]*,[^\n]{{0,80}}?\b{MONTH}\s+[0-9]{{1,2}},\s+20[0-9]{{2}}\s*"
+    r"(?:--|\(GLOBE NEWSWIRE\)|/PRNewswire/|\(BUSINESS WIRE\))"
+    rf"|{LISTING},?\s+(?:today announced|announced today)\b"
+    rf"|^(?:[A-Z][\w.&'-]*,?\s+){{1,5}}{LISTING},\s+(?:the|a|an)\s"
 )
-# with no release text, only a results announcement in the company's own words
-# ("Datadog Announces Third Quarter 2026 Financial Results"); a reporter's "CrowdStrike
-# launches AI kill switch" is a report
-OWN_RESULTS = re.compile(r"\s+(?:Announces|Reports)\b.*\bResults\b")
+# how near the start a release names its own subject
+RELEASE_SUBJECT = 250
+# with no release text, only the headline of a results release in the company's own
+# words ("Datadog Announces Third Quarter 2026 Financial Results"); "CrowdStrike
+# Reports Strong Results, Shares Jump" is a report
+OWN_RESULTS = re.compile(
+    r"\s+(?:Announces|Reports)\s+(?:Preliminary\s+)?"
+    r"(?:(?:First|Second|Third|Fourth)\s+Quarter|Q[1-4]|Fiscal|Full[- ]Year|Year[- ]End)"
+    r"[\w\s-]*?\bResults\s*$"
+)
 TAG = re.compile(r"<[^>]*>")
 SPACE = re.compile(r"\s+")
 
@@ -239,7 +250,10 @@ def mentions(text: str, ticker: str, name: str | None) -> bool:
 
 def host(link: str) -> str:
     """The link's site without "www.": "https://www.fool.com/x" to "fool.com"."""
-    return (urlsplit(link).hostname or "").removeprefix("www.")
+    try:
+        return (urlsplit(link).hostname or "").removeprefix("www.")
+    except ValueError:  # "http://[oops/x" is not a URL; never let one sink the run
+        return ""
 
 
 def _on(site: str, hosts: frozenset[str]) -> bool:
@@ -260,7 +274,9 @@ def kind_of(entry: Entry, ticker: str, name: str | None) -> str:
         and entry.title.lower().startswith(key)
     )
     if RELEASE_TEXT.search(entry.summary):
-        return KIND_COMPANY if own else KIND_RELEASE
+        # a partner's release can lead its headline with the bigger name
+        subject = own and key in entry.summary[:RELEASE_SUBJECT].lower()
+        return KIND_COMPANY if subject else KIND_RELEASE
     if own and OWN_RESULTS.match(entry.title[len(key) :]):
         return KIND_COMPANY
     return KIND_REPORT
@@ -269,11 +285,14 @@ def kind_of(entry: Entry, ticker: str, name: str | None) -> str:
 def link_key(entry: Entry) -> str:
     """Same story, same key: a link without its tracking parameters, else the title."""
     if entry.link:
-        parts = urlsplit(entry.link)
-        query = urlencode(
-            sorted((k, v) for k, v in parse_qsl(parts.query) if not TRACKING.match(k))
-        )
-        return urlunsplit((parts.scheme.lower(), parts.netloc.lower(), parts.path, query, ""))
+        try:
+            parts = urlsplit(entry.link)
+            query = urlencode(
+                sorted((k, v) for k, v in parse_qsl(parts.query) if not TRACKING.match(k))
+            )
+            return urlunsplit((parts.scheme.lower(), parts.netloc.lower(), parts.path, query, ""))
+        except ValueError:
+            pass
     return entry.title.lower()
 
 
