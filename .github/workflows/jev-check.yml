@@ -1,0 +1,29 @@
+name: jev-check
+# Manual only: one live Jev call per named stock, printed to the log.
+on:
+  workflow_dispatch:
+    inputs:
+      tickers: {description: "Up to 5 tickers, space separated", required: true, default: "CRWD"}
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with: {persist-credentials: false}
+      - uses: astral-sh/setup-uv@v6
+        with: {python-version: "3.12", enable-cache: true}
+      - run: uv sync --locked
+      - name: ask Jev
+        env:
+          # dispatch input is untrusted text: passed as env, never spliced into the script
+          TICKERS: ${{ inputs.tickers }}
+          EDGAR_IDENTITY: ${{ secrets.EDGAR_IDENTITY }}
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+        run: |
+          read -ra args <<< "$TICKERS"
+          uv run python -m tenq.jev_check "${args[@]}"
