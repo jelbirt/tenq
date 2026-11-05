@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from dataclasses import replace
+
 import pytest
 
 from tenq.brief import Claim
@@ -75,6 +77,31 @@ def test_a_balance_is_at_the_end_of_the_quarter_not_in_it(table: MetricsTable, m
     for fld in ("current", "prior_quarter"):
         got = phrase(f"fin:CRWD:{metric}:{fld}", table_facts(table))
         assert got is not None and " at the end of " in got and " in the " not in got, got
+
+
+@pytest.mark.parametrize("metric", ["revenue", "free_cash_flow", "operating_income"])
+def test_a_flow_is_in_the_quarter_not_at_its_end(table: MetricsTable, metric: str) -> None:
+    got = phrase(f"fin:CRWD:{metric}:current", table_facts(table))
+    assert got is not None and " in the quarter ended " in got and " at the end " not in got, got
+
+
+@pytest.mark.parametrize(
+    ("number_id", "want"),
+    [
+        ("fin:CRWD:cash:yoy_pct", "CRWD's cash and cash equivalents were unchanged"),
+        ("fin:CRWD:capex:qoq_change", "CRWD's capital expenditures were unchanged"),
+        ("fin:CRWD:revenue:yoy_pct", "CRWD's revenue was unchanged"),
+    ],
+)
+def test_no_change_takes_the_metric_s_own_verb(
+    table: MetricsTable, number_id: str, want: str
+) -> None:
+    facts = table_facts(table)
+    n = facts.number(number_id)
+    assert n is not None
+    flat = replace(facts, numbers={**facts.numbers, number_id: replace(n, value=0.0)})
+    got = phrase(number_id, flat)
+    assert got is not None and got.startswith(want), got
 
 
 def test_no_metric_s_words_hold_a_table_label_s_comma(table: MetricsTable) -> None:

@@ -195,10 +195,17 @@ def _span(n: int) -> str:
 
 
 def _moved(
-    subject: str, v: float, size: str, tail: str, *, kind: str = "percent", by: bool = False
+    subject: str,
+    v: float,
+    size: str,
+    tail: str,
+    *,
+    kind: str = "percent",
+    by: bool = False,
+    was: str = "was",
 ) -> str:
     if _zero(v, kind):
-        return f"{subject} was unchanged {tail}"
+        return f"{subject} {was} unchanged {tail}"
     verb = "rose" if v > 0 else "fell"
     return f"{subject} {verb} {'by ' if by else ''}{size} {tail}"
 
@@ -260,9 +267,9 @@ def _filing(n: Number, facts: Facts, metric: str, fld: str) -> str | None:
             shown = f"negative {shown}"
         return f"{label} {was} {shown} {at} {when[fld]}"
     if n.kind == "usd":
-        return _moved(label, v, money(abs(v)), base, kind="usd", by=True)
+        return _moved(label, v, money(abs(v)), base, kind="usd", by=True, was=was)
     size = _pts(v) if n.kind == "points" else _pct(v)
-    return _moved(label, v, size, base, kind=n.kind)
+    return _moved(label, v, size, base, kind=n.kind, was=was)
 
 
 def phrase(number_id: str, source: Pack | Facts) -> str | None:
