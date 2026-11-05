@@ -93,11 +93,13 @@ MAX_REASON_CHARS = 600  # placeholders are long ids; a longer reason is dropped,
 LOSS_METRICS = {"operating_income", "net_income"}  # a negative level reads "a loss of"
 # how a metric reads mid-sentence where its table label does not
 PHRASE_LABELS = {
+    "deferred_revenue": "total deferred revenue",
     "deferred_revenue_current": "current deferred revenue",
     "deferred_revenue_noncurrent": "noncurrent deferred revenue",
 }
-PLURAL_METRICS = {"capex"}  # "capital expenditures were"
-STOCK_METRICS = frozenset(m.name for m in BASE_METRICS if m.kind == "stock")  # balances
+PLURAL_METRICS = {"capex", "cash"}  # "capital expenditures were", "cash and ... were"
+# balances: read "at the end of"; total deferred revenue is the sum of two of them
+STOCK_METRICS = frozenset(m.name for m in BASE_METRICS if m.kind == "stock") | {"deferred_revenue"}
 
 
 @dataclass(frozen=True)
