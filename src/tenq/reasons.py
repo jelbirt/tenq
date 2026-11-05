@@ -75,8 +75,10 @@ DATE_WORD = re.compile(
     # month abbreviations, only with their full stop so "Mar" and "Dec" as names pass
     r"|\b(?:Jan|Feb|Mar|Apr|Jun|Jul|Aug|Sept?|Oct|Nov|Dec)\."
 )
-# SEC form names hold digits but no figure: "the 8-K", "two 10-Qs", "the 10-K/A"
-FORM_NAME = re.compile(r"\b(?:8-K|10-Q|10-K)(?:/A)?(?:s|'s)?\b")
+# SEC form names hold digits but no figure: "the 8-K", "two 10-Qs", "the 10-K/A",
+# in any case and with a plain, Unicode or non-breaking hyphen. Only the forms the
+# sheet uses: another form's digits ("a Form 4", "the S-1") still drop the reason.
+FORM_NAME = re.compile(r"\b(?:8|10)[-\u2010\u2011](?:K|Q)(?:/A)?(?:s|'s)?\b", re.IGNORECASE)
 # percent, per mille, per ten thousand, fullwidth, small and Arabic percent, "#1"
 MARKS = {"%", "\u2030", "\u2031", "\uff05", "\ufe6a", "\u066a", "#"}
 # a placeholder opens a clause: after these marks, or after one of these words

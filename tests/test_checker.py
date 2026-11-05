@@ -4,7 +4,7 @@ from dataclasses import replace
 
 import pytest
 
-from tenq.brief import Claim
+from tenq.brief import Claim, load_prompt
 from tenq.checker import Checked, check, check_claim, metrics_view, visible_docs
 from tenq.filings import FilingStore
 from tenq.metrics import MetricsTable, metrics_for
@@ -271,3 +271,11 @@ def test_every_filing_id_the_opus_prompts_show_has_code_words(table: MetricsTabl
     assert "fin:CRWD:deferred_revenue:yoy_pct" in shown
     for number_id in sorted(shown):
         assert phrase(number_id, facts) is not None, number_id
+
+
+def test_the_brief_prompts_example_is_what_code_writes(table: MetricsTable) -> None:
+    """brief.md quotes CRWD's real revenue change under the name ACME."""
+    words = phrase("fin:CRWD:revenue:yoy_pct", table_facts(table))
+    assert words is not None
+    text = " ".join(load_prompt().text.split())
+    assert f'"{words.replace("CRWD", "ACME")}, driven by' in text
