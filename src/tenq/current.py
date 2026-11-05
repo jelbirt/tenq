@@ -55,12 +55,12 @@ class Synced:
 
 
 def describe(items: str) -> list[str]:
-    """ "2.02,9.01" to ["2.02 results of operations", "9.01 financial ..."]."""
+    """ "2.02,9.01" to ["Item 2.02 results of operations", "Item 9.01 ..."]."""
     out = []
     for raw in items.split(","):
         item = raw.strip()
         if item:
-            out.append(f"{item} {ITEM_NAMES.get(item, 'other item')}")
+            out.append(f"Item {item} {ITEM_NAMES.get(item, 'other item')}")
     return out
 
 

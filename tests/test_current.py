@@ -90,10 +90,13 @@ def test_a_failed_listing_is_a_note(tmp_path: Path) -> None:
 
 def test_items_get_plain_names() -> None:
     assert describe("2.02,9.01") == [
-        "2.02 results of operations",
-        "9.01 financial statements and exhibits",
+        "Item 2.02 results of operations",
+        "Item 9.01 financial statements and exhibits",
     ]
-    assert describe(" 1.05 , 6.10") == ["1.05 material cybersecurity incident", "6.10 other item"]
+    assert describe(" 1.05 , 6.10") == [
+        "Item 1.05 material cybersecurity incident",
+        "Item 6.10 other item",
+    ]
     assert describe("") == []
 
 
@@ -104,7 +107,7 @@ def test_the_cli_lists_reports(
 
     monkeypatch.setattr(tenq.edgar, "EdgarSource", lambda: Source([NEW]))
     assert current.main(["crwd", "--since", "2026-11-01", "--root", str(tmp_path)]) == 0
-    assert f"2026-11-03 {NEW.accession} 2.02 results of operations" in capsys.readouterr().out
+    assert f"2026-11-03 {NEW.accession} Item 2.02 results of operations" in capsys.readouterr().out
 
 
 def test_an_8k_without_a_filing_date_is_a_note(tmp_path: Path) -> None:
