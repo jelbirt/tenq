@@ -30,6 +30,7 @@ import os
 import time
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from langfuse import Langfuse, LangfuseOtelSpanAttributes
@@ -47,6 +48,8 @@ MAX_FIELD_CHARS = 20_000
 SCOPE = "tenq"
 FIND_WAIT_S = 120.0  # how long to keep looking for a sent trace
 FIND_POLL_S = 5.0
+LOOKUP_TIMEOUT_S = 15  # one lookup request
+LOOKUP_WINDOW = timedelta(days=1)  # how far back a lookup searches (a run is shorter)
 USAGE_KEYS = {  # claude's usage keys to Langfuse's usage_details keys
     "input_tokens": "input",
     "output_tokens": "output",
@@ -205,17 +208,31 @@ def _export_all(span: ReadableSpan) -> bool:
     return True
 
 
-_connected: dict[tuple[str, str], Tracing] = {}
+_connected: dict[str, tuple[str, Tracing]] = {}
+
+# The OTLP exporter logs a failed upload's error text, which names the host,
+# and the host is a secret while Actions logs are public. tenq logs its own
+# host-free line for every failure, so the libraries' lines are silenced.
+QUIET_LOGGERS = ("opentelemetry.exporter.otlp", "urllib3", "httpx", "httpcore")
+
+
+def _quiet() -> None:
+    for name in QUIET_LOGGERS:
+        logging.getLogger(name).setLevel(logging.CRITICAL)
 
 
 def connect(
     public: str, secret: str, host: str, *, exporter: SpanExporter | None = None
 ) -> Tracing:
-    """The Langfuse SDK on a tracer provider of tenq's own (one per key and
-    host: the SDK keeps one client per public key)."""
-    key = (public, host)
-    if key in _connected:
-        return _connected[key]
+    """The Langfuse SDK on a tracer provider of tenq's own. One per public
+    key: the SDK keeps one client per public key, and a second provider for
+    the same key would get no exporter, so its spans would go nowhere."""
+    _quiet()
+    if public in _connected:
+        was, tracing = _connected[public]
+        if was != host:
+            raise ValueError("this public key is already connected to another host")
+        return tracing
     provider = TracerProvider(resource=Resource.create({"service.name": SCOPE}))
     client = Langfuse(
         public_key=public,
@@ -227,11 +244,20 @@ def connect(
     )
 
     def found(trace_id: str) -> bool:
-        pages = client.iter_observation_pages(trace_id=trace_id, limit=1, max_items=1)
-        return any(page.data for page in pages)
+        # one request per lookup: only the first page is read, over a recent
+        # window, with a short timeout, so one lookup cannot outlast the wait
+        pages = client.iter_observation_pages(
+            trace_id=trace_id,
+            limit=1,
+            max_items=1,
+            from_start_time=datetime.now(UTC) - LOOKUP_WINDOW,
+            request_options={"timeout_in_seconds": LOOKUP_TIMEOUT_S},
+        )
+        page = next(iter(pages), None)
+        return bool(page and page.data)
 
     tracing = Tracing(tracer=provider.get_tracer(SCOPE), flush=client.flush, found=found)
-    _connected[key] = tracing
+    _connected[public] = (host, tracing)
     return tracing
 
 
