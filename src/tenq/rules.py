@@ -9,8 +9,9 @@ part is scaled by the share of its planned rounds that came back, so an unsure
 or half-answered Jev drifts toward Hold rather than hitting a cut-off. A
 score's spread leaves out the reversal lean the rounds measured. Risk counts
 only the bad news the news part did not already score (after its certainty).
-The weighted sum shrinks when the stock has already moved that way against QQQ
-(priced in), and the final score picks Buy, Hold, Sell or Short. Every part's
+The weighted sum shrinks with the market's reaction, whichever way the stock
+moved against QQQ (with the signal: priced in; against it: doubted), and the
+final score picks Buy, Hold, Sell or Short. Every part's
 contribution is kept, so the email and the record show why.
 
 Confidence, 0 to 1: for Buy, Sell and Short, the score as a share of the most
@@ -52,7 +53,7 @@ DEFAULT_RULES = REPO_ROOT / "config" / "rules.yaml"
 MAX_ROUNDS = 64  # far above any planned round count; more is a corrupt record
 CallName = Literal["Buy", "Hold", "Sell", "Short"]
 PARTS = ("news", "guidance", "fundamentals", "risk")
-TOP_LEVEL = {"version", "direction", "evidence", "guidance", "weights", "priced_in", "calls"}
+TOP_LEVEL = {"version", "direction", "evidence", "guidance", "weights", "reaction", "calls"}
 # which question each label map belongs to, and the type each used question must have
 LABEL_MAPS = {"direction": "direction", "evidence": "source", "guidance": "guidance"}
 QUESTION_TYPES = {
@@ -106,12 +107,15 @@ class Call:
     score: float  # -1 to +1
     confidence: float  # 0 to 1, see the module docstring
     version: str
-    raw: float  # the weighted sum before priced-in
-    priced_in: float  # fraction of the raw score removed, 0 to `most`
+    raw: float  # the weighted sum before the market's reaction
+    reaction: float  # fraction of the raw score removed, 0 to `most`
     parts: list[Part] = field(default_factory=list)
     notes: list[str] = field(default_factory=list)
     coverage: float = 0.0  # weighted certainty of the included parts, 0 to 1
     rules_sha: str = ""
+    # which way the stock moved against the signal: "with" (priced in),
+    # "against" (doubted), or "" when there was no cut
+    reaction_way: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         out = {k: v for k, v in vars(self).items() if k != "parts"}
@@ -119,14 +123,21 @@ class Call:
         return out
 
     def explain(self) -> list[str]:
-        """Plain lines for the email: each part, the priced-in cut, the call."""
+        """Plain lines for the email: each part, the market-reaction cut, the call."""
         lines = [
             f"{p.name}: {p.contribution:+.2f} ({p.detail}; weight {p.weight:.2f}, "
             f"certainty {p.certainty:.0%})"
             for p in self.parts
         ]
-        if self.priced_in:
-            lines.append(f"priced in: score cut by {self.priced_in:.0%}")
+        if self.reaction:
+            why = {
+                "with": "moved with the signal, partly priced in",
+                "against": "moved against the signal, the market doubts it",
+            }
+            lines.append(
+                f"market reaction: score cut by {self.reaction:.0%} "
+                f"({why.get(self.reaction_way, 'moved')})"
+            )
         lines.append(f"score {self.score:+.2f}: {self.call} (confidence {self.confidence:.0%})")
         return lines
 
@@ -177,14 +188,14 @@ def load_rules(questions: QuestionSet, path: Path = DEFAULT_RULES) -> Rules:
         raise ValueError(f"rules weights must be exactly {list(PARTS)}")
     if not 0.0 < sum(weights.values()) <= 1.0 + 1e-9:
         raise ValueError("rules weights must add up to more than 0 and at most 1")
-    priced, calls = raw["priced_in"], raw["calls"]
-    if not isinstance(priced, dict) or set(priced) != {"sessions", "per_move", "most"}:
-        raise ValueError("rules priced_in must hold sessions, per_move and most")
+    moved, calls = raw["reaction"], raw["calls"]
+    if not isinstance(moved, dict) or set(moved) != {"sessions", "per_move", "most"}:
+        raise ValueError("rules reaction must hold sessions, per_move and most")
     if not isinstance(calls, dict) or set(calls) != {"buy", "sell", "short"}:
         raise ValueError("rules calls must hold buy, sell and short")
-    sessions = priced["sessions"]
+    sessions = moved["sessions"]
     if isinstance(sessions, bool) or sessions not in WINDOWS:
-        raise ValueError(f"rules priced_in.sessions must be one of {list(WINDOWS)}")
+        raise ValueError(f"rules reaction.sessions must be one of {list(WINDOWS)}")
     rules = Rules(
         version=version,
         direction=_values(raw["direction"], "direction", -1.0),
@@ -192,8 +203,8 @@ def load_rules(questions: QuestionSet, path: Path = DEFAULT_RULES) -> Rules:
         guidance=_values(raw["guidance"], "guidance", -1.0),
         weights=weights,
         sessions=int(sessions),
-        per_move=_number(priced["per_move"], "priced_in.per_move", 0.0, 1.0),
-        most=_number(priced["most"], "priced_in.most", 0.0, 1.0),
+        per_move=_number(moved["per_move"], "reaction.per_move", 0.0, 1.0),
+        most=_number(moved["most"], "reaction.most", 0.0, 1.0),
         buy=_number(calls["buy"], "calls.buy", 0.0, 1.0),
         sell=_number(calls["sell"], "calls.sell", -1.0, 0.0),
         short=_number(calls["short"], "calls.short", -1.0, 0.0),
@@ -420,8 +431,12 @@ def _parts(pack: Pack, result: Result, rules: Rules, questions: QuestionSet) -> 
     return out
 
 
-def priced_in(pack: Pack, raw: float, rules: Rules) -> tuple[float, str | None]:
-    """The fraction of `raw` already priced in, and a note when it can't be told."""
+def reaction(pack: Pack, raw: float, rules: Rules) -> tuple[float, str | None]:
+    """The fraction of `raw` the market's reaction removes, and a note when it can't be told.
+
+    A move with the signal (priced in) and a move against it (doubted) cut the
+    same way: by the size of the move, never past `most`, so never past Hold.
+    """
     t = pack.ticker
     excess = pack.number(f"px:{t}:excess_{rules.sessions}d")
     vol = pack.number(f"px:{t}:vol_20d")
@@ -432,15 +447,13 @@ def priced_in(pack: Pack, raw: float, rules: Rules) -> tuple[float, str | None]:
         or not _finite(vol.value)
         or not vol.value > 0
     ):
-        return 0.0, "no price move to check whether the news is priced in"
+        return 0.0, "no price move to weigh the market's reaction"
     if raw == 0:
         return 0.0, None
     usual = vol.value * math.sqrt(rules.sessions / SESSIONS_PER_YEAR)
     moves = excess.value / usual
     if not math.isfinite(moves):
         return 0.0, "price move too large to read against its volatility"
-    if raw * moves <= 0:
-        return 0.0, None
     return min(rules.most, rules.per_move * abs(moves)), None
 
 
@@ -488,7 +501,11 @@ def _decide(pack: Pack, result: Result, rules: Rules, questions: QuestionSet) ->
         return None
     parts = _parts(pack, result, rules, questions)
     raw = sum(p.contribution for p in parts)
-    cut, note = priced_in(pack, raw, rules)
+    cut, note = reaction(pack, raw, rules)
+    way = ""
+    if cut:
+        moved = pack.number(f"px:{pack.ticker}:excess_{rules.sessions}d")
+        way = "with" if moved is not None and (moved.value > 0) == (raw > 0) else "against"
     score = min(1.0, max(-1.0, raw * (1.0 - cut)))
     call = name_call(score, rules)
     notes = [note] if note else []
@@ -516,4 +533,5 @@ def _decide(pack: Pack, result: Result, rules: Rules, questions: QuestionSet) ->
         notes,
         coverage=coverage(parts),
         rules_sha=rules.sha256,
+        reaction_way=way,
     )
