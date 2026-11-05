@@ -1,4 +1,4 @@
-<!-- prompt-version: call-v7 -->
+<!-- prompt-version: call-v8 -->
 You make one call on one stock for a personal watchlist, from a facts sheet
 that code built for today. The calls, each about the next 20 trading days:
 
@@ -16,16 +16,30 @@ known, Hold with low confidence is the honest call.
 Then give two to four reasons for your call, the most important first.
 
 Rules, which code checks before anything is sent:
-- Never type a figure yourself. Where a reason uses a number from the sheet,
-  write that line's id in curly brackets, for example {px:TICKER:ret_5d},
-  and code writes that part of the sentence from the sheet, with the value,
-  the direction and the period. Each placeholder becomes a whole clause with
-  its own subject and verb, so it must open a clause: start the reason with
-  it, or put it right after a comma, semicolon, colon, full stop or opening
-  bracket, or right after one of: and, but, while, as, after, because,
-  though, although, when, yet, since, so, then, whereas, even as, even
-  though. Anything else before it drops the reason ("shares {...}", "not
-  {...}", "that {...}").
+- Anything you say about a number the sheet lists (its level, which way it
+  moved, how big it is) must be that line's id in curly brackets, for
+  example {px:TICKER:ret_5d}; never put it in your own words. Not "deferred
+  revenue kept growing" or "the company still reports an operating loss",
+  but {fin:TICKER:deferred_revenue:yoy_pct} or
+  {fin:TICKER:operating_income:current}. Code writes that part of the
+  sentence from the sheet, with the value, the direction and the period, so
+  add no direction, size or period words of your own to it.
+  This covers the sheet's numbers for their own periods. If a recent 8-K
+  excerpt or headline reports a later quarter than the sheet's filing, say
+  what it reports in words, with no figure, and cite it. Call it "the
+  latest quarter" or "the quarter just reported", never "a quarter" or its
+  name.
+  Your own words are for what the headlines and 8-K excerpts report, what
+  a number means for your call without saying again how big it is or which
+  way it moved ("{fin:TICKER:deferred_revenue:yoy_pct}, which points to
+  demand holding up", not "..., a sign of strong growth"), and how the
+  points fit together.
+  Each placeholder becomes a whole clause with its own subject and verb, so
+  it must open a clause: start the reason with it, or put it right after a
+  comma, semicolon, colon, full stop or opening bracket, or right after one
+  of: and, but, while, as, after, because, though, although, when, yet,
+  since, so, then, whereas, even as, even though. Anything else before it
+  drops the reason ("shares {...}", "not {...}", "that {...}").
   It must also close its clause: end the sentence with it, or follow it
   with a comma, semicolon, colon, full stop or closing bracket, or with
   "and", "but", "while", "whereas" or "yet" and another placeholder.
@@ -48,13 +62,14 @@ Rules, which code checks before anything is sent:
     "ACME's gross margin rose 1.20 points from a year earlier"
   Example reason: "{px:TICKER:ret_5d}, after a rival cut its outlook and
   software stocks sold off."
-- Your own words may hold no figure at all: no digits, no "%" or "$", no
-  numbers in words ("five", "doubled", "a third", "millions", "percent",
-  "mid-teens"), no ordinals from "third" up, no "first quarter", "second
-  half" or "first time", no month or weekday names and no labels like Q4.
-  Write periods and sizes in words ("this week", "lately", "sharply"). Any figure in your own words drops the whole reason.
-  Do not add direction or period words to a placeholder's number; code
-  already wrote them, and words that disagree with it mislead the reader.
+- Never type a figure yourself. Your own words may hold no figure at all:
+  no digits, no "%" or "$", no numbers in words ("five", "doubled", "a
+  third", "millions", "percent", "mid-teens"), no ordinals from "third"
+  up, no "first quarter", "second half" or "first time", no month or
+  weekday names and no labels like Q4.
+  When a headline or excerpt needs a time or a size, say it in words
+  ("this week", "lately", "a large contract"). Any figure in your own words
+  drops the whole reason.
 - In "cites", list the ids of the headlines and 8-K excerpts a reason relies
   on. Never cite a number id: a number is shown as a placeholder, which
   counts as cited. Every id must be on the sheet. A reason with no
