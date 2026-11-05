@@ -201,26 +201,26 @@ def test_a_reason_on_news_alone_is_sent_as_written() -> None:
     [
         ("The outlook disappointed.", (), "cites nothing"),
         ("The outlook disappointed.", ("news:ACME:ffffffffff",), "not on the facts sheet"),
-        ("{px:ACME:ret_20d} this month.", (), "not a number on the facts sheet"),
-        ("{news:ACME:0123456789} hurt.", (), "not a number on the facts sheet"),
+        ("{px:ACME:ret_20d}, this month.", (), "not a number on the facts sheet"),
+        ("{news:ACME:0123456789}, hurt.", (), "not a number on the facts sheet"),
         ("{px:ACME:ret_5d, a weak week.", (), "curly bracket"),
         ("{px:ACME:ret_5d}} on the outlook.", (), "curly bracket"),
         # a figure in the model's own words, however it is written
         ("{px:ACME:ret_5d}, its worst week in 3 years.", (), "'3'"),
         ("{px:ACME:ret_5d}, about 21% in all.", (), "'2'"),
         ("{px:ACME:ret_5d}, nearly %.", (), "'%'"),
-        ("{px:ACME:ret_5d} as $ flowed out.", (), "'$'"),
-        ("{px:ACME:ret_5d} as \u20ac flowed out.", (), "'\u20ac'"),
+        ("{px:ACME:ret_5d}, as $ flowed out.", (), "'$'"),
+        ("{px:ACME:ret_5d}, as \u20ac flowed out.", (), "'\u20ac'"),
         ("{px:ACME:ret_5d}, its worst week in \uff13 years.", (), "\uff13"),  # fullwidth digit
         ("{px:ACME:ret_5d}, down \u00bd from the peak.", (), "\u00bd"),  # a fraction sign
         ("{px:ACME:ret_5d}, its worst week in five years.", (), "five"),
-        ("{px:ACME:ret_5d} after losses doubled.", (), "doubled"),
+        ("{px:ACME:ret_5d}, after losses doubled.", (), "doubled"),
         ("{px:ACME:ret_5d}, giving back a third of its gains.", (), "third"),
         ("{px:ACME:ret_5d}, giving back half its gains.", (), "half"),
-        ("{px:ACME:ret_5d} as millions of shares changed hands.", (), "millions"),
+        ("{px:ACME:ret_5d}, as millions of shares changed hands.", (), "millions"),
         ("{px:ACME:ret_5d}, several percent below its peak.", (), "percent"),
-        ("{px:ACME:ret_5d} after a double-digit drop.", (), "double-digit"),
-        ("{px:ACME:ret_5d} in a tenfold slide.", (), "tenfold"),
+        ("{px:ACME:ret_5d}, after a double-digit drop.", (), "double-digit"),
+        ("{px:ACME:ret_5d}, in a tenfold slide.", (), "tenfold"),
         ("{px:ACME:ret_5d}, the #1 laggard.", (), "'#'"),
     ],
 )
@@ -251,13 +251,13 @@ def test_plain_english_is_not_a_figure(words: str) -> None:
 
 def test_check_reasons_keeps_the_good_drops_the_bad_and_the_repeated() -> None:
     reasons = [
-        Reason("{px:ACME:ret_5d} on the outlook.", (NEWS,)),
-        Reason("{px:ACME:ret_5d}  on the outlook.", ()),  # the same sentence once rendered
+        Reason("{px:ACME:ret_5d}, on the outlook.", (NEWS,)),
+        Reason("{px:ACME:ret_5d},  on the outlook.", ()),  # the same sentence once rendered
         Reason("{px:ACME:ret_5d}, the worst in 3 years.", ()),
     ]
     got = check_reasons(reasons, PACK)
     assert [k.text for k in got.kept] == [
-        "ACME fell 21.47% over the last 5 sessions on the outlook."
+        "ACME fell 21.47% over the last 5 sessions, on the outlook."
     ]
     assert [d.why for d in got.dropped] == [
         "duplicate reason",
@@ -276,7 +276,10 @@ def test_check_reasons_keeps_the_good_drops_the_bad_and_the_repeated() -> None:
         ("A first straight gain.", "first straight"),
         ("Shares are down since Monday.", "Monday"),
         ("Halving since October.", "Halving"),
-        ("Shares fell by a quarter.", "by a quarter"),
+        ("Shares fell by a quarter.", "a quarter"),
+        ("Shares rose a quarter on the news.", "a quarter"),
+        ("Sales from Sept. to Dec. were weak.", "Sept."),
+        ("Chapter XV of the plan.", "XV"),
         ("Down a tenth.", "tenth"),
         ("A twentieth of revenue.", "twentieth"),
         ("One hundredth of a point.", "hundredth"),
@@ -316,12 +319,43 @@ def test_figure_in_finds_every_kind_of_figure(text: str, found: str) -> None:
         "It is not the case that {px:ACME:ret_5d}.",
         "The outlook was weak, not {px:ACME:ret_5d}.",
         "More than {px:ACME:ret_5d}.",
-        "{px:ACME:ret_5d} and {px:ACME:ret_5d}{px:ACME:bench_5d}.",
     ],
 )
 def test_a_placeholder_must_open_a_clause(text: str) -> None:
     got = render(Reason(text, ()), PACK)
     assert isinstance(got, str) and "does not open a clause" in got, got
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        # words that attach to code's clause change what its number measures
+        "{fin:ACME:revenue:yoy_pct} excluding acquisitions.",
+        "{px:ACME:ret_5d} after adjusting for the split.",
+        "{px:ACME:ret_5d} on the outlook.",
+        "{px:ACME:ret_5d} and then some.",
+        "{px:ACME:ret_5d} (excluding the split).",
+        "{px:ACME:ret_5d}{px:ACME:bench_5d}.",
+    ],
+)
+def test_a_placeholder_must_close_a_clause(text: str) -> None:
+    got = render(Reason(text, ()), PACK)
+    assert isinstance(got, str) and "does not close a clause" in got, got
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "{px:ACME:ret_5d}",
+        "{px:ACME:ret_5d}.",
+        "{px:ACME:ret_5d}; the outlook was cut.",
+        "{px:ACME:ret_5d} and {px:ACME:bench_5d}.",
+        "{px:ACME:ret_5d} while {px:ACME:bench_5d}.",
+        "{px:ACME:ret_5d}. {px:ACME:bench_5d}.",
+    ],
+)
+def test_a_placeholder_closed_by_a_mark_or_a_joined_placeholder_is_kept(text: str) -> None:
+    assert isinstance(render(Reason(text, ()), PACK), Rendered)
 
 
 @pytest.mark.parametrize(

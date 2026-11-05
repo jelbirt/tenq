@@ -14,8 +14,8 @@ from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 
-from tenq.brief import Claim, Draft, NumberRef, Prompt
-from tenq.checker import CheckResult, Dropped
+from tenq.brief import Claim, Draft, Prompt
+from tenq.checker import Checked, CheckResult, Dropped
 from tenq.deliver import DISCLAIMER, Email, render
 from tenq.filings import Fact, FilingMeta, FilingStore, Passage
 from tenq.llm import AgentRun, ToolCall
@@ -24,12 +24,9 @@ from tenq.run import brief_filing, briefed, record_path, run_ticker
 from tenq.trace import Tracing, connect, emit, send_trace
 
 LATEST = "CRWD-0001535527-26-000031"
-GOOD = Claim(
-    "Revenue grew 26% from a year earlier.",
-    f"{LATEST}:23",
-    (NumberRef("revenue", "yoy_pct", 0.25830401932671315),),
-)
-BAD = Claim("Revenue grew 40%.", f"{LATEST}:23", (NumberRef("revenue", "yoy_pct", 0.4),))
+GOOD = Claim("{fin:CRWD:revenue:yoy_pct}, as customers adopted more modules.", f"{LATEST}:23")
+GOOD_SENT = "CRWD's revenue rose 25.83% from a year earlier, as customers adopted more modules."
+BAD = Claim("Revenue grew 40%.", f"{LATEST}:23")
 PROMPT = Prompt("brief-test", "rules")
 
 
@@ -90,10 +87,12 @@ def test_a_checked_brief_is_emailed_and_recorded(store: FilingStore, tmp_path: P
         briefer=_briefer([GOOD, BAD]), sender=outbox, tracer=_no_trace,
     )  # fmt: skip
     assert rec["mode"] == "brief"
-    assert [c["claim"] for c in rec["check"]["kept"]] == [GOOD.claim]
-    assert "claim says" in rec["check"]["dropped"][0]["reason"]
+    (kept,) = rec["check"]["kept"]
+    assert kept["claim"] == GOOD_SENT and kept["draft"] == GOOD.claim
+    assert kept["numbers"] == ("fin:CRWD:revenue:yoy_pct",)
+    assert "a figure typed" in rec["check"]["dropped"][0]["reason"]
     (email,) = outbox.sent
-    assert GOOD.claim in email.text and "40%" not in email.text
+    assert GOOD_SENT in email.text and "40%" not in email.text and "{" not in email.text
     assert "1 claim(s) failed the checks" in email.text
     assert DISCLAIMER in email.text and html.escape(DISCLAIMER) in email.html
     assert email.subject.startswith("tenq: CRWD 10-Q") and "+25.8% YoY" in email.subject
@@ -123,7 +122,7 @@ def test_model_and_filing_text_are_escaped_in_html(
 ) -> None:
     meta = store.filings("CRWD")[0]
     table = metrics_for(store, "CRWD")
-    evil = Claim("<script>x</script> grew", f"{LATEST}:23")
+    evil = Checked("<script>x</script> grew", f"{LATEST}:23", (), "<script>x</script> grew")
     real = store.passage(evil.passage_id)
     assert real is not None
     planted = Passage(real.id, real.doc, real.line, "<img src=x onerror=alert(1)> revenue")

@@ -9,7 +9,6 @@ import pytest
 from tenq.brief import (
     ALLOWED_TOOLS,
     Claim,
-    NumberRef,
     load_prompt,
     mcp_servers,
     parse_answer,
@@ -20,7 +19,7 @@ from tenq.filings import FilingStore
 
 def test_the_shipped_prompt_has_a_version_and_names_every_tool() -> None:
     p = load_prompt()
-    assert p.version == "brief-v2"
+    assert p.version == "brief-v3"
     assert "prompt-version" not in p.text
     for tool in ("get_metrics", "search_filing", "read_passage"):
         assert tool in p.text
@@ -45,9 +44,8 @@ def test_allowed_tools_are_tenqs_three() -> None:
 GOOD = {
     "claims": [
         {
-            "claim": "Revenue  grew\n26%.",
+            "claim": "{fin:CRWD:revenue:yoy_pct},  driven\nby new customers.",
             "passage_id": "CRWD-0001535527-26-000031:23 ",
-            "numbers": [{"metric": "revenue", "field": "yoy_pct", "value": 0.2583}],
         }
     ]
 }
@@ -62,9 +60,8 @@ def test_parse_answer_reads_fenced_or_prefixed_json() -> None:
         assert draft.error is None
         assert draft.claims == [
             Claim(
-                "Revenue grew 26%.",
+                "{fin:CRWD:revenue:yoy_pct}, driven by new customers.",
                 "CRWD-0001535527-26-000031:23",
-                (NumberRef("revenue", "yoy_pct", 0.2583),),
             )
         ]
 
@@ -74,23 +71,23 @@ def test_parse_answer_skips_malformed_entries() -> None:
         "claims": [
             "just a string",
             {"claim": 5, "passage_id": "x"},
-            {"claim": "ok", "passage_id": "p:1", "numbers": [
-                {"metric": "revenue", "field": "current", "value": "1.4B"},
-                {"metric": "revenue", "field": "current", "value": True},
-                {"metric": "revenue", "field": "current", "value": 1},
-            ]},
+            {"claim": "ok", "passage_id": None},
+            {"claim": "ok", "passage_id": "p:1", "numbers": "ignored"},
         ]
-    }  # fmt: skip
-    (claim,) = parse_answer(json.dumps(answer)).claims
-    assert claim.numbers == (NumberRef("revenue", "current", 1.0),)
+    }
+    assert parse_answer(json.dumps(answer)).claims == [Claim("ok", "p:1")]
 
 
-def test_parse_answer_drops_non_finite_and_huge_values() -> None:
-    nums = '[{"metric": "revenue", "field": "current", "value": %s}]'
-    for value in ("NaN", "Infinity", "-Infinity", "1" + "0" * 400):
-        text = '{"claims": [{"claim": "ok", "passage_id": "p:1", "numbers": %s}]}' % (nums % value)
-        (claim,) = parse_answer(text).claims
-        assert claim.numbers == ()
+def test_parse_answer_never_cuts_a_long_claim() -> None:
+    long = "word " * 400
+    (claim,) = parse_answer(json.dumps({"claims": [{"claim": long, "passage_id": "p:1"}]})).claims
+    assert claim.claim == long.strip()  # the checker drops it whole
+
+
+def test_the_prompt_asks_for_ids_and_no_typed_figures() -> None:
+    text = load_prompt().text
+    assert "{fin:" in text and "code_writes" in text
+    assert '"numbers"' not in text
 
 
 def test_deeply_nested_json_does_not_raise() -> None:

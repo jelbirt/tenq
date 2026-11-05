@@ -14,8 +14,8 @@ filing's value wins, so a restated comparative replaces the original. A
 quarter is never derived from a restated YTD and an unrestated one: that
 would book the whole restatement in one quarter, so the value is left out.
 
-Wrong ground truth is worse than none, since the checker drops any number in a
-brief that this table does not hold. So a comparative is only filled when its
+Wrong ground truth is worse than none, since code writes every number in a
+brief from this table. So a comparative is only filled when its
 period really is one quarter (or one year) back, and a percent change is only
 given when it means something: from a positive base without a sign change.
 """

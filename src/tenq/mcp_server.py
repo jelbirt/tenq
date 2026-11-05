@@ -21,6 +21,7 @@ from typing import Any, Protocol
 from mcp.server.mcpserver import MCPServer
 from mcp.types import ToolAnnotations
 
+from tenq.checker import metrics_view
 from tenq.filings import FilingStore, Passage
 from tenq.metrics import metrics_for
 from tenq.search import SearchHit, Xerj
@@ -71,9 +72,11 @@ def build_server(
     def get_metrics() -> dict[str, Any]:
         """Key numbers for the newest filing from its tagged data: each metric's
         current quarter (or balance at quarter end), prior quarter and year-ago
-        values, with change and percent change computed in code. Cite these
-        values exactly; any number in a brief must match one of them."""
-        return metrics_for(store, ticker, target.accession if target else None).to_dict()
+        values, with changes computed in code. Each number has an id and the
+        exact words code writes for it. Put a number in a claim as its id in
+        curly brackets, "{fin:CRWD:revenue:yoy_pct}"; never type a figure."""
+        table = metrics_for(store, ticker, target.accession if target else None)
+        return metrics_view(table, target.period if target else None)
 
     @server.tool(annotations=READ_ONLY)
     def search_filing(query: str, k: int = 5) -> list[dict[str, Any]]:

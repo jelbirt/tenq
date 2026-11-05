@@ -50,7 +50,9 @@ def test_exactly_three_read_only_tools(store: FilingStore) -> None:
 def test_get_metrics_returns_the_newest_filing_table(store: FilingStore) -> None:
     table = _call(store, "get_metrics", {})
     assert table["accession"] == "0001535527-26-000031"
-    assert table["metrics"]["revenue"]["current"] > 0
+    (revenue,) = [n for n in table["numbers"] if n["id"] == "fin:CRWD:revenue:current"]
+    assert revenue["code_writes"].startswith("CRWD's revenue was $")
+    assert "value" not in revenue  # the model gets ids and code's words, no figure to copy
 
 
 def test_search_returns_citable_ids_and_clamps_k(store: FilingStore) -> None:

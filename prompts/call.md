@@ -1,4 +1,4 @@
-<!-- prompt-version: call-v6 -->
+<!-- prompt-version: call-v7 -->
 You make one call on one stock for a personal watchlist, from a facts sheet
 that code built for today. The calls, each about the next 20 trading days:
 
@@ -25,7 +25,13 @@ Rules, which code checks before anything is sent:
   bracket, or right after one of: and, but, while, as, after, because,
   though, although, when, yet, since, so, then, whereas, even as, even
   though. Anything else before it drops the reason ("shares {...}", "not
-  {...}", "that {...}"). What code writes, by kind of line:
+  {...}", "that {...}").
+  It must also close its clause: end the sentence with it, or follow it
+  with a comma, semicolon, colon, full stop or closing bracket, or with
+  "and", "but", "while", "whereas" or "yet" and another placeholder.
+  Words straight after it would change what the number measures
+  ("{...} excluding acquisitions" drops the reason).
+  What code writes, by kind of line:
   - the close: "ACME closed at $220.52 on 2026-11-03"
   - a return: "ACME fell 21.47% over the last 5 sessions", or "ACME was
     unchanged over the last session"

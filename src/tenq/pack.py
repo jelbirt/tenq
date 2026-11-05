@@ -19,7 +19,7 @@ close (results land after the bell). So a call made from a pack must be
 scored from the first close after `as_of`, never from `day`'s close, or it
 would be credited with a move it could not have traded.
 
-Kinds follow the checker: "usd" amounts, "percent" values held as fractions
+Kinds of number: "usd" amounts, "percent" values held as fractions
 (0.258 is 25.8%), "points" differences of two percents held as fractions (a
 ratio's change, or a return less QQQ's).
 
@@ -231,8 +231,8 @@ class Pack:
 def money(value: float) -> str:
     """$1.471 billion, -$33.23 million, $244.68.
 
-    Four significant figures at least, so a value read off the page is within
-    the checker's 1e-3 relative tolerance of the exact value the pack holds.
+    Four significant figures at least, so the words code writes stay within a
+    tenth of a percent of the exact value the pack holds.
     """
     if not math.isfinite(value):
         return "n/a"
