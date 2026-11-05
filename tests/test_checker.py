@@ -1,12 +1,14 @@
 from __future__ import annotations
 
+from dataclasses import replace
+
 import pytest
 
 from tenq.brief import Claim
 from tenq.checker import Checked, check, check_claim, metrics_view, visible_docs
 from tenq.filings import FilingStore
 from tenq.metrics import MetricsTable, metrics_for
-from tenq.reasons import MAX_REASON_CHARS, fill, table_facts
+from tenq.reasons import MAX_REASON_CHARS, fill, phrase, table_facts
 
 LATEST = "CRWD-0001535527-26-000031"
 OLDER_ACC = "0001535527-26-000025"
@@ -50,6 +52,66 @@ def test_a_loss_and_a_margin_change_read_as_code_writes_them(
     assert isinstance(got, Checked)
     assert "operating income was a loss of $33.23 million in the quarter ended" in got.claim
     assert "gross margin rose 0.97 points from a year earlier" in got.claim
+
+
+@pytest.mark.parametrize(
+    ("number_id", "start"),
+    [
+        ("fin:CRWD:deferred_revenue:yoy_pct", "CRWD's total deferred revenue rose"),
+        ("fin:CRWD:deferred_revenue_current:yoy_pct", "CRWD's current deferred revenue rose"),
+        ("fin:CRWD:deferred_revenue_noncurrent:yoy_pct", "CRWD's noncurrent deferred revenue"),
+        ("fin:CRWD:capex:current", "CRWD's capital expenditures were"),
+        ("fin:CRWD:cash:current", "CRWD's cash and cash equivalents were"),
+    ],
+)
+def test_a_metric_reads_as_a_phrase(table: MetricsTable, number_id: str, start: str) -> None:
+    got = phrase(number_id, table_facts(table))
+    assert got is not None and got.startswith(start), got
+
+
+@pytest.mark.parametrize(
+    "metric",
+    ["cash", "deferred_revenue", "deferred_revenue_current", "deferred_revenue_noncurrent"],
+)
+def test_a_balance_is_at_the_end_of_the_quarter_not_in_it(table: MetricsTable, metric: str) -> None:
+    for fld in ("current", "prior_quarter"):
+        got = phrase(f"fin:CRWD:{metric}:{fld}", table_facts(table))
+        assert got is not None and " at the end of " in got and " in the " not in got, got
+
+
+@pytest.mark.parametrize("metric", ["revenue", "free_cash_flow", "operating_income"])
+def test_a_flow_is_in_the_quarter_not_at_its_end(table: MetricsTable, metric: str) -> None:
+    got = phrase(f"fin:CRWD:{metric}:current", table_facts(table))
+    assert got is not None and " in the quarter ended " in got and " at the end " not in got, got
+
+
+@pytest.mark.parametrize(
+    ("number_id", "want"),
+    [
+        ("fin:CRWD:cash:yoy_pct", "CRWD's cash and cash equivalents were unchanged"),
+        ("fin:CRWD:capex:qoq_change", "CRWD's capital expenditures were unchanged"),
+        ("fin:CRWD:revenue:yoy_pct", "CRWD's revenue was unchanged"),
+    ],
+)
+def test_no_change_takes_the_metric_s_own_verb(
+    table: MetricsTable, number_id: str, want: str
+) -> None:
+    facts = table_facts(table)
+    n = facts.number(number_id)
+    assert n is not None
+    flat = replace(facts, numbers={**facts.numbers, number_id: replace(n, value=0.0)})
+    got = phrase(number_id, flat)
+    assert got is not None and got.startswith(want), got
+
+
+def test_no_metric_s_words_hold_a_table_label_s_comma(table: MetricsTable) -> None:
+    facts = table_facts(table)
+    for number_id in facts.ids():
+        got = phrase(number_id, facts)
+        if got is None:
+            continue
+        subject = got.split(" rose ")[0].split(" fell ")[0].split(" was ")[0].split(" were ")[0]
+        assert "," not in subject, got
 
 
 def test_a_claim_with_no_number_needs_only_its_passage(

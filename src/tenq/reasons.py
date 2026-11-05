@@ -93,11 +93,13 @@ MAX_REASON_CHARS = 600  # placeholders are long ids; a longer reason is dropped,
 LOSS_METRICS = {"operating_income", "net_income"}  # a negative level reads "a loss of"
 # how a metric reads mid-sentence where its table label does not
 PHRASE_LABELS = {
+    "deferred_revenue": "total deferred revenue",
     "deferred_revenue_current": "current deferred revenue",
     "deferred_revenue_noncurrent": "noncurrent deferred revenue",
 }
-PLURAL_METRICS = {"capex"}  # "capital expenditures were"
-STOCK_METRICS = frozenset(m.name for m in BASE_METRICS if m.kind == "stock")  # balances
+PLURAL_METRICS = {"capex", "cash"}  # "capital expenditures were", "cash and ... were"
+# balances: read "at the end of"; total deferred revenue is the sum of two of them
+STOCK_METRICS = frozenset(m.name for m in BASE_METRICS if m.kind == "stock") | {"deferred_revenue"}
 
 
 @dataclass(frozen=True)
@@ -193,10 +195,17 @@ def _span(n: int) -> str:
 
 
 def _moved(
-    subject: str, v: float, size: str, tail: str, *, kind: str = "percent", by: bool = False
+    subject: str,
+    v: float,
+    size: str,
+    tail: str,
+    *,
+    kind: str = "percent",
+    by: bool = False,
+    was: str = "was",
 ) -> str:
     if _zero(v, kind):
-        return f"{subject} was unchanged {tail}"
+        return f"{subject} {was} unchanged {tail}"
     verb = "rose" if v > 0 else "fell"
     return f"{subject} {verb} {'by ' if by else ''}{size} {tail}"
 
@@ -258,9 +267,9 @@ def _filing(n: Number, facts: Facts, metric: str, fld: str) -> str | None:
             shown = f"negative {shown}"
         return f"{label} {was} {shown} {at} {when[fld]}"
     if n.kind == "usd":
-        return _moved(label, v, money(abs(v)), base, kind="usd", by=True)
+        return _moved(label, v, money(abs(v)), base, kind="usd", by=True, was=was)
     size = _pts(v) if n.kind == "points" else _pct(v)
-    return _moved(label, v, size, base, kind=n.kind)
+    return _moved(label, v, size, base, kind=n.kind, was=was)
 
 
 def phrase(number_id: str, source: Pack | Facts) -> str | None:
