@@ -288,7 +288,8 @@ def _filing(n: Number, facts: Facts, metric: str, fld: str) -> str | None:
             shown = f"negative {shown}"
         return f"{label} {was} {shown} {at} {when[fld]}"
     # a change names its quarter, so a later quarter in the news is not read into it
-    label = f"{label} {'at the end of' if metric in STOCK_METRICS else 'for'} {latest}"
+    quarter = when["prior_quarter"] if fld == "prior_yoy_pct" else latest
+    label = f"{label} {'at the end of' if metric in STOCK_METRICS else 'for'} {quarter}"
     if n.kind == "usd":
         return _moved(label, v, money(abs(v)), base, kind="usd", by=True, was=was)
     size = _pts(v) if n.kind == "points" else _pct(v)

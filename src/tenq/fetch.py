@@ -11,11 +11,12 @@ from tenq.filings import FilingMeta, FilingStore
 
 log = logging.getLogger(__name__)
 
-# The newest filing plus the four before it. Two back is enough to derive any
+# The newest filing plus the five before it. Two back is enough to derive any
 # quarter from year-to-date facts (a Q1 10-Q's prior quarter is Q4: the 10-K's
 # full year minus the Q3 10-Q's nine months), but a 10-Q's balance sheet has no
-# year-ago column, so the year-ago balance comes from the filing four back.
-DEFAULT_DEPTH = 5
+# year-ago column, so the year-ago balance comes from the filing four back, and
+# the balance a year before the prior quarter from the filing five back.
+DEFAULT_DEPTH = 6
 
 
 def sync(source: FilingSource, store: FilingStore, ticker: str, depth: int) -> list[FilingMeta]:

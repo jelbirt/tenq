@@ -97,10 +97,20 @@ def _ask(questions: QuestionSet, server: Server, **kw: Any) -> jev.Result:
 
 def test_the_committed_question_file_loads() -> None:
     q = load_questions()
-    assert q.version == "jev-q3"
+    assert q.version == "jev-q4"
     assert len(q.questions) == 6
     assert {x.type for x in q.questions} == {"noul", "choice", "score"}
     assert "\u2014" not in jev.QUESTIONS_PATH.read_text(encoding="utf-8")
+
+
+def test_jev_judges_change_and_surprise_not_size_and_cheer() -> None:
+    """jev-q4: fast growth alone is not improving, a routine launch is not good news."""
+    by_key = {x.key: x for x in load_questions().questions}
+    assert "speeding up or slowing down" in by_key["fundamentals"].instructions
+    assert "Fast\ngrowth that is slowing is worsening" not in by_key["fundamentals"].instructions
+    assert "growth that is slowing is worsening" in by_key["fundamentals"].instructions
+    assert "than investors" in by_key["direction"].instructions
+    assert "count as neutral" in by_key["direction"].instructions
 
 
 def test_questions_are_sent_in_the_system_one_shape(questions: QuestionSet) -> None:

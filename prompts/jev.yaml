@@ -16,7 +16,7 @@
 # Types (OpenRouter System One): noul is the probability a statement is
 # true; choice picks one label from criteria; score picks a level from an
 # ordered list (0 is the first). Changing any question bumps the version.
-version: jev-q3
+version: jev-q4
 questions:
   material:
     type: noul
@@ -32,13 +32,16 @@ questions:
     type: choice
     instructions: >-
       Taken together, is the information in the recent 8-K and recent headline
-      sections good or bad for this company's business (not for its stock
-      price)?
+      sections better or worse for this company's business than investors
+      would already have expected (not for its stock price)? Routine
+      announcements, such as a product launch, a partnership, a customer win,
+      a conference talk or an award, are what companies normally put out and
+      count as neutral.
     criteria:
-      neutral: Nothing recent that moves the business either way.
-      mixed: Real good and bad items that roughly offset.
-      bad: Mostly bad for the business.
-      good: Mostly good for the business.
+      neutral: Nothing recent beyond what investors would expect, or only routine announcements.
+      mixed: Real better and worse than expected items that roughly offset.
+      bad: Mostly worse than expected for the business.
+      good: Mostly better than expected for the business.
   source:
     type: choice
     instructions: >-
@@ -69,8 +72,13 @@ questions:
     # Rules ignore this answer when the pack has no fin: numbers.
     type: score
     instructions: >-
-      From the latest 10-Q or 10-K numbers (growth from a year ago, margins,
-      cash flow), how is the business trending?
+      From the latest 10-Q or 10-K numbers, is the business getting better or
+      worse? Judge the direction of change, not the size: compare the
+      quarter's change from a year ago with the prior quarter's change from a
+      year before it (is growth speeding up or slowing down?), and say whether
+      margins and cash flow are widening or narrowing from a year ago. Fast
+      growth that is slowing is worsening; slow growth that is speeding up is
+      improving.
     criteria:
       - Clearly worsening.
       - Somewhat worsening.

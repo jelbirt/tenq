@@ -31,6 +31,31 @@ def test_latest_10q_tagged_and_derived_values(store: FilingStore) -> None:
     )
 
 
+def test_the_prior_quarters_growth_is_measured_from_a_year_before_it(
+    store: FilingStore,
+) -> None:
+    t = metrics_for(store, "CRWD")
+    assert t.prior_year_ago_period == "2025-04-30"
+    assert t.number("revenue", "prior_yoy_pct") == pytest.approx(1_385_629_000 / 1_103_434_000 - 1)
+    assert t.to_dict()["prior_year_ago_period"] == "2025-04-30"
+    assert t.number("gross_margin", "prior_yoy_pct") is None  # a margin moves in points
+
+
+def test_prior_growth_needs_both_of_its_quarters() -> None:
+    facts = [
+        _flow(REV, "2026-04-01", "2026-06-30", 12.0),
+        _flow(REV, "2026-01-01", "2026-03-31", 11.0),
+        _flow(REV, "2025-01-01", "2025-03-31", 10.0),
+    ]
+    t = build_table([(_meta("a-26-2", "2026-06-30"), facts)])
+    assert (t.prior_period, t.prior_year_ago_period) == ("2026-03-31", "2025-03-31")
+    assert t.number("revenue", "prior_yoy_pct") == pytest.approx(0.1)
+    assert t.number("revenue", "yoy_pct") is None  # no year-ago quarter for the latest one
+    alone = build_table([(_meta("a-26-2", "2026-06-30"), facts[:2])])
+    assert alone.prior_year_ago_period is None
+    assert alone.number("revenue", "prior_yoy_pct") is None
+
+
 def test_10k_quarter_is_full_year_less_nine_months(store: FilingStore) -> None:
     t = metrics_for(store, "CRWD", "0001535527-26-000010")
     assert t.form == "10-K"

@@ -111,6 +111,10 @@ def test_the_latest_filing_known_at_the_time_gives_tagged_numbers(
     margin_now = p.number("fin:CRWD:gross_margin:current")
     assert margin_now is not None and margin_now.kind == "percent"
     assert p.number("fin:CRWD:gross_margin:yoy_pct") is None  # no percent change of a ratio
+    # growth a quarter earlier, so Jev can tell if growth is speeding up or slowing
+    prior_growth = p.number("fin:CRWD:revenue:prior_yoy_pct")
+    assert prior_growth is not None and prior_growth.kind == "percent"
+    assert "Revenue, prior quarter's change from a year before it, percent" in p.render()
     # the quarters its numbers compare with, so code's words can date them
     assert (p.filing.prior_period, p.filing.year_ago_period) == ("2026-04-30", "2025-07-31")
     assert phrase("fin:CRWD:revenue:prior_quarter", p) == (

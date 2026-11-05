@@ -314,6 +314,7 @@ FIELD_LABELS = {
     "qoq_pct": "change from the prior quarter, percent",
     "yoy_change": "change from a year ago",
     "yoy_pct": "change from a year ago, percent",
+    "prior_yoy_pct": "prior quarter's change from a year before it, percent",
 }
 
 

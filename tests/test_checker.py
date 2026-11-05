@@ -111,6 +111,10 @@ def test_a_flow_is_in_the_quarter_not_at_its_end(table: MetricsTable, metric: st
             "CRWD's cash and cash equivalents were $4.553 billion"
             " at the end of the quarter ended 2026-04-30",
         ),
+        (
+            "fin:CRWD:revenue:prior_yoy_pct",
+            "CRWD's revenue for the quarter ended 2026-04-30 rose 25.57% from a year earlier",
+        ),
     ],
 )
 def test_an_earlier_quarters_amount_names_that_quarter(
