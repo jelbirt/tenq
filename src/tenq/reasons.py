@@ -252,6 +252,9 @@ def render(reason: Reason, pack: Pack) -> Rendered | str:
     for number_id in numbers:
         p = phrase(number_id, pack)
         if p is None:
+            n = pack.number(number_id)
+            if n is not None and not math.isfinite(n.value):
+                return f"placeholder {number_id!r} has no finite value"
             return f"placeholder {number_id!r} is not a number on the facts sheet"
         phrases[number_id] = p
     text = PLACEHOLDER.sub(lambda m: phrases[m.group(1).strip()], reason.text)

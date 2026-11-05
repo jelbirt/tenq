@@ -413,7 +413,9 @@ def test_a_number_that_is_not_finite_has_no_words(
 ) -> None:
     bad = replace(PACK, numbers=[_n(number_id, label, value, kind)])
     assert phrase(number_id, bad) is None
-    assert not isinstance(render(Reason("{" + number_id + "}.", ()), bad), Rendered)
+    assert render(Reason("{" + number_id + "}.", ()), bad) == (
+        f"placeholder {number_id!r} has no finite value"
+    )
 
 
 @pytest.mark.parametrize(
