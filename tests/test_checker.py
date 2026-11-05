@@ -34,7 +34,7 @@ def test_code_writes_the_number_and_keeps_the_draft(
     got = _check(store, table, Claim(draft, PID))
     assert isinstance(got, Checked)
     assert got.claim == (
-        "CRWD's revenue rose 25.83% from a year earlier, as customers adopted more modules."
+        "CRWD's revenue for the quarter ended 2026-07-31 rose 25.83% from a year earlier, as customers adopted more modules."
     )
     assert got.numbers == ("fin:CRWD:revenue:yoy_pct",) and got.draft == draft
     assert got.passage_id == PID
@@ -52,14 +52,23 @@ def test_a_loss_and_a_margin_change_read_as_code_writes_them(
     )
     assert isinstance(got, Checked)
     assert "operating income was a loss of $33.23 million in the quarter ended" in got.claim
-    assert "gross margin rose 0.97 points from a year earlier" in got.claim
+    assert (
+        "gross margin for the quarter ended 2026-07-31 rose 0.97 points from a year earlier"
+        in got.claim
+    )
 
 
 @pytest.mark.parametrize(
     ("number_id", "start"),
     [
-        ("fin:CRWD:deferred_revenue:yoy_pct", "CRWD's total deferred revenue rose"),
-        ("fin:CRWD:deferred_revenue_current:yoy_pct", "CRWD's current deferred revenue rose"),
+        (
+            "fin:CRWD:deferred_revenue:yoy_pct",
+            "CRWD's total deferred revenue at the end of the quarter ended 2026-07-31 rose",
+        ),
+        (
+            "fin:CRWD:deferred_revenue_current:yoy_pct",
+            "CRWD's current deferred revenue at the end of the quarter ended 2026-07-31 rose",
+        ),
         ("fin:CRWD:deferred_revenue_noncurrent:yoy_pct", "CRWD's noncurrent deferred revenue"),
         ("fin:CRWD:capex:current", "CRWD's capital expenditures were"),
         ("fin:CRWD:cash:current", "CRWD's cash and cash equivalents were"),
@@ -89,9 +98,18 @@ def test_a_flow_is_in_the_quarter_not_at_its_end(table: MetricsTable, metric: st
 @pytest.mark.parametrize(
     ("number_id", "want"),
     [
-        ("fin:CRWD:cash:yoy_pct", "CRWD's cash and cash equivalents were unchanged"),
-        ("fin:CRWD:capex:qoq_change", "CRWD's capital expenditures were unchanged"),
-        ("fin:CRWD:revenue:yoy_pct", "CRWD's revenue was unchanged"),
+        (
+            "fin:CRWD:cash:yoy_pct",
+            "CRWD's cash and cash equivalents at the end of the quarter ended 2026-07-31 were unchanged",
+        ),
+        (
+            "fin:CRWD:capex:qoq_change",
+            "CRWD's capital expenditures for the quarter ended 2026-07-31 were unchanged",
+        ),
+        (
+            "fin:CRWD:revenue:yoy_pct",
+            "CRWD's revenue for the quarter ended 2026-07-31 was unchanged",
+        ),
     ],
 )
 def test_no_change_takes_the_metric_s_own_verb(
@@ -142,7 +160,6 @@ def test_a_passage_from_a_later_filing_is_dropped(store: FilingStore) -> None:
         f"{REV_YOY}, up from $1.2 billion.",
         f"{REV_YOY}, across three segments.",
         f"{REV_YOY}, and revenue doubled.",
-        f"{REV_YOY}, as the 10-Q describes.",
         f"{REV_YOY}, as it did in fiscal 2026.",
         f"{REV_YOY}; over the six-month period cash came from customers.",
         f"{REV_YOY}, after the outage in July.",

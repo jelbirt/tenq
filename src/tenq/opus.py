@@ -134,6 +134,9 @@ def call_message(pack: Pack) -> str:
 
 def why_message(pack: Pack, call: Call) -> str:
     how = "\n".join(f"- {line}" for line in call.explain())
+    if call.reaction_id:
+        # the sheet has moves over several windows; name the one the rules used
+        how += f"\n- the market reaction was measured on {{{call.reaction_id}}}"
     return (
         f"Jev's call on {pack.ticker}: {call.call}.\n"
         f"How the rules reached it:\n{how}\n\n"

@@ -36,6 +36,7 @@ from __future__ import annotations
 import hashlib
 import logging
 import math
+import re
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Literal
@@ -116,6 +117,7 @@ class Call:
     # which way the stock moved against the signal: "with" (priced in),
     # "against" (doubted), or "" when there was no cut
     reaction_way: str = ""
+    reaction_id: str = ""  # the sheet line the cut was measured on, "" when none
 
     def to_dict(self) -> dict[str, Any]:
         out = {k: v for k, v in vars(self).items() if k != "parts"}
@@ -130,13 +132,14 @@ class Call:
             for p in self.parts
         ]
         if self.reaction:
-            why = {
-                "with": "moved with the signal, partly priced in",
-                "against": "moved against the signal, the market doubts it",
-            }
+            way, meaning = {
+                "with": ("moved with the signal", ", partly priced in"),
+                "against": ("moved against the signal", ", the market doubts it"),
+            }.get(self.reaction_way, ("moved", ""))
+            m = re.fullmatch(r"px:[^:]+:excess_([0-9]+)d", self.reaction_id)
+            span = f" over the last {m.group(1)} sessions" if m else ""
             lines.append(
-                f"market reaction: score cut by {self.reaction:.0%} "
-                f"({why.get(self.reaction_way, 'moved')})"
+                f"market reaction: score cut by {self.reaction:.0%} ({way}{span}{meaning})"
             )
         lines.append(f"score {self.score:+.2f}: {self.call} (confidence {self.confidence:.0%})")
         return lines
@@ -502,9 +505,10 @@ def _decide(pack: Pack, result: Result, rules: Rules, questions: QuestionSet) ->
     parts = _parts(pack, result, rules, questions)
     raw = sum(p.contribution for p in parts)
     cut, note = reaction(pack, raw, rules)
-    way = ""
+    way = moved_id = ""
     if cut:
-        moved = pack.number(f"px:{pack.ticker}:excess_{rules.sessions}d")
+        moved_id = f"px:{pack.ticker}:excess_{rules.sessions}d"
+        moved = pack.number(moved_id)
         way = "with" if moved is not None and (moved.value > 0) == (raw > 0) else "against"
     score = min(1.0, max(-1.0, raw * (1.0 - cut)))
     call = name_call(score, rules)
@@ -534,4 +538,5 @@ def _decide(pack: Pack, result: Result, rules: Rules, questions: QuestionSet) ->
         coverage=coverage(parts),
         rules_sha=rules.sha256,
         reaction_way=way,
+        reaction_id=moved_id,
     )

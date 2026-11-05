@@ -1,4 +1,4 @@
-<!-- prompt-version: why-v8 -->
+<!-- prompt-version: why-v9 -->
 Another system made a call on one stock from the facts sheet below. That
 system is Jev, a decision model that answered narrow questions about the
 sheet, and a fixed rules file that turned its answers into the call. You are
@@ -28,7 +28,9 @@ Rules, which code checks before anything is sent:
   the rules read and weighed each part (the news, the latest filing, the
   market's move), with any sheet number in it as its placeholder, for
   example "{px:TICKER:excess_5d}, so the rules took the news as partly
-  priced in"; and how each point bears on the call. Say what a number
+  priced in"; and how each point bears on the call. For the market's move
+  behind the rules' cut, use the id the rules' summary says it was measured
+  on, not another window's. Say what a number
   means without saying again how big it is or which way it moved.
   Each placeholder becomes a whole clause with its own subject and verb, so
   it must open a clause: start the reason with it, or put it right after a
@@ -53,9 +55,11 @@ Rules, which code checks before anything is sent:
     2026-07-31", "ACME's operating income was a loss of $4.000 million in
     the quarter ended 2026-07-31", "ACME's free cash flow (operating cash flow
     less capex) was negative $5.000 million in the prior quarter"
-  - a filing change: "ACME's revenue rose 35.64% from a year earlier",
-    "ACME's operating income rose by $88.10 million from the prior quarter",
-    "ACME's gross margin rose 1.20 points from a year earlier"
+  - a filing change: "ACME's revenue for the quarter ended 2026-07-31 rose
+    35.64% from a year earlier", "ACME's operating income for the quarter
+    ended 2026-07-31 rose by $88.10 million from the prior quarter", "ACME's
+    total deferred revenue at the end of the quarter ended 2026-07-31 rose
+    26.27% from a year earlier"
   Example reason: "{px:TICKER:ret_5d}, after a rival cut its outlook and
   software stocks sold off."
 - Never type a figure yourself. Your own words may hold no figure at all:

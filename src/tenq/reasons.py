@@ -75,6 +75,8 @@ DATE_WORD = re.compile(
     # month abbreviations, only with their full stop so "Mar" and "Dec" as names pass
     r"|\b(?:Jan|Feb|Mar|Apr|Jun|Jul|Aug|Sept?|Oct|Nov|Dec)\."
 )
+# SEC form names hold digits but no figure: "the 8-K", "two 10-Qs", "the 10-K/A"
+FORM_NAME = re.compile(r"\b(?:8-K|10-Q|10-K)(?:/A)?(?:s|'s)?\b")
 # percent, per mille, per ten thousand, fullwidth, small and Arabic percent, "#1"
 MARKS = {"%", "\u2030", "\u2031", "\uff05", "\ufe6a", "\u066a", "#"}
 # a placeholder opens a clause: after these marks, or after one of these words
@@ -266,6 +268,8 @@ def _filing(n: Number, facts: Facts, metric: str, fld: str) -> str | None:
         if v < 0 and not _zero(v, n.kind):
             shown = f"negative {shown}"
         return f"{label} {was} {shown} {at} {when[fld]}"
+    # a change names its quarter, so a later quarter in the news is not read into it
+    label = f"{label} {'at the end of' if metric in STOCK_METRICS else 'for'} {latest}"
     if n.kind == "usd":
         return _moved(label, v, money(abs(v)), base, kind="usd", by=True, was=was)
     size = _pts(v) if n.kind == "points" else _pct(v)
@@ -288,6 +292,7 @@ def phrase(number_id: str, source: Pack | Facts) -> str | None:
 
 def figure_in(words: str) -> str | None:
     """The first figure in the model's own words, if any."""
+    words = FORM_NAME.sub(" ", words)
     for c in words:
         if unicodedata.numeric(c, None) is not None or c in MARKS:
             return c
