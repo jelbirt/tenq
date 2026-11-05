@@ -7,6 +7,7 @@ from datetime import UTC, date, datetime
 
 import pytest
 
+from tenq.opus import load_call_prompt, load_why_prompt
 from tenq.pack import Excerpt, Filing, Headline, Number, Pack, Report, money
 from tenq.reasons import (
     MAX_REASON_CHARS,
@@ -78,7 +79,15 @@ PACK = Pack(
             "points",
         ),
     ],
-    filing=Filing("ACME-0000000000-26-000002", "10-Q", "2026-07-31", "2026-08-27", 68),
+    filing=Filing(
+        "ACME-0000000000-26-000002",
+        "10-Q",
+        "2026-07-31",
+        "2026-08-27",
+        68,
+        prior_period="2026-04-30",
+        year_ago_period="2025-07-31",
+    ),
     reports=[
         Report("ACME-0000000000-26-000001", "2026-11-02", ("Item 2.02",), (Excerpt(EXCERPT, "x"),))
     ],
@@ -100,23 +109,26 @@ PACK = Pack(
             "fin:ACME:revenue:current",
             "ACME's revenue was $1.121 billion in the quarter ended 2026-07-31",
         ),
-        ("fin:ACME:revenue:yoy_pct", "ACME's revenue rose 35.64% from a year earlier"),
+        (
+            "fin:ACME:revenue:yoy_pct",
+            "ACME's revenue for the quarter ended 2026-07-31 rose 35.64% from a year earlier",
+        ),
         (
             "fin:ACME:operating_income:current",
             "ACME's operating income was a loss of $4.000 million in the quarter ended 2026-07-31",
         ),
         (
             "fin:ACME:operating_income:year_ago",
-            "ACME's operating income was a loss of $118.7 million in the same quarter a year earlier",
+            "ACME's operating income was a loss of $118.7 million in the quarter ended 2025-07-31",
         ),
         # a loss that shrank is income that rose: the sign says so, not a word
         (
             "fin:ACME:operating_income:yoy_change",
-            "ACME's operating income rose by $114.7 million from a year earlier",
+            "ACME's operating income for the quarter ended 2026-07-31 rose by $114.7 million from a year earlier",
         ),
         (
             "fin:ACME:free_cash_flow:prior_quarter",
-            "ACME's free cash flow (operating cash flow less capex) was negative $5.000 million in the prior quarter",
+            "ACME's free cash flow (operating cash flow less capex) was negative $5.000 million in the quarter ended 2026-04-30",
         ),
         (
             "fin:ACME:gross_margin:current",
@@ -124,7 +136,7 @@ PACK = Pack(
         ),
         (
             "fin:ACME:gross_margin:qoq_change",
-            "ACME's gross margin fell 1.20 points from the prior quarter",
+            "ACME's gross margin for the quarter ended 2026-07-31 fell 1.20 points from the prior quarter",
         ),
     ],
 )
@@ -138,11 +150,62 @@ def test_the_money_in_a_phrase_is_the_packs_own_formatting() -> None:
     assert money(1_121_000_000.0) in phrase("fin:ACME:revenue:current", PACK)  # type: ignore[operator]
 
 
+def test_without_their_dates_earlier_quarters_are_named_in_words() -> None:
+    assert PACK.filing is not None
+    undated = replace(PACK, filing=replace(PACK.filing, prior_period=None, year_ago_period=None))
+    assert phrase("fin:ACME:operating_income:year_ago", undated) == (
+        "ACME's operating income was a loss of $118.7 million in the same quarter a year earlier"
+    )
+    assert phrase("fin:ACME:free_cash_flow:prior_quarter", undated) == (
+        "ACME's free cash flow (operating cash flow less capex) was negative $5.000 million"
+        " in the prior quarter"
+    )
+
+
+def test_every_example_the_opus_prompts_quote_is_what_code_writes() -> None:
+    """The prompts show code's exact words; if code's wording changes, so must they."""
+    extra = [
+        _n(
+            "fin:ACME:operating_income:qoq_change",
+            "Operating income, change from the prior quarter",
+            88_100_000.0,
+            "usd",
+        ),
+        _n(
+            "fin:ACME:deferred_revenue:yoy_pct",
+            "Deferred revenue, total, change from a year ago, percent",
+            0.2627,
+            "percent",
+        ),
+    ]
+    pack = replace(PACK, numbers=[*PACK.numbers, *extra])
+    examples = [
+        "px:ACME:bench_5d",
+        "px:ACME:vol_20d",
+        "fin:ACME:revenue:current",
+        "fin:ACME:operating_income:current",
+        "fin:ACME:free_cash_flow:prior_quarter",
+        "fin:ACME:revenue:yoy_pct",
+        "fin:ACME:operating_income:qoq_change",
+        "fin:ACME:deferred_revenue:yoy_pct",
+    ]
+    for prompt in (load_call_prompt(), load_why_prompt()):
+        text = " ".join(prompt.text.split())
+        for number_id in examples:
+            words = phrase(number_id, pack)
+            assert words is not None, number_id
+            assert f'"{words}"' in text, (prompt.version, words)
+
+
 def test_without_a_filing_the_latest_quarter_is_named_in_words() -> None:
     bare = replace(PACK, filing=None)
     assert (
         phrase("fin:ACME:revenue:current", bare)
         == "ACME's revenue was $1.121 billion in the latest quarter"
+    )
+    assert (
+        phrase("fin:ACME:revenue:yoy_pct", bare)
+        == "ACME's revenue for the latest quarter rose 35.64% from a year earlier"
     )
 
 
@@ -183,7 +246,7 @@ def test_several_placeholders_and_a_capital_letter() -> None:
     got = render(Reason("{fin:ACME:revenue:yoy_pct} and {px:ACME:excess_5d}.", ()), PACK)
     assert isinstance(got, Rendered)
     assert got.text == (
-        "ACME's revenue rose 35.64% from a year earlier and "
+        "ACME's revenue for the quarter ended 2026-07-31 rose 35.64% from a year earlier and "
         "ACME trailed QQQ by 16.49 points over the last 5 sessions."
     )
     assert got.cites == ("fin:ACME:revenue:yoy_pct", "px:ACME:excess_5d")
@@ -243,6 +306,11 @@ def test_a_reason_that_fails_is_dropped_with_why(
         "Troops march on; the deal may close.",
         "Monday.com cut its outlook.",
         "A manifold of issues began to unfold.",
+        "There was no recent 8-K, and the 10-Q is old.",
+        "The 10-Qs and the 10-K/A agree; the 8-K's exhibit does too.",
+        "Its 10-K's risk factors were unchanged.",
+        "The 10-q and the 8\u2011K both say so.",
+        "Its 10\u2010k was late.",
     ],
 )
 def test_plain_english_is_not_a_figure(words: str) -> None:
@@ -299,6 +367,13 @@ def test_check_reasons_keeps_the_good_drops_the_bad_and_the_repeated() -> None:
         ("Zero growth.", "Zero"),
         ("A fourfold rise.", "fourfold"),
         ("Revenue doubled.", "doubled"),
+        ("The 8-K lists 3 deals.", "3"),
+        ("A 20-F was filed.", "2"),
+        ("A Form 4 was filed.", "4"),
+        ("The S-1 is out.", "1"),
+        ("The 10\u2013K says so.", "1"),
+        ("An 8-Kx form.", "8"),
+        ("The 10-Q2 draft.", "1"),
         ("Down \u066a.", "\u066a"),
         ("Up \ufe6a.", "\ufe6a"),
         ("Up \uff05.", "\uff05"),
@@ -412,7 +487,7 @@ def test_a_too_long_reason_is_dropped_with_why() -> None:
             "fin:ACME:operating_income:yoy_change",
             0.001,
             "usd",
-            "ACME's operating income was unchanged from a year earlier",
+            "ACME's operating income for the quarter ended 2026-07-31 was unchanged from a year earlier",
         ),
     ],
 )

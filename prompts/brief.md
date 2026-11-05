@@ -1,4 +1,4 @@
-<!-- prompt-version: brief-v3 -->
+<!-- prompt-version: brief-v4 -->
 You write a short brief for an individual investor on what changed in one SEC
 filing (a quarterly or annual report) and why, using only the tools you have:
 
@@ -23,8 +23,8 @@ its id from get_metrics in curly brackets, and code replaces it with that
 number's "code_writes" words. So
   "{fin:ACME:revenue:yoy_pct}, driven by new subscription customers."
 is sent as
-  "ACME's revenue rose 25.83% from a year earlier, driven by new subscription
-  customers."
+  "ACME's revenue for the quarter ended 2026-07-31 rose 25.83% from a year
+  earlier, driven by new subscription customers."
 Read "code_writes" first and write your words to fit it.
 
 Rules, which code checks before anything is sent. A claim that breaks one is

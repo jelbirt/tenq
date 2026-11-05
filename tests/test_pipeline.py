@@ -25,7 +25,7 @@ from tenq.trace import Tracing, connect, emit, send_trace
 
 LATEST = "CRWD-0001535527-26-000031"
 GOOD = Claim("{fin:CRWD:revenue:yoy_pct}, as customers adopted more modules.", f"{LATEST}:23")
-GOOD_SENT = "CRWD's revenue rose 25.83% from a year earlier, as customers adopted more modules."
+GOOD_SENT = "CRWD's revenue for the quarter ended 2026-07-31 rose 25.83% from a year earlier, as customers adopted more modules."
 BAD = Claim("Revenue grew 40%.", f"{LATEST}:23")
 PROMPT = Prompt("brief-test", "rules")
 

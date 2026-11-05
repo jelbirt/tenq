@@ -3,9 +3,9 @@
 The model never types a figure. Where a claim uses one of the filing's numbers,
 it writes that number's id from get_metrics in curly brackets,
 "{fin:CRWD:revenue:yoy_pct}", and code writes that part of the sentence from
-the tagged XBRL data ("CRWD's revenue rose 25.83% from a year earlier"). The
-rules are the daily calls' rules (tenq.reasons.fill), with the filing's
-numbers as the facts.
+the tagged XBRL data ("CRWD's revenue for the quarter ended 2026-07-31 rose
+25.83% from a year earlier"). The rules are the daily calls' rules
+(tenq.reasons.fill), with the filing's numbers as the facts.
 
 A claim is sent only if:
 1. its passage_id resolves to a saved passage of this ticker's briefed filing

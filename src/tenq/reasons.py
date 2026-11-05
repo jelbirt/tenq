@@ -75,6 +75,10 @@ DATE_WORD = re.compile(
     # month abbreviations, only with their full stop so "Mar" and "Dec" as names pass
     r"|\b(?:Jan|Feb|Mar|Apr|Jun|Jul|Aug|Sept?|Oct|Nov|Dec)\."
 )
+# SEC form names hold digits but no figure: "the 8-K", "two 10-Qs", "the 10-K/A",
+# in any case and with a plain, Unicode or non-breaking hyphen. Only the forms the
+# sheet uses: another form's digits ("a Form 4", "the S-1") still drop the reason.
+FORM_NAME = re.compile(r"\b(?:8|10)[-\u2010\u2011](?:K|Q)(?:/A)?(?:s|'s)?\b", re.IGNORECASE)
 # percent, per mille, per ten thousand, fullwidth, small and Arabic percent, "#1"
 MARKS = {"%", "\u2030", "\u2031", "\uff05", "\ufe6a", "\u066a", "#"}
 # a placeholder opens a clause: after these marks, or after one of these words
@@ -110,6 +114,8 @@ class Facts:
     ticker: str
     numbers: dict[str, Number]
     period: str | None = None  # the latest quarter's end, for "the quarter ended ..."
+    prior_period: str | None = None  # the quarters its changes compare with
+    year_ago_period: str | None = None
     day: date | None = None  # the price session, for "closed at ... on ..."
     sources: frozenset[str] = frozenset()  # ids that may be cited but hold no number
 
@@ -128,12 +134,15 @@ def _by_id(numbers: Iterable[Number]) -> dict[str, Number]:
 
 
 def pack_facts(pack: Pack) -> Facts:
+    f = pack.filing
     return Facts(
         pack.ticker,
         _by_id(pack.numbers),
-        pack.filing.period if pack.filing else None,
-        pack.day,
-        frozenset(pack.ids() - {n.id for n in pack.numbers}),
+        period=f.period if f else None,
+        prior_period=f.prior_period if f else None,
+        year_ago_period=f.year_ago_period if f else None,
+        day=pack.day,
+        sources=frozenset(pack.ids() - {n.id for n in pack.numbers}),
     )
 
 
@@ -142,7 +151,13 @@ def table_facts(table: MetricsTable, period: str | None = None) -> Facts:
     the filing's own period, the date the email and the daily pack show; the
     table's is the tagged data's, which can be a few days off."""
     numbers = _by_id(filing_numbers(table.ticker, table.to_dict()))
-    return Facts(table.ticker, numbers, period or table.period)
+    return Facts(
+        table.ticker,
+        numbers,
+        period or table.period,
+        prior_period=table.prior_period,
+        year_ago_period=table.year_ago_period,
+    )
 
 
 def _facts(source: Pack | Facts) -> Facts:
@@ -250,8 +265,14 @@ def _filing(n: Number, facts: Facts, metric: str, fld: str) -> str | None:
     latest = f"the quarter ended {facts.period}" if facts.period else "the latest quarter"
     when = {
         "current": latest,
-        "prior_quarter": "the prior quarter",
-        "year_ago": "the same quarter a year earlier",
+        "prior_quarter": (
+            f"the quarter ended {facts.prior_period}" if facts.prior_period else "the prior quarter"
+        ),
+        "year_ago": (
+            f"the quarter ended {facts.year_ago_period}"
+            if facts.year_ago_period
+            else "the same quarter a year earlier"
+        ),
     }
     # a balance is held at the quarter's end; a flow happens in it
     at = "at the end of" if metric in STOCK_METRICS else "in"
@@ -266,6 +287,8 @@ def _filing(n: Number, facts: Facts, metric: str, fld: str) -> str | None:
         if v < 0 and not _zero(v, n.kind):
             shown = f"negative {shown}"
         return f"{label} {was} {shown} {at} {when[fld]}"
+    # a change names its quarter, so a later quarter in the news is not read into it
+    label = f"{label} {'at the end of' if metric in STOCK_METRICS else 'for'} {latest}"
     if n.kind == "usd":
         return _moved(label, v, money(abs(v)), base, kind="usd", by=True, was=was)
     size = _pts(v) if n.kind == "points" else _pct(v)
@@ -288,6 +311,7 @@ def phrase(number_id: str, source: Pack | Facts) -> str | None:
 
 def figure_in(words: str) -> str | None:
     """The first figure in the model's own words, if any."""
+    words = FORM_NAME.sub(" ", words)
     for c in words:
         if unicodedata.numeric(c, None) is not None or c in MARKS:
             return c

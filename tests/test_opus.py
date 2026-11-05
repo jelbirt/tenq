@@ -5,7 +5,7 @@ from typing import Any
 
 import pytest
 from test_reasons import NEWS, PACK
-from test_rules import QUESTIONS, RULES, _good, _pack
+from test_rules import QUESTIONS, RULES, USUAL_5D, _good, _move, _pack
 
 from tenq import opus
 from tenq.llm import INFRA, AgentRun
@@ -118,6 +118,20 @@ def test_a_reason_padded_with_spaces_is_dropped_never_cut() -> None:
     assert check_reasons(got.reasons, PACK).kept == []
 
 
+def test_the_why_is_told_which_move_the_rules_weighed() -> None:
+    moved = _pack(*_move(2.0 * USUAL_5D))
+    call = decide(moved, _good(), RULES, QUESTIONS)
+    assert call is not None and call.reaction_id == f"px:{moved.ticker}:excess_5d"
+    message = opus.why_message(moved, call)
+    id_line = f"- the market reaction was measured on {{{call.reaction_id}}}\n"
+    reaction_line = next(x for x in call.explain() if x.startswith("market reaction:"))
+    assert f"- {reaction_line}\n{id_line}" in message  # right under the cut it measures
+    assert call.to_dict()["reaction_id"] == call.reaction_id
+    still = decide(_pack(), _good(), RULES, QUESTIONS)
+    assert still is not None and still.reaction_id == ""
+    assert "measured on" not in opus.why_message(_pack(), still)
+
+
 def test_reasons_without_cites_and_with_lone_surrogates_are_kept_printable() -> None:
     raw = '{"call": "Buy", "reasons": [{"text": "A \\ud800 rival cut its outlook."}]}'
     got = parse_call(raw)
@@ -156,8 +170,8 @@ def test_a_failed_why_run_says_why() -> None:
 
 
 def test_prompts_are_versioned() -> None:
-    assert opus.load_call_prompt().version == "call-v8"
-    assert opus.load_why_prompt().version == "why-v8"
+    assert opus.load_call_prompt().version == "call-v9"
+    assert opus.load_why_prompt().version == "why-v9"
 
 
 def test_both_prompts_send_claims_about_numbers_to_code() -> None:

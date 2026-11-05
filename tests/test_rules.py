@@ -5,6 +5,7 @@ from __future__ import annotations
 import dataclasses
 import itertools
 import math
+from dataclasses import replace
 from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import Any
@@ -339,7 +340,7 @@ def test_the_reaction_never_turns_a_call_past_hold() -> None:
     assert call.reaction == pytest.approx(RULES.most) and call.score > 0
     assert call.call == "Hold" and call.reaction_way == "against"
     assert call.explain()[-2] == (
-        "market reaction: score cut by 75% (moved against the signal, the market doubts it)"
+        "market reaction: score cut by 75% (moved against the signal over the last 5 sessions, the market doubts it)"
     )
 
 
@@ -400,7 +401,7 @@ def test_the_record_and_the_email_lines_show_every_part() -> None:
         "news: +0.32 (good +0.90, material 80%, evidence 1.00; weight 0.45, certainty 100%)"
     )
     assert lines[-2:] == [
-        "market reaction: score cut by 50% (moved with the signal, partly priced in)",
+        "market reaction: score cut by 50% (moved with the signal over the last 5 sessions, partly priced in)",
         "score +0.32: Buy (confidence 37%)",
     ]
 
@@ -669,3 +670,11 @@ def test_the_reaction_reads_nothing_into_a_zero_score_or_an_unreadable_move() ->
     assert reaction(_pack(*_move(0.05, vol=1e-320)), 0.0, RULES) == (0.0, None)
     cut, note = reaction(_pack(*_move(0.05, vol=1e-320)), 0.3, RULES)
     assert cut == 0.0 and note == "price move too large to read against its volatility"
+
+
+def test_a_one_session_reaction_reads_in_the_singular() -> None:
+    call = decide(_pack(*_move(2.0 * USUAL_5D)), _good(), RULES, QUESTIONS)
+    assert call is not None
+    one = replace(call, reaction_id="px:ACME:excess_1d")
+    line = next(x for x in one.explain() if x.startswith("market reaction:"))
+    assert "over the last session," in line and "1 sessions" not in line
