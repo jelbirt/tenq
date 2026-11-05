@@ -2,13 +2,12 @@
 
 The prompt is a versioned file (prompts/brief.md); its version goes into the
 trace and the run record. The model's answer is untrusted until the checker
-(tenq.checker) has passed each claim.
+(tenq.checker) has passed each claim and code has written its numbers.
 """
 
 from __future__ import annotations
 
 import json
-import math
 import re
 import sys
 from dataclasses import dataclass, field
@@ -24,7 +23,6 @@ TOOLS = ("get_metrics", "search_filing", "read_passage")
 SERVER = "tenq"
 ALLOWED_TOOLS = [f"mcp__{SERVER}__{t}" for t in TOOLS]
 MAX_CLAIMS = 8
-MAX_CLAIM_CHARS = 600
 VERSION_LINE = re.compile(r"<!--\s*prompt-version:\s*([\w.\-]+)\s*-->")
 
 
@@ -43,17 +41,11 @@ def load_prompt(path: Path = PROMPT_PATH) -> Prompt:
 
 
 @dataclass(frozen=True)
-class NumberRef:
-    metric: str
-    field: str
-    value: float
-
-
-@dataclass(frozen=True)
 class Claim:
+    """As the model wrote it: text with {fin:...} placeholders, and one passage."""
+
     claim: str
     passage_id: str
-    numbers: tuple[NumberRef, ...] = ()
 
 
 @dataclass
@@ -90,29 +82,11 @@ def parse_answer(text: str | None) -> Draft:
     for raw in obj["claims"][:MAX_CLAIMS]:
         if not isinstance(raw, dict):
             continue
-        claim, pid, nums = raw.get("claim"), raw.get("passage_id"), raw.get("numbers") or []
-        if not isinstance(claim, str) or not isinstance(pid, str) or not isinstance(nums, list):
+        claim, pid = raw.get("claim"), raw.get("passage_id")
+        if not isinstance(claim, str) or not isinstance(pid, str):
             continue
-        refs = []
-        for n in nums:
-            if not isinstance(n, dict):
-                continue
-            metric, fld, value = n.get("metric"), n.get("field"), n.get("value")
-            if not (
-                isinstance(metric, str)
-                and isinstance(fld, str)
-                and isinstance(value, int | float)
-                and not isinstance(value, bool)
-            ):
-                continue
-            try:
-                v = float(value)
-            except OverflowError:  # a 400-digit integer literal
-                continue
-            if math.isfinite(v):  # json accepts NaN and Infinity
-                refs.append(NumberRef(metric, fld, v))
-        text_ = " ".join(claim.split())[:MAX_CLAIM_CHARS]
-        draft.claims.append(Claim(text_, pid.strip(), tuple(refs)))
+        # never cut here: a claim too long is the checker's to drop whole
+        draft.claims.append(Claim(" ".join(claim.split()), pid.strip()))
     return draft
 
 
