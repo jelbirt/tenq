@@ -12,7 +12,7 @@ from tenq import jev_check
 from tenq.jev import QuestionSet, Result, load_questions
 from tenq.llm import call_claude
 from tenq.pack import Pack
-from tenq.rules import load_rules
+from tenq.rules import decide, load_rules
 
 
 class Asked:
@@ -61,6 +61,8 @@ def test_a_check_prints_answers_lean_call_and_cost(
     assert "tokens in 9000 out 120, cost $0.000380, 840 ms" in out
     assert "direction: good" in out and "first-option lean +0.04" in out
     assert ": Buy (confidence" in out
+    assert "balance, Jev over 1: mean score +" in out
+    assert "Buy 1, Hold 0, Sell 0, Short 0" in out
     assert out.rstrip().endswith("total Jev cost $0.000380")
 
 
@@ -248,3 +250,26 @@ def test_opus_runs_only_when_asked(monkeypatch: pytest.MonkeyPatch) -> None:
     jev_check.main(["ACME"])
     jev_check.main(["--opus", "ACME"])
     assert seen[0] is None and seen[1] is call_claude
+
+
+def test_the_balance_lines_count_each_methods_calls() -> None:
+    questions = load_questions()
+    rules = load_rules(questions)
+    buy = decide(_pack(), _good(), rules, questions)
+    hold = decide(
+        _pack(),
+        _good(
+            guidance=_choice("guidance", {"none": 1.0}),
+            direction=_choice("direction", {"neutral": 1.0}),
+        ),
+        rules,
+        questions,
+    )
+    assert buy is not None and hold is not None and (buy.call, hold.call) == ("Buy", "Hold")
+    tally = jev_check.Tally(jev=[buy, hold], opus=["Hold", "Sell", "Sell"])
+    mean = (buy.score + hold.score) / 2
+    assert tally.lines() == [
+        f"balance, Jev over 2: mean score {mean:+.2f}, Buy 1, Hold 1, Sell 0, Short 0",
+        "balance, Opus over 3: Buy 0, Hold 1, Sell 2, Short 0",
+    ]
+    assert jev_check.Tally().lines() == []

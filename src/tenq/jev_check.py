@@ -12,7 +12,9 @@ balanced rounds, turns the answers into a call with the rules file, and prints
 the answers, the measured first-option lean, the call and what it cost. Runs
 where OPENROUTER_API_KEY is set (the jev-check workflow on Actions). Prints
 nothing secret: the packs are public data and Jev's answers are public under
-the plan's record decision. Exits 1 when any stock gets no usable call, so a
+the plan's record decision. Ends with a balance line per method (mean score
+and how many of each call), so a lean toward one call shows the same day.
+Exits 1 when any stock gets no usable call, so a
 failed check shows red.
 """
 
@@ -20,18 +22,41 @@ from __future__ import annotations
 
 import argparse
 import logging
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
 from tenq import jev, opus
 from tenq.filings import TICKER
 from tenq.jev import Answer, QuestionSet, Result
 from tenq.llm import call_claude
-from tenq.opus import Claude
+from tenq.opus import CALLS, CallName, Claude
 from tenq.pack import Pack, gather
 from tenq.reasons import ReasonCheck, check_reasons
 from tenq.rules import Call, Rules, decide, load_rules
 
 MAX_TICKERS = 5  # a check, not a run: keeps a mistyped list from costing much
+
+
+@dataclass
+class Tally:
+    """Every call one run made, for the balance lines at the end."""
+
+    jev: list[Call] = field(default_factory=list)
+    opus: list[CallName] = field(default_factory=list)
+
+    def lines(self) -> list[str]:
+        out: list[str] = []
+        if self.jev:
+            mean = sum(c.score for c in self.jev) / len(self.jev)
+            counts = _counts([c.call for c in self.jev])
+            out.append(f"balance, Jev over {len(self.jev)}: mean score {mean:+.2f}, {counts}")
+        if self.opus:
+            out.append(f"balance, Opus over {len(self.opus)}: {_counts(self.opus)}")
+        return out
+
+
+def _counts(calls: list[CallName]) -> str:
+    return ", ".join(f"{name} {calls.count(name)}" for name in CALLS)
 
 
 def answer_line(a: Answer) -> str:
@@ -73,9 +98,9 @@ def reason_lines(label: str, checked: ReasonCheck) -> list[str]:
     return lines
 
 
-def opus_lines(pack: Pack, call: Call | None, claude: Claude) -> tuple[list[str], bool]:
-    """Opus's own call and the why for Jev's call, each checked. The bool says
-    whether Opus made a call."""
+def opus_lines(pack: Pack, call: Call | None, claude: Claude) -> tuple[list[str], CallName | None]:
+    """Opus's own call and the why for Jev's call, each checked, and Opus's
+    call (None when it made none)."""
     _, own = opus.opus_call(pack, opus.load_call_prompt(), claude=claude)
     if own.call is None:
         lines = [f"  Opus: no call ({own.error})"]
@@ -88,7 +113,7 @@ def opus_lines(pack: Pack, call: Call | None, claude: Claude) -> tuple[list[str]
         if why.error:
             lines.append(f"  why for Jev's call: none ({why.error})")
         lines += reason_lines("why", check_reasons(why.reasons, pack))
-    return lines, own.call is not None
+    return lines, own.call
 
 
 def check(
@@ -98,6 +123,7 @@ def check(
     now: datetime,
     *,
     claude: Claude | None = None,
+    tally: Tally | None = None,
 ) -> tuple[list[str], bool, float]:
     """Lines to print, whether a call came out, and the cost. Never raises for
     one stock's data: an unknown ticker or an EDGAR outage is that stock's line."""
@@ -112,9 +138,13 @@ def check(
     lines = report(ticker, result, call)
     lines += [f"  pack note: {n}" for n in pack.notes]
     ok = call is not None
+    if tally is not None and call is not None:
+        tally.jev.append(call)
     if claude is not None:
-        more, called = opus_lines(pack, call, claude)
-        lines, ok = lines + more, ok and called
+        more, own = opus_lines(pack, call, claude)
+        lines, ok = lines + more, ok and own is not None
+        if tally is not None and own is not None:
+            tally.opus.append(own)
     return lines, ok, result.cost
 
 
@@ -132,13 +162,14 @@ def main(argv: list[str] | None = None) -> int:
     questions = jev.load_questions()
     rules = load_rules(questions)  # a bad file fails here, before anything is paid for
     now = datetime.now(UTC)
-    ok, total = True, 0.0
+    ok, total, tally = True, 0.0, Tally()
     for ticker in tickers:
         lines, called, cost = check(
-            ticker, questions, rules, now, claude=call_claude if args.opus else None
+            ticker, questions, rules, now, claude=call_claude if args.opus else None, tally=tally
         )
         print("\n".join(lines))
         ok, total = ok and called, total + cost
+    print("\n".join(tally.lines()))
     print(f"total Jev cost ${total:.6f}")  # Opus runs on the subscription
     return 0 if ok else 1
 
