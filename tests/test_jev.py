@@ -97,14 +97,14 @@ def _ask(questions: QuestionSet, server: Server, **kw: Any) -> jev.Result:
 
 def test_the_committed_question_file_loads() -> None:
     q = load_questions()
-    assert q.version == "jev-q7"
+    assert q.version == "jev-q8"
     assert len(q.questions) == 5
     assert {x.type for x in q.questions} == {"noul", "choice"}
     assert "\u2014" not in jev.QUESTIONS_PATH.read_text(encoding="utf-8")
 
 
 def test_jev_reads_text_only_and_judges_surprise_not_cheer() -> None:
-    """jev-q7: no question asks Jev to compare figures; routine news is neutral both ways."""
+    """jev-q8: no question asks Jev to compare figures; routine news is neutral both ways."""
     by_key = {x.key: x for x in load_questions().questions}
     assert "fundamentals" not in by_key  # the filing trend is read in code (rules.trend)
     for q in by_key.values():
@@ -116,6 +116,8 @@ def test_jev_reads_text_only_and_judges_surprise_not_cheer() -> None:
     guidance = by_key["guidance"].instructions
     for text, fallback in ((direction, "counts as neutral"), (guidance, "counts as issued")):
         assert "Never compare figures yourself" in text and fallback in text
+    labels = {q.key: q for q in load_questions().questions}["guidance"].criteria
+    assert "figures only" in labels["issued"] and "The text says" in labels["mixed"]
 
 
 def test_questions_are_sent_in_the_system_one_shape(questions: QuestionSet) -> None:

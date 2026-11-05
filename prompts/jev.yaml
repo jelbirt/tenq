@@ -18,7 +18,7 @@
 # Types (OpenRouter System One): noul is the probability a statement is
 # true; choice picks one label from criteria; score picks a level from an
 # ordered list (0 is the first). Changing any question bumps the version.
-version: jev-q7
+version: jev-q8
 questions:
   material:
     type: noul
@@ -75,8 +75,8 @@ questions:
     criteria:
       none: No recent item gives guidance.
       kept: Guidance was reaffirmed.
-      issued: New guidance was given with nothing earlier to compare.
-      mixed: Some figures were raised and others lowered.
+      issued: Guidance was given with no words saying which way it moved (new guidance, or figures only).
+      mixed: The text says some parts were raised and others lowered.
       lowered: Guidance was lowered.
       raised: Guidance was raised.
   risk:
