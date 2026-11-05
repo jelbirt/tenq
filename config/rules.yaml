@@ -3,7 +3,7 @@
 # scorecard can tell rule sets apart (a test pins this file's hash for each
 # version). src/tenq/rules.py applies it, and checks every label below against
 # prompts/jev.yaml.
-version: rules-v4
+version: rules-v5
 
 # 1. News: Jev's direction answer as an expected value from -1 (bad for the
 #    business) to +1 (good), times the probability the recent news is
@@ -54,12 +54,15 @@ weights:
 #    cut-off on confidence. A Hold's confidence also falls with how flat the
 #    answers were: one that knew nothing is a Hold with no confidence.
 
-# 6. Already priced in: when the stock has already beaten (or lagged) QQQ in
-#    the signal's direction over the last `sessions`, the score shrinks by
-#    `per_move` for each usual move it made (its 20-session volatility scaled
-#    to that window), never by more than `most`. A move against the signal
-#    leaves the score as it is.
-priced_in:
+# 6. The market's reaction, counted whichever way the stock moved against QQQ
+#    over the last `sessions`. A move the same way as the signal means some of
+#    it is already priced in; a move the other way means the market doubts it.
+#    Either way the score shrinks by `per_move` for each usual move the stock
+#    made (its 20-session volatility scaled to that window), never by more
+#    than `most`. The move is not a signal of its own: it can pull the call
+#    toward Hold, never past it. Opus is given this same list of things to
+#    weigh (prompts/call.md), without these numbers.
+reaction:
   sessions: 5
   per_move: 0.25
   most: 0.75

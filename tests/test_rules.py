@@ -26,7 +26,7 @@ from tenq.rules import (
     expected,
     load_rules,
     name_call,
-    priced_in,
+    reaction,
 )
 
 QUESTIONS = load_questions()
@@ -39,6 +39,7 @@ KNOWN_RULES = {
     "rules-v2": "ac1b87982703da0f24f361deb9b3e6214c5e5afbda6818365f96a1368e726b3a",
     "rules-v3": "4ed506bcd451cf06d5f3eaeae41adffdf0e12b0c37323c2bf0d39c18e53a91e7",
     "rules-v4": "21d1ba4bf231fabbd4dfe12e2c5112ae6fca22b4b562a65271aa3a47f67e6df5",
+    "rules-v5": "ed9b1341de890e3a1a8b50819b416ce7cb5216b5eb7c443a6d81988f84e5c0de",
 }
 
 
@@ -112,9 +113,9 @@ def test_good_news_is_a_buy_worked_by_hand() -> None:
     # coverage: material 80% sits 0.6 from a coin flip (the news part's least
     # decisive answer), 10% risk sits 0.8 from one, the rest are one-sided
     assert call.coverage == pytest.approx(0.45 * 0.6 + 0.25 + 0.15 + 0.15 * 0.8)
-    assert call.version == "rules-v4" and call.rules_sha == RULES.sha256
+    assert call.version == "rules-v5" and call.rules_sha == RULES.sha256
     assert call.day == "2026-11-03"
-    assert call.notes == ["no price move to check whether the news is priced in"]
+    assert call.notes == ["no price move to weigh the market's reaction"]
 
 
 def test_bad_news_is_not_counted_again_as_risk() -> None:
@@ -304,14 +305,15 @@ def test_a_jev_that_knew_nothing_is_a_hold_without_confidence() -> None:
         (2.0, 0.5),  # already beat QQQ by two usual moves: half priced in
         (1.0, 0.25),
         (10.0, 0.75),  # never more than `most`
-        (-2.0, 0.0),  # moved against good news: nothing priced in
+        (-2.0, 0.5),  # lagged QQQ despite good news: the market doubts it, same cut
+        (-10.0, 0.75),
         (0.0, 0.0),
     ],
 )
-def test_a_move_already_made_shrinks_the_score(moves: float, cut: float) -> None:
+def test_a_move_either_way_shrinks_the_score(moves: float, cut: float) -> None:
     call = decide(_pack(*_move(moves * USUAL_5D)), _good(), RULES, QUESTIONS)
     assert call is not None
-    assert call.priced_in == pytest.approx(cut)
+    assert call.reaction == pytest.approx(cut)
     assert call.score == pytest.approx(0.634 * (1 - cut))
     assert call.notes == []
 
@@ -320,13 +322,27 @@ def test_bad_news_after_a_fall_is_partly_priced_in() -> None:
     result = _good(direction=_choice("direction", {"bad": 1.0}))
     call = decide(_pack(*_move(-2.0 * USUAL_5D)), result, RULES, QUESTIONS)
     assert call is not None and call.raw < 0
-    assert call.priced_in == pytest.approx(0.5)
+    assert call.reaction == pytest.approx(0.5)
 
 
-def test_zero_volatility_cannot_price_anything_in() -> None:
+def test_bad_news_after_a_rise_is_doubted_by_the_same_amount() -> None:
+    result = _good(direction=_choice("direction", {"bad": 1.0}))
+    call = decide(_pack(*_move(2.0 * USUAL_5D)), result, RULES, QUESTIONS)
+    assert call is not None and call.raw < 0
+    assert call.reaction == pytest.approx(0.5)
+    assert call.score == pytest.approx(call.raw * 0.5)
+
+
+def test_the_reaction_never_turns_a_call_past_hold() -> None:
+    call = decide(_pack(*_move(-50.0 * USUAL_5D)), _good(), RULES, QUESTIONS)
+    assert call is not None and call.raw > 0
+    assert call.reaction == pytest.approx(RULES.most) and call.score > 0
+
+
+def test_zero_volatility_reads_no_reaction() -> None:
     call = decide(_pack(*_move(0.05, vol=0.0)), _good(), RULES, QUESTIONS)
-    assert call is not None and call.priced_in == 0.0
-    assert call.notes == ["no price move to check whether the news is priced in"]
+    assert call is not None and call.reaction == 0.0
+    assert call.notes == ["no price move to weigh the market's reaction"]
 
 
 @pytest.mark.parametrize(
@@ -379,7 +395,7 @@ def test_the_record_and_the_email_lines_show_every_part() -> None:
     assert lines[0] == (
         "news: +0.32 (good +0.90, material 80%, evidence 1.00; weight 0.45, certainty 100%)"
     )
-    assert lines[-2:] == ["priced in: score cut by 50%", "score +0.32: Buy (confidence 37%)"]
+    assert lines[-2:] == ["market reaction: score cut by 50%", "score +0.32: Buy (confidence 37%)"]
 
 
 def _rules_file(tmp_path: Path, change: dict[str, Any]) -> Path:
@@ -418,10 +434,10 @@ def _rules_file(tmp_path: Path, change: dict[str, Any]) -> Path:
         {"weights.risk": 0.05, "calls.short": -0.95},  # more than all parts can reach
         {"calls.short": -0.1},  # short must sit below sell
         {"calls.extra": 0.3},
-        {"priced_in.sessions": 3},
-        {"priced_in.sessions": True},
-        {"priced_in.most": 1.5},
-        {"priced_in.per_move": ...},
+        {"reaction.sessions": 3},
+        {"reaction.sessions": True},
+        {"reaction.most": 1.5},
+        {"reaction.per_move": ...},
     ],
 )
 def test_a_malformed_rules_file_is_refused(tmp_path: Path, change: dict[str, Any]) -> None:
@@ -640,9 +656,9 @@ def test_a_scores_reversal_lean_is_not_doubt() -> None:
     assert certainty(unbalanced, 5, 4) == pytest.approx(1.0 - 1.0 / 4)
 
 
-def test_priced_in_reads_nothing_into_a_zero_score_or_an_unreadable_move() -> None:
-    assert priced_in(_pack(*_move(2.0 * USUAL_5D)), 0.0, RULES) == (0.0, None)
+def test_the_reaction_reads_nothing_into_a_zero_score_or_an_unreadable_move() -> None:
+    assert reaction(_pack(*_move(2.0 * USUAL_5D)), 0.0, RULES) == (0.0, None)
     # a zero score with a vanishing volatility is 0 times infinity: still no cut
-    assert priced_in(_pack(*_move(0.05, vol=1e-320)), 0.0, RULES) == (0.0, None)
-    cut, note = priced_in(_pack(*_move(0.05, vol=1e-320)), 0.3, RULES)
+    assert reaction(_pack(*_move(0.05, vol=1e-320)), 0.0, RULES) == (0.0, None)
+    cut, note = reaction(_pack(*_move(0.05, vol=1e-320)), 0.3, RULES)
     assert cut == 0.0 and note == "price move too large to read against its volatility"

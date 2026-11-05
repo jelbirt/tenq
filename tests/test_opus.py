@@ -11,7 +11,7 @@ from tenq import opus
 from tenq.llm import INFRA, AgentRun
 from tenq.opus import explain_call, opus_call, parse_call, parse_why
 from tenq.reasons import MAX_REASON_CHARS, Reason, check_reasons
-from tenq.rules import decide
+from tenq.rules import PARTS, decide
 
 
 class FakeClaude:
@@ -156,5 +156,24 @@ def test_a_failed_why_run_says_why() -> None:
 
 
 def test_prompts_are_versioned() -> None:
-    assert opus.load_call_prompt().version == "call-v7"
+    assert opus.load_call_prompt().version == "call-v8"
     assert opus.load_why_prompt().version == "why-v7"
+
+
+def test_opus_is_told_to_weigh_what_the_rules_weigh() -> None:
+    """The comparison is fair only if both methods weigh the same things.
+
+    The rules' parts, in order, then the market's reaction: a new part in the
+    rules without a matching line in Opus's prompt fails here.
+    """
+    lines = {
+        "news": "1. The recent news",
+        "guidance": "2. Guidance:",
+        "fundamentals": "3. The latest filing's numbers",
+        "risk": "4. Risk:",
+    }
+    assert list(lines) == list(PARTS) and set(RULES.weights) == set(PARTS)
+    text = opus.load_call_prompt().text
+    for line in [*lines.values(), "5. The market's reaction:", "the other way"]:
+        assert line in text, line
+    assert RULES.sessions == 5 and "the last five" in text
