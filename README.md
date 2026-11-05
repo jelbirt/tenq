@@ -35,7 +35,9 @@ A GitHub Actions workflow ([brief.yml](.github/workflows/brief.yml)) runs daily:
    a table of the numbers, or the numbers alone if step 3 or 4 failed.
 7. **Record and trace** ([run.py](src/tenq/run.py), [trace.py](src/tenq/trace.py)): a JSON run
    record is committed under [runs/](runs/), and a trace (steps, the model call with tokens and
-   prompt version, each tool call) goes to Langfuse over OpenTelemetry.
+   prompt version, each tool call) goes to Langfuse through its Python SDK. The record says the
+   trace is stored only after a lookup through Langfuse's API finds it. The `trace-check`
+   workflow sends one test trace the same way, to prove the secrets work.
 
 ## Guardrails
 
