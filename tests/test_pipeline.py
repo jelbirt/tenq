@@ -2,12 +2,17 @@ from __future__ import annotations
 
 import html
 import json
+import socket
+import uuid
 from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
 import pytest
+from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 
 from tenq.brief import Claim, Draft, NumberRef, Prompt
 from tenq.checker import CheckResult, Dropped
@@ -16,7 +21,7 @@ from tenq.filings import Fact, FilingMeta, FilingStore, Passage
 from tenq.llm import AgentRun, ToolCall
 from tenq.metrics import metrics_for
 from tenq.run import brief_filing, briefed, record_path, run_ticker
-from tenq.trace import build_payload, send_trace
+from tenq.trace import Tracing, connect, emit, send_trace
 
 LATEST = "CRWD-0001535527-26-000031"
 GOOD = Claim(
@@ -128,54 +133,141 @@ def test_model_and_filing_text_are_escaped_in_html(
     assert "<img" not in email.html and "&lt;img" in email.html
 
 
-def test_trace_batch_has_trace_steps_generation_and_tools(
-    store: FilingStore, tmp_path: Path
-) -> None:
+def _memory_tracing(found: Any = lambda trace_id: True) -> tuple[Tracing, InMemorySpanExporter]:
+    exporter = InMemorySpanExporter()
+    provider = TracerProvider()
+    provider.add_span_processor(SimpleSpanProcessor(exporter))
+    return Tracing(provider.get_tracer("tenq"), lambda: None, found), exporter
+
+
+def _record(store: FilingStore, tmp_path: Path) -> dict[str, Any]:
     meta = store.filings("CRWD")[0]
-    rec = brief_filing(
+    return brief_filing(
         meta, store, tmp_path, "http://x", prompt=PROMPT,
         briefer=_briefer([GOOD]), sender=Outbox(), tracer=_no_trace,
     )  # fmt: skip
-    spans = build_payload(rec)["resourceSpans"][0]["scopeSpans"][0]["spans"]
 
-    def attrs(span: dict[str, Any]) -> dict[str, Any]:
-        return {a["key"]: next(iter(a["value"].values())) for a in span["attributes"]}
 
-    root = spans[0]
-    assert root["name"] == "brief" and "parentSpanId" not in root
-    assert {s["traceId"] for s in spans} == {root["traceId"]} and len(root["traceId"]) == 32
-    gen = next(s for s in spans if s["name"] == "claude -p")
-    g = attrs(gen)
+def _set_langfuse_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("LANGFUSE_PUBLIC_KEY", "pk")
+    monkeypatch.setenv("LANGFUSE_SECRET_KEY", "sk")
+    monkeypatch.setenv("LANGFUSE_HOST", "https://lf.example/")
+
+
+def test_trace_has_trace_steps_generation_and_tools(store: FilingStore, tmp_path: Path) -> None:
+    rec = _record(store, tmp_path)
+    tracing, exporter = _memory_tracing()
+    trace_id = emit(rec, tracing.tracer)
+    spans = {s.name: s for s in exporter.get_finished_spans()}
+
+    root, gen, tool = spans["brief"], spans["claude -p"], spans["tool mcp__tenq__get_metrics"]
+    assert root.parent is None and len(trace_id) == 32
+    assert {format(s.context.trace_id, "032x") for s in spans.values()} == {trace_id}
+    assert gen.parent is not None and gen.parent.span_id == root.context.span_id
+    assert tool.parent is not None and tool.parent.span_id == gen.context.span_id
+    g = dict(gen.attributes or {})
     assert g["langfuse.observation.type"] == "generation"
-    assert json.loads(g["langfuse.observation.usage_details"])["output"] == 50
+    assert g["langfuse.observation.model.name"] == "opus"
+    assert json.loads(str(g["langfuse.observation.usage_details"]))["output"] == 50
     assert g["langfuse.observation.metadata.prompt_version"] == "brief-test"
     assert g["langfuse.trace.name"] == "brief"  # trace attributes on every span
+    assert g["session.id"] == "CRWD"
     assert g["langfuse.trace.metadata.run_id"] == rec["run_id"]  # the dashed form, searchable
-    tool = next(s for s in spans if s["name"] == "tool mcp__tenq__get_metrics")
-    assert tool["parentSpanId"] == gen["spanId"] and gen["parentSpanId"] == root["spanId"]
-    assert attrs(tool)["langfuse.observation.type"] == "tool"
-    assert all(int(s["endTimeUnixNano"]) >= int(s["startTimeUnixNano"]) for s in spans)
+    assert dict(tool.attributes or {})["langfuse.observation.type"] == "tool"
+    # each span keeps the time it really took, not the time it was sent
+    assert gen.start_time == 1_000_000_000 and gen.end_time == 2_000_000_000
+    assert root.start_time == int(rec["started_at"] * 1e9)
+    assert all((s.end_time or 0) >= (s.start_time or 0) for s in spans.values())
 
 
-def _boom(url: str, headers: dict[str, str], body: bytes) -> tuple[int, str]:
-    raise OSError("down")
+def test_failed_steps_are_marked_as_errors(store: FilingStore, tmp_path: Path) -> None:
+    meta = store.filings("CRWD")[0]
+    rec = brief_filing(
+        meta, store, tmp_path, "http://x", prompt=PROMPT,
+        briefer=_briefer([], error="timed out after 900s"), sender=Outbox(), tracer=_no_trace,
+    )  # fmt: skip
+    tracing, exporter = _memory_tracing()
+    emit(rec, tracing.tracer)
+    spans = {s.name: s for s in exporter.get_finished_spans()}
+    for name in ("claude", "claude -p"):
+        attrs = dict(spans[name].attributes or {})
+        assert attrs["langfuse.observation.level"] == "ERROR"
+        assert attrs["langfuse.observation.status_message"] == "timed out after 900s"
+
+
+def test_the_langfuse_sdk_sends_tenq_spans(
+    store: FilingStore, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # the real SDK client, with its upload swapped for memory and sockets blocked:
+    # proves the SDK exports tenq's spans (its default filter would drop them)
+    def no_network(*a: Any, **k: Any) -> None:
+        raise OSError("tests never touch the network")
+
+    monkeypatch.setattr(socket.socket, "connect", no_network)
+    rec = _record(store, tmp_path)
+    exporter = InMemorySpanExporter()
+    tracing = connect(f"pk-{uuid.uuid4()}", "sk", "https://lf.example", exporter=exporter)
+    trace_id = emit(rec, tracing.tracer)
+    tracing.flush()
+    spans = exporter.get_finished_spans()
+    assert {s.name for s in spans} >= {"brief", "claude -p", "check", "email"}
+    assert {format(s.context.trace_id, "032x") for s in spans} == {trace_id}
+    assert all(s.instrumentation_scope and s.instrumentation_scope.name == "tenq" for s in spans)
+
+
+def test_a_trace_counts_as_stored_only_once_langfuse_has_it(
+    store: FilingStore, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    rec = _record(store, tmp_path)
+    monkeypatch.delenv("LANGFUSE_HOST", raising=False)
+    assert send_trace(rec) == (False, "trace skipped: Langfuse env not set")
+    _set_langfuse_env(monkeypatch)
+    hosts: list[str] = []
+    lookups: list[str] = []
+
+    def found_second_time(trace_id: str) -> bool:
+        lookups.append(trace_id)
+        return len(lookups) >= 2
+
+    tracing, exporter = _memory_tracing(found_second_time)
+
+    def connected(public: str, secret: str, host: str) -> Tracing:
+        hosts.append(host)
+        return tracing
+
+    ok, status = send_trace(rec, connect=connected, sleep=lambda s: None)
+    trace_id = format(exporter.get_finished_spans()[0].context.trace_id, "032x")
+    assert (ok, status) == (True, f"trace stored: {trace_id}")
+    assert lookups == [trace_id, trace_id] and hosts == ["https://lf.example"]
+    assert "lf.example" not in status and "sk" not in status
+
+    never, _ = _memory_tracing(lambda trace_id: False)
+    ok, status = send_trace(rec, connect=lambda *a: never, wait=0, sleep=lambda s: None)
+    assert not ok and status.startswith("trace sent, not found after 0s: ")
 
 
 def test_send_trace_fails_open(
     store: FilingStore, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    meta = store.filings("CRWD")[0]
-    rec = brief_filing(
-        meta, store, tmp_path, "http://x", prompt=PROMPT,
-        briefer=_briefer([GOOD]), sender=Outbox(), tracer=_no_trace,
-    )  # fmt: skip
-    monkeypatch.delenv("LANGFUSE_HOST", raising=False)
-    assert send_trace(rec)[0] is False
-    monkeypatch.setenv("LANGFUSE_PUBLIC_KEY", "pk")
-    monkeypatch.setenv("LANGFUSE_SECRET_KEY", "sk")
-    monkeypatch.setenv("LANGFUSE_HOST", "https://lf.example")
-    assert send_trace(rec, post=_boom) == (False, "trace failed: OSError")
-    assert send_trace({"run_id": "r"}, post=_boom) == (False, "trace failed: ValueError")
+    rec = _record(store, tmp_path)
+    _set_langfuse_env(monkeypatch)
+
+    def down(public: str, secret: str, host: str) -> Tracing:
+        raise OSError("down")
+
+    assert send_trace(rec, connect=down) == (False, "trace failed: OSError")
+    tracing, _ = _memory_tracing()
+    assert send_trace({"run_id": "r"}, connect=lambda *a: tracing) == (
+        False,
+        "trace failed: KeyError",
+    )
+
+    def broken(trace_id: str) -> bool:
+        raise ConnectionError("lookup down")
+
+    dark, _ = _memory_tracing(broken)
+    ok, status = send_trace(rec, connect=lambda *a: dark, wait=0, sleep=lambda s: None)
+    assert not ok and "last lookup failed: ConnectionError" in status
 
 
 SECRETS = {
@@ -194,22 +286,18 @@ def test_no_secret_reaches_the_public_record_or_the_trace(
 ) -> None:
     for k, v in SECRETS.items():
         monkeypatch.setenv(k, v)
-    posted: list[bytes] = []
-
-    def post(url: str, headers: dict[str, str], body: bytes) -> tuple[int, str]:
-        posted.append(body)
-        return 200, "{}"
+    tracing, exporter = _memory_tracing()
 
     meta = store.filings("CRWD")[0]
     rec = brief_filing(
         meta, store, tmp_path, "http://x", prompt=PROMPT, briefer=_briefer([GOOD, BAD]),
-        sender=Outbox(), tracer=lambda r: send_trace(r, post=post),
+        sender=Outbox(), tracer=lambda r: send_trace(r, connect=lambda *a: tracing),
     )  # fmt: skip
-    assert rec["trace"] == {"sent": True, "status": "trace sent"}
+    assert rec["trace"]["sent"] is True and rec["trace"]["status"].startswith("trace stored: ")
     written = record_path(tmp_path, meta).read_text()
+    sent = json.dumps([dict(s.attributes or {}) for s in exporter.get_finished_spans()])
     for value in SECRETS.values():
-        assert value not in written
-        assert value.encode() not in posted[0]
+        assert value not in written and value not in sent
         # the host part of an address too: no domain of a secret leaks
         assert value.split("@")[-1].split("//")[-1] not in written
 
@@ -220,7 +308,7 @@ def test_a_record_is_on_disk_before_the_trace_is_sent(store: FilingStore, tmp_pa
 
     def tracer(record: dict[str, Any]) -> tuple[bool, str]:
         seen.append(json.loads(record_path(tmp_path, meta).read_text()))
-        return True, "trace sent"
+        return True, "trace stored: abc"
 
     brief_filing(
         meta, store, tmp_path, "http://x", prompt=PROMPT,
@@ -228,44 +316,6 @@ def test_a_record_is_on_disk_before_the_trace_is_sent(store: FilingStore, tmp_pa
     )  # fmt: skip
     assert seen[0]["email"]["sent"] is True and seen[0]["trace"]["status"] == "trace pending"
     assert json.loads(record_path(tmp_path, meta).read_text())["trace"]["sent"] is True
-
-
-def test_send_trace_posts_and_reads_partial_errors(
-    store: FilingStore, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    meta = store.filings("CRWD")[0]
-    rec = brief_filing(
-        meta, store, tmp_path, "http://x", prompt=PROMPT,
-        briefer=_briefer([GOOD]), sender=Outbox(), tracer=_no_trace,
-    )  # fmt: skip
-    for k, v in {
-        "LANGFUSE_PUBLIC_KEY": "pk",
-        "LANGFUSE_SECRET_KEY": "sk",
-        "LANGFUSE_HOST": "https://lf.example/",
-    }.items():
-        monkeypatch.setenv(k, v)
-    seen: dict[str, Any] = {}
-
-    def post(url: str, headers: dict[str, str], body: bytes) -> tuple[int, str]:
-        seen.update(url=url, headers=headers, payload=json.loads(body))
-        return 200, json.dumps({"partialSuccess": {"rejectedSpans": 2, "errorMessage": "bad"}})
-
-    ok, status = send_trace(rec, post=post)
-    assert seen["url"] == "https://lf.example/api/public/otel/v1/traces"
-    assert seen["headers"]["Authorization"].startswith("Basic ") and "sk" not in status
-    assert seen["headers"]["x-langfuse-ingestion-version"] == "4"
-    assert "resourceSpans" in seen["payload"]
-    assert not ok and "2 span(s) rejected" in status
-
-    def ok_post(url: str, headers: dict[str, str], body: bytes) -> tuple[int, str]:
-        return 200, "{}"
-
-    assert send_trace(rec, post=ok_post)[0] is True
-
-    def http_error(url: str, headers: dict[str, str], body: bytes) -> tuple[int, str]:
-        return 401, "unauthorized"
-
-    assert send_trace(rec, post=http_error)[0] is False
 
 
 @contextmanager

@@ -1,35 +1,55 @@
-"""Send one run's trace to Langfuse over OpenTelemetry (OTLP/HTTP, JSON).
+"""Send one run's trace to Langfuse, then confirm that Langfuse stored it.
 
 One trace per briefed filing: a root span for the run, a span per pipeline
 step, a generation for the Claude run (model, tokens, time, prompt version)
 and a tool span per call under it. The run record
 (runs/<TICKER>/<accession>.json) is the permanent copy; Langfuse is the
-browsable one. Sending never raises: a tracing outage must not stop an email.
+browsable one.
 
-Langfuse's older /api/public/ingestion batch API is shut down on Langfuse
-Cloud from 2026-11-16; OTLP is its replacement.
+The trace is built after the run, from its record, so every span keeps the
+time it really took. The spans are made with the OpenTelemetry API on a
+tracer provider of tenq's own; the Langfuse SDK is attached to that provider
+and does all the sending (wire format, auth, endpoint, retries). An upload
+being accepted is not proof the trace was stored, so after sending, the trace
+is looked up by id through Langfuse's API, and the record says the trace is
+in Langfuse only once that lookup finds it.
+
+Sending never raises: a tracing outage must not stop an email.
 
 Env: LANGFUSE_PUBLIC_KEY, LANGFUSE_SECRET_KEY, LANGFUSE_HOST.
+
+    python -m tenq.trace --check    # send one small test trace and look it up
 """
 
 from __future__ import annotations
 
-import base64
-import contextlib
+import argparse
 import json
 import logging
 import os
-import urllib.error
-import urllib.request
-import uuid
-from collections.abc import Callable
+import time
+from collections.abc import Callable, Sequence
+from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 from typing import Any
+
+from langfuse import Langfuse, LangfuseOtelSpanAttributes
+from opentelemetry import trace as otel
+from opentelemetry.context import Context
+from opentelemetry.sdk.resources import Resource
+from opentelemetry.sdk.trace import ReadableSpan, TracerProvider
+from opentelemetry.sdk.trace.export import SpanExporter
+from opentelemetry.trace import Span, Status, StatusCode, Tracer
 
 log = logging.getLogger(__name__)
 
+A = LangfuseOtelSpanAttributes
 MAX_FIELD_CHARS = 20_000
-OTLP_PATH = "/api/public/otel/v1/traces"
-OTEL_ERROR = 2  # OTLP status code
+SCOPE = "tenq"
+FIND_WAIT_S = 120.0  # how long to keep looking for a sent trace
+FIND_POLL_S = 5.0
+LOOKUP_TIMEOUT_S = 15  # one lookup request
+LOOKUP_WINDOW = timedelta(days=1)  # how far back a lookup searches (a run is shorter)
 USAGE_KEYS = {  # claude's usage keys to Langfuse's usage_details keys
     "input_tokens": "input",
     "output_tokens": "output",
@@ -37,11 +57,22 @@ USAGE_KEYS = {  # claude's usage keys to Langfuse's usage_details keys
     "cache_creation_input_tokens": "cache_creation_input_tokens",
 }
 
-Post = Callable[[str, dict[str, str], bytes], tuple[int, str]]
+
+@dataclass(frozen=True)
+class Tracing:
+    """Where spans go: a tracer to make them, a flush to send them, and a
+    lookup that says whether Langfuse has stored a trace id."""
+
+    tracer: Tracer
+    flush: Callable[[], None]
+    found: Callable[[str], bool]
 
 
-def _nanos(t: float) -> str:
-    return str(int(t * 1_000_000_000))
+Connect = Callable[[str, str, str], Tracing]
+
+
+def _ns(t: float) -> int:
+    return int(t * 1_000_000_000)
 
 
 def _json(value: Any) -> str:
@@ -49,200 +80,284 @@ def _json(value: Any) -> str:
     return text if len(text) <= MAX_FIELD_CHARS else text[:MAX_FIELD_CHARS] + " [cut]"
 
 
-def _value(v: Any) -> dict[str, Any]:
-    if isinstance(v, bool):
-        return {"boolValue": v}
-    if isinstance(v, int):
-        return {"intValue": str(v)}
-    if isinstance(v, float):
-        return {"doubleValue": v}
-    if isinstance(v, list):
-        return {"arrayValue": {"values": [_value(x) for x in v]}}
-    return {"stringValue": v if isinstance(v, str) else _json(v)}
+def _attrs(d: dict[str, Any]) -> dict[str, Any]:
+    """OpenTelemetry attribute values: scalars and string lists as they are,
+    anything else as JSON text; None is left out."""
+    out: dict[str, Any] = {}
+    for k, v in d.items():
+        if v is None:
+            continue
+        scalar = isinstance(v, (bool, int, float, str))
+        if scalar or (isinstance(v, list) and all(isinstance(x, str) for x in v)):
+            out[k] = v
+        else:
+            out[k] = _json(v)
+    return out
 
 
-def _attrs(d: dict[str, Any]) -> list[dict[str, Any]]:
-    return [{"key": k, "value": _value(v)} for k, v in d.items() if v is not None]
+def trace_id_hex(span: Span) -> str:
+    return format(span.get_span_context().trace_id, "032x")
 
 
-def _span_id() -> str:
-    return uuid.uuid4().hex[:16]
-
-
-def build_spans(record: dict[str, Any]) -> list[dict[str, Any]]:
-    """OTLP spans for one run record (see tenq.run for its shape)."""
-    trace_id = uuid.UUID(record["run_id"]).hex
+def emit(record: dict[str, Any], tracer: Tracer) -> str:
+    """Make one run record's spans on `tracer` (see tenq.run for the record's
+    shape) and return the trace id as 32 hex characters."""
     filing = record["filing"]
     # trace-level attributes go on every span, as Langfuse asks
     common = {
-        "langfuse.trace.name": "brief",
-        "langfuse.session.id": filing["ticker"],
-        "langfuse.trace.tags": [filing["ticker"], filing["form"], record["mode"]],
-        "langfuse.version": record["prompt_version"],
-        "langfuse.trace.metadata.run_id": record["run_id"],
-        "langfuse.trace.metadata.accession": filing["accession"],
-        "langfuse.trace.metadata.period": filing["period"],
+        A.TRACE_NAME: "brief",
+        A.TRACE_SESSION_ID: filing["ticker"],
+        A.TRACE_TAGS: [filing["ticker"], filing["form"], record["mode"]],
+        A.VERSION: record["prompt_version"],
+        f"{A.TRACE_METADATA}.run_id": record["run_id"],
+        f"{A.TRACE_METADATA}.accession": filing["accession"],
+        f"{A.TRACE_METADATA}.period": filing["period"],
     }
 
-    def span(
-        name: str,
-        start: float,
-        end: float,
-        parent: str | None,
-        attrs: dict[str, Any],
-        error: str | None = None,
-        span_id: str | None = None,
-    ) -> dict[str, Any]:
-        level = {"langfuse.observation.level": "ERROR"} if error else {}
-        out: dict[str, Any] = {
-            "traceId": trace_id,
-            "spanId": span_id or _span_id(),
-            "name": name,
-            "kind": 1,
-            "startTimeUnixNano": _nanos(start),
-            "endTimeUnixNano": _nanos(max(end, start)),
-            "attributes": _attrs({**common, **attrs, **level}),
-            "status": {"code": OTEL_ERROR, "message": error} if error else {},
-        }
-        if parent:
-            out["parentSpanId"] = parent
-        return out
+    def start(
+        name: str, at: float, parent: Context, attrs: dict[str, Any], error: str | None = None
+    ) -> Span:
+        level = {A.OBSERVATION_LEVEL: "ERROR", A.OBSERVATION_STATUS_MESSAGE: error} if error else {}
+        span = tracer.start_span(
+            name,
+            context=parent,
+            start_time=_ns(at),
+            attributes=_attrs({**common, **attrs, **level}),
+        )
+        if error:
+            span.set_status(Status(StatusCode.ERROR, error))
+        return span
 
-    root = _span_id()
-    spans = [
-        span(
-            "brief",
-            record["started_at"],
-            record["ended_at"],
-            None,
-            {
-                "langfuse.observation.type": "span",
-                "langfuse.observation.input": _json(
-                    {k: filing[k] for k in ("ticker", "form", "accession", "period")}
-                ),
-                "langfuse.observation.output": _json(
-                    {
-                        "mode": record["mode"],
-                        "claims_kept": len(record["check"]["kept"]),
-                        "claims_dropped": len(record["check"]["dropped"]),
-                        "email": record["email"]["status"],
-                    }
-                ),
-                "langfuse.observation.metadata.model": record["model"],
-            },
-            span_id=root,
-        )
-    ]
-    for step in record["steps"]:
-        spans.append(
-            span(
-                step["name"],
-                step["start"],
-                step["end"],
-                root,
+    def end(span: Span, at: float, start_at: float) -> None:
+        span.end(end_time=_ns(max(at, start_at)))
+
+    root = start(
+        "brief",
+        record["started_at"],
+        Context(),  # an empty context: always a new trace
+        {
+            A.OBSERVATION_TYPE: "span",
+            A.OBSERVATION_INPUT: _json(
+                {k: filing[k] for k in ("ticker", "form", "accession", "period")}
+            ),
+            A.OBSERVATION_OUTPUT: _json(
                 {
-                    "langfuse.observation.type": "span",
-                    "langfuse.observation.output": _json(step.get("output")),
-                },
-                step.get("error"),
-            )
+                    "mode": record["mode"],
+                    "claims_kept": len(record["check"]["kept"]),
+                    "claims_dropped": len(record["check"]["dropped"]),
+                    "email": record["email"]["status"],
+                }
+            ),
+            f"{A.OBSERVATION_METADATA}.model": record["model"],
+        },
+    )
+    under_root = otel.set_span_in_context(root)
+    for step in record["steps"]:
+        span = start(
+            step["name"],
+            step["start"],
+            under_root,
+            {A.OBSERVATION_TYPE: "span", A.OBSERVATION_OUTPUT: _json(step.get("output"))},
+            step.get("error"),
         )
+        end(span, step["end"], step["start"])
     agent = record.get("agent")
     if agent:
-        gen = _span_id()
         usage = agent.get("usage") or {}
-        spans.append(
-            span(
-                "claude -p",
-                agent["started_at"],
-                agent["ended_at"],
-                root,
-                {
-                    "langfuse.observation.type": "generation",
-                    "langfuse.observation.model.name": agent.get("resolved_model")
-                    or agent["model"],
-                    "langfuse.observation.input": _json(record["prompt_input"]),
-                    "langfuse.observation.output": _json(agent.get("text") or ""),
-                    "langfuse.observation.usage_details": json.dumps(
-                        {v: int(usage.get(k) or 0) for k, v in USAGE_KEYS.items()}
-                    ),
-                    "langfuse.observation.metadata.prompt_version": record["prompt_version"],
-                    "langfuse.observation.metadata.num_turns": agent.get("num_turns"),
-                    "langfuse.observation.metadata.api_duration_ms": agent.get("api_duration_ms"),
-                    "langfuse.observation.metadata.tools_offered": agent.get("tools_offered"),
-                },
-                agent.get("error"),
-                span_id=gen,
-            )
+        gen = start(
+            "claude -p",
+            agent["started_at"],
+            under_root,
+            {
+                A.OBSERVATION_TYPE: "generation",
+                A.OBSERVATION_MODEL: agent.get("resolved_model") or agent["model"],
+                A.OBSERVATION_INPUT: _json(record["prompt_input"]),
+                A.OBSERVATION_OUTPUT: _json(agent.get("text") or ""),
+                A.OBSERVATION_USAGE_DETAILS: json.dumps(
+                    {v: int(usage.get(k) or 0) for k, v in USAGE_KEYS.items()}
+                ),
+                f"{A.OBSERVATION_METADATA}.prompt_version": record["prompt_version"],
+                f"{A.OBSERVATION_METADATA}.num_turns": agent.get("num_turns"),
+                f"{A.OBSERVATION_METADATA}.api_duration_ms": agent.get("api_duration_ms"),
+                f"{A.OBSERVATION_METADATA}.tools_offered": agent.get("tools_offered"),
+            },
+            agent.get("error"),
         )
+        under_gen = otel.set_span_in_context(gen)
         for call in agent.get("tool_calls") or []:
             t = call.get("at") or agent["started_at"]
-            spans.append(
-                span(
-                    f"tool {call['name']}",
-                    t,
-                    call.get("done_at") or t,
-                    gen,
-                    {
-                        "langfuse.observation.type": "tool",
-                        "langfuse.observation.input": _json(call.get("input")),
-                        "langfuse.observation.output": _json(call.get("output")),
-                    },
-                    "tool error" if call.get("is_error") else None,
-                )
+            tool = start(
+                f"tool {call['name']}",
+                t,
+                under_gen,
+                {
+                    A.OBSERVATION_TYPE: "tool",
+                    A.OBSERVATION_INPUT: _json(call.get("input")),
+                    A.OBSERVATION_OUTPUT: _json(call.get("output")),
+                },
+                "tool error" if call.get("is_error") else None,
             )
-    return spans
+            end(tool, call.get("done_at") or t, t)
+        end(gen, agent["ended_at"], agent["started_at"])
+    end(root, record["ended_at"], record["started_at"])
+    return trace_id_hex(root)
 
 
-def build_payload(record: dict[str, Any]) -> dict[str, Any]:
-    return {
-        "resourceSpans": [
-            {
-                "resource": {"attributes": _attrs({"service.name": "tenq"})},
-                "scopeSpans": [{"scope": {"name": "tenq"}, "spans": build_spans(record)}],
-            }
-        ]
-    }
+def _export_all(span: ReadableSpan) -> bool:
+    # the provider is tenq's own, so every span on it is one of tenq's
+    return True
 
 
-def _post(url: str, headers: dict[str, str], body: bytes) -> tuple[int, str]:
-    req = urllib.request.Request(url, data=body, headers=headers, method="POST")
-    try:
-        with urllib.request.urlopen(req, timeout=30) as resp:
-            return int(resp.status), resp.read().decode("utf-8", "replace")
-    except urllib.error.HTTPError as exc:  # a 4xx body says what was wrong: keep it
-        return exc.code, exc.read().decode("utf-8", "replace")
+_connected: dict[str, tuple[str, Tracing]] = {}
+
+# The OTLP exporter logs a failed upload's error text, which names the host,
+# and the host is a secret while Actions logs are public. tenq logs its own
+# host-free line for every failure, so the libraries' lines are silenced.
+QUIET_LOGGERS = ("opentelemetry.exporter.otlp", "urllib3", "httpx", "httpcore")
 
 
-def send_trace(record: dict[str, Any], post: Post = _post) -> tuple[bool, str]:
-    """Returns (sent, status); never raises."""
+def _quiet() -> None:
+    for name in QUIET_LOGGERS:
+        logging.getLogger(name).setLevel(logging.CRITICAL)
+
+
+def connect(
+    public: str, secret: str, host: str, *, exporter: SpanExporter | None = None
+) -> Tracing:
+    """The Langfuse SDK on a tracer provider of tenq's own. One per public
+    key: the SDK keeps one client per public key, and a second provider for
+    the same key would get no exporter, so its spans would go nowhere."""
+    _quiet()
+    if public in _connected:
+        was, tracing = _connected[public]
+        if was != host:
+            raise ValueError("this public key is already connected to another host")
+        return tracing
+    provider = TracerProvider(resource=Resource.create({"service.name": SCOPE}))
+    client = Langfuse(
+        public_key=public,
+        secret_key=secret,
+        base_url=host,
+        tracer_provider=provider,
+        should_export_span=_export_all,
+        span_exporter=exporter,
+    )
+
+    def found(trace_id: str) -> bool:
+        # one request per lookup: only the first page is read, over a recent
+        # window, with a short timeout, so one lookup cannot outlast the wait
+        pages = client.iter_observation_pages(
+            trace_id=trace_id,
+            limit=1,
+            max_items=1,
+            from_start_time=datetime.now(UTC) - LOOKUP_WINDOW,
+            request_options={"timeout_in_seconds": LOOKUP_TIMEOUT_S},
+        )
+        page = next(iter(pages), None)
+        return bool(page and page.data)
+
+    tracing = Tracing(tracer=provider.get_tracer(SCOPE), flush=client.flush, found=found)
+    _connected[public] = (host, tracing)
+    return tracing
+
+
+def wait_found(
+    found: Callable[[str], bool],
+    trace_id: str,
+    *,
+    wait: float = FIND_WAIT_S,
+    poll: float = FIND_POLL_S,
+    sleep: Callable[[float], None] = time.sleep,
+    clock: Callable[[], float] = time.monotonic,
+) -> tuple[bool, str]:
+    """Look the trace up until Langfuse has it or `wait` seconds pass.
+    Returns (found, the last lookup error's type or "")."""
+    deadline = clock() + wait
+    error = ""
+    while True:
+        try:
+            if found(trace_id):
+                return True, ""
+            error = ""
+        except Exception as exc:  # a failed lookup is retried like a miss
+            error = type(exc).__name__
+        if clock() >= deadline:
+            return False, error
+        sleep(poll)
+
+
+def _env() -> tuple[str, str, str] | None:
     public = os.environ.get("LANGFUSE_PUBLIC_KEY") or ""
     secret = os.environ.get("LANGFUSE_SECRET_KEY") or ""
     host = (os.environ.get("LANGFUSE_HOST") or "").rstrip("/")
-    if not (public and secret and host):
+    return (public, secret, host) if public and secret and host else None
+
+
+def _send(
+    make: Callable[[Tracer], str], connect: Connect, wait: float, sleep: Callable[[float], None]
+) -> tuple[bool, str]:
+    env = _env()
+    if env is None:
         return False, "trace skipped: Langfuse env not set"
-    auth = base64.b64encode(f"{public}:{secret}".encode()).decode()
-    headers = {
-        "Authorization": f"Basic {auth}",
-        "Content-Type": "application/json",
-        "x-langfuse-ingestion-version": "4",  # else Langfuse may hold the spans ~10 minutes
-    }
     try:
-        body = json.dumps(build_payload(record), default=str).encode()
-        status, text = post(f"{host}{OTLP_PATH}", headers, body)
+        tracing = connect(*env)
+        trace_id = make(tracing.tracer)
+        tracing.flush()
     except Exception as exc:
         log.warning("trace failed: %s", type(exc).__name__)
         return False, f"trace failed: {type(exc).__name__}"
-    rejected = 0
-    with contextlib.suppress(ValueError, AttributeError, TypeError):
-        rejected = int((json.loads(text).get("partialSuccess") or {}).get("rejectedSpans") or 0)
-    if status >= 300 or rejected:
-        log.warning("trace rejected: HTTP %s, %s span(s): %s", status, rejected, text[:1000])
-        return False, f"trace rejected: HTTP {status}, {rejected} span(s) rejected"
-    # the host stays out of the status: the record is committed to a public repo
-    log.info("trace sent: %s", trace_url(host, record["run_id"]))
-    return True, "trace sent"
+    ok, error = wait_found(tracing.found, trace_id, wait=wait, sleep=sleep)
+    # the host stays out of the status and the log: the record is committed
+    # to a public repo, and the host is a secret
+    if ok:
+        log.info("trace stored in Langfuse: %s", trace_id)
+        return True, f"trace stored: {trace_id}"
+    why = f", last lookup failed: {error}" if error else ""
+    log.warning("trace %s not found in Langfuse after %.0fs%s", trace_id, wait, why)
+    return False, f"trace sent, not found after {wait:.0f}s{why}: {trace_id}"
 
 
-def trace_url(host: str, run_id: str) -> str:
-    return f"{host}/trace/{uuid.UUID(run_id).hex}"
+def send_trace(
+    record: dict[str, Any],
+    *,
+    connect: Connect = connect,
+    wait: float = FIND_WAIT_S,
+    sleep: Callable[[float], None] = time.sleep,
+) -> tuple[bool, str]:
+    """Send one run's trace and confirm it is stored. Returns (stored,
+    status); never raises."""
+    return _send(lambda tracer: emit(record, tracer), connect, wait, sleep)
+
+
+def check_span(tracer: Tracer) -> str:
+    """One small trace that only says tracing works."""
+    now = time.time()
+    span = tracer.start_span(
+        "trace check",
+        context=Context(),
+        start_time=_ns(now),
+        attributes={
+            A.TRACE_NAME: "trace check",
+            A.TRACE_TAGS: ["check"],
+            A.OBSERVATION_TYPE: "span",
+            A.OBSERVATION_OUTPUT: "tracing works",
+        },
+    )
+    span.end(end_time=_ns(now))
+    return trace_id_hex(span)
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    ap.add_argument("--check", action="store_true", help="send one test trace and look it up")
+    args = ap.parse_args(argv)
+    logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
+    if not args.check:
+        ap.error("nothing to do: pass --check")
+    ok, status = _send(check_span, connect, FIND_WAIT_S, time.sleep)
+    print(status)
+    return 0 if ok else 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
