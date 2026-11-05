@@ -8,7 +8,8 @@ from tenq.brief import Claim
 from tenq.checker import Checked, check, check_claim, metrics_view, visible_docs
 from tenq.filings import FilingStore
 from tenq.metrics import MetricsTable, metrics_for
-from tenq.reasons import MAX_REASON_CHARS, fill, phrase, table_facts
+from tenq.opus import load_call_prompt, load_why_prompt
+from tenq.reasons import MAX_REASON_CHARS, fill, phrase, placeholders, table_facts
 
 LATEST = "CRWD-0001535527-26-000031"
 OLDER_ACC = "0001535527-26-000025"
@@ -215,3 +216,17 @@ def test_get_metrics_lists_only_numbers_code_can_write(table: MetricsTable) -> N
     for n in view["numbers"]:
         assert fill("{" + n["id"] + "}.", facts) == (n["code_writes"] + ".", (n["id"],))
         assert set(n) == {"id", "label", "code_writes"}  # no raw value to copy
+
+
+def test_every_filing_id_the_opus_prompts_show_has_code_words(table: MetricsTable) -> None:
+    """The prompts teach by example; an example id code cannot write would teach a drop."""
+    facts = table_facts(table)
+    shown = {
+        i.replace("TICKER", "CRWD")
+        for prompt in (load_call_prompt(), load_why_prompt())
+        for i in placeholders(prompt.text)
+        if i.startswith("fin:")
+    }
+    assert "fin:CRWD:deferred_revenue:yoy_pct" in shown
+    for number_id in sorted(shown):
+        assert phrase(number_id, facts) is not None, number_id
