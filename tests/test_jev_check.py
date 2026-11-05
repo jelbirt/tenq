@@ -175,7 +175,7 @@ def _news_pack() -> Pack:
     from tenq.pack import Headline
 
     pack = _pack()
-    pack.news.append(Headline(NEWS_ID, "Acme beats", "report", "2026-11-03", ""))
+    pack.news.append(Headline(NEWS_ID, "Acme beats", "reuters.com", "2026-11-03", ""))
     return pack
 
 

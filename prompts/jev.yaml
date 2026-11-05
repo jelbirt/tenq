@@ -16,7 +16,7 @@
 # Types (OpenRouter System One): noul is the probability a statement is
 # true; choice picks one label from criteria; score picks a level from an
 # ordered list (0 is the first). Changing any question bumps the version.
-version: jev-q2
+version: jev-q3
 questions:
   material:
     type: noul
@@ -43,7 +43,8 @@ questions:
     type: choice
     instructions: >-
       What is the strongest kind of evidence behind the most important item
-      in the recent 8-K and recent headline sections?
+      in the recent 8-K and recent headline sections? Headlines are not
+      labelled; judge each from its site, headline and summary.
     criteria:
       none: There is no recent item.
       opinion: Analyst or columnist opinion, previews, or speculation.

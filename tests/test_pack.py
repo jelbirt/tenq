@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from dataclasses import replace
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 
@@ -47,7 +48,7 @@ def current(tmp_path: Path) -> FilingStore:
     return FilingStore(tmp_path / "current", tag="c")
 
 
-def _news(ticker: str, title: str, published: datetime, kind: str = "report") -> NewsItem:
+def _news(ticker: str, title: str, published: datetime) -> NewsItem:
     return NewsItem(
         f"news:{ticker}:{hashlib.sha1(title.encode()).hexdigest()[:10]}",
         ticker,
@@ -56,7 +57,6 @@ def _news(ticker: str, title: str, published: datetime, kind: str = "report") ->
         "feed",
         published,
         "summary " * 80,
-        kind,
     )
 
 
@@ -283,6 +283,27 @@ def test_every_id_is_rendered_and_saved(store: FilingStore, current: FilingStore
     assert p.news[0].source == saved["news"][0]["source"] == "feed"
     assert p.reports[0].url == saved["reports"][0]["url"] != ""
     assert p.filing is not None and saved["filing"]["url"] == p.filing.url != ""
+
+
+def test_a_headline_shows_its_site_but_not_its_link(
+    store: FilingStore, current: FilingStore
+) -> None:
+    item = replace(
+        _news("CRWD", "CrowdStrike wins a deal", AS_OF - timedelta(hours=2)),
+        link="https://www.reuters.com/tech/crowdstrike-deal?utm_source=x",
+    )
+    p = _build(store, current, news=[item])
+    text = p.render()
+    assert p.news[0].site == "reuters.com"
+    assert f"[{item.id}] (reuters.com, " in text
+    assert "https://" not in text and "utm_source" not in text
+    assert json.loads(json.dumps(p.to_dict()))["news"][0]["site"] == "reuters.com"
+
+
+def test_a_headline_without_a_site_shows_none(store: FilingStore, current: FilingStore) -> None:
+    item = replace(_news("CRWD", "CrowdStrike wins a deal", AS_OF - timedelta(hours=2)), link="")
+    text = _build(store, current, news=[item]).render()
+    assert f"[{item.id}] ({(AS_OF - timedelta(hours=2)).isoformat()}, " in text
 
 
 def test_an_empty_pack_says_so(tmp_path: Path, current: FilingStore) -> None:
