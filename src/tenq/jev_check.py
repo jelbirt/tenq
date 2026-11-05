@@ -1,6 +1,11 @@
 """One live Jev call per stock, printed: the first look at real answers and cost.
 
     python -m tenq.jev_check CRWD DDOG
+    python -m tenq.jev_check --opus CRWD
+
+With --opus it also runs task 7's two Opus calls on the same pack (Opus's own
+call, and the why for Jev's call) and prints each reason tenq.reasons kept or
+dropped. That needs the claude CLI and CLAUDE_CODE_OAUTH_TOKEN.
 
 Builds today's facts pack for each stock, asks Jev the question file over its
 balanced rounds, turns the answers into a call with the rules file, and prints
@@ -17,10 +22,13 @@ import argparse
 import logging
 from datetime import UTC, datetime
 
-from tenq import jev
+from tenq import jev, opus
 from tenq.filings import TICKER
 from tenq.jev import Answer, QuestionSet, Result
-from tenq.pack import gather
+from tenq.llm import call_claude
+from tenq.opus import Claude
+from tenq.pack import Pack, gather
+from tenq.reasons import ReasonCheck, check_reasons
 from tenq.rules import Call, Rules, decide, load_rules
 
 MAX_TICKERS = 5  # a check, not a run: keeps a mistyped list from costing much
@@ -59,8 +67,37 @@ def report(ticker: str, result: Result, call: Call | None) -> list[str]:
     return lines
 
 
+def reason_lines(label: str, checked: ReasonCheck) -> list[str]:
+    lines = [f"  {label} reason kept: {r.text} {list(r.cites)}" for r in checked.kept]
+    lines += [f"  {label} reason dropped ({d.why}): {d.reason.text}" for d in checked.dropped]
+    return lines
+
+
+def opus_lines(pack: Pack, call: Call | None, claude: Claude) -> tuple[list[str], bool]:
+    """Opus's own call and the why for Jev's call, each checked. The bool says
+    whether Opus made a call."""
+    _, own = opus.opus_call(pack, opus.load_call_prompt(), claude=claude)
+    if own.call is None:
+        lines = [f"  Opus: no call ({own.error})"]
+    else:
+        conf = "unreadable" if own.confidence is None else f"{own.confidence:.0%}"
+        lines = [f"  Opus: {own.call} (confidence {conf})"]
+        lines += reason_lines("Opus", check_reasons(own.reasons, pack))
+    if call is not None:
+        _, why = opus.explain_call(pack, call, opus.load_why_prompt(), claude=claude)
+        if why.error:
+            lines.append(f"  why for Jev's call: none ({why.error})")
+        lines += reason_lines("why", check_reasons(why.reasons, pack))
+    return lines, own.call is not None
+
+
 def check(
-    ticker: str, questions: QuestionSet, rules: Rules, now: datetime
+    ticker: str,
+    questions: QuestionSet,
+    rules: Rules,
+    now: datetime,
+    *,
+    claude: Claude | None = None,
 ) -> tuple[list[str], bool, float]:
     """Lines to print, whether a call came out, and the cost. Never raises for
     one stock's data: an unknown ticker or an EDGAR outage is that stock's line."""
@@ -74,12 +111,17 @@ def check(
     call = decide(pack, result, rules, questions) if result.answers else None
     lines = report(ticker, result, call)
     lines += [f"  pack note: {n}" for n in pack.notes]
-    return lines, call is not None, result.cost
+    ok = call is not None
+    if claude is not None:
+        more, called = opus_lines(pack, call, claude)
+        lines, ok = lines + more, ok and called
+    return lines, ok, result.cost
 
 
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description="Ask Jev about today's facts for a few stocks.")
     ap.add_argument("tickers", nargs="+")
+    ap.add_argument("--opus", action="store_true", help="also run the two Opus calls")
     args = ap.parse_args(argv)
     logging.basicConfig(level=logging.WARNING, format="%(levelname)s %(name)s: %(message)s")
     tickers = list(dict.fromkeys(t.upper() for t in args.tickers))
@@ -92,10 +134,12 @@ def main(argv: list[str] | None = None) -> int:
     now = datetime.now(UTC)
     ok, total = True, 0.0
     for ticker in tickers:
-        lines, called, cost = check(ticker, questions, rules, now)
+        lines, called, cost = check(
+            ticker, questions, rules, now, claude=call_claude if args.opus else None
+        )
         print("\n".join(lines))
         ok, total = ok and called, total + cost
-    print(f"total cost ${total:.6f}")
+    print(f"total Jev cost ${total:.6f}")  # Opus runs on the subscription
     return 0 if ok else 1
 
 
