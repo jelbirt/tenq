@@ -1,9 +1,11 @@
 name: jev-check
-# Manual only: one live Jev call per named stock, printed to the log.
+# Manual only: one live Jev call per named stock (and, with opus, the two
+# Opus calls), printed to the log.
 on:
   workflow_dispatch:
     inputs:
       tickers: {description: "Up to 5 tickers, space separated", required: true, default: "CRWD"}
+      opus: {description: "Also run Opus's own call and the why (task 7)", type: boolean, default: false}
 
 permissions:
   contents: read
@@ -11,19 +13,26 @@ permissions:
 jobs:
   check:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 45  # with opus: two claude runs per stock on top of Jev
     steps:
       - uses: actions/checkout@v4
         with: {persist-credentials: false}
       - uses: astral-sh/setup-uv@v6
         with: {python-version: "3.12", enable-cache: true}
       - run: uv sync --locked
+      - name: install claude
+        if: inputs.opus
+        run: npm install -g @anthropic-ai/claude-code@2.1.300
       - name: ask Jev
         env:
           # dispatch input is untrusted text: passed as env, never spliced into the script
           TICKERS: ${{ inputs.tickers }}
           EDGAR_IDENTITY: ${{ secrets.EDGAR_IDENTITY }}
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          OPUS: ${{ inputs.opus }}
+          PYTHONUNBUFFERED: "1"  # each stock's lines reach the log even if the job is cut off
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ inputs.opus && secrets.CLAUDE_CODE_OAUTH_TOKEN || '' }}
         run: |
           read -ra args <<< "$TICKERS"
+          [[ "$OPUS" == "true" ]] && args=(--opus "${args[@]}")
           uv run --locked python -m tenq.jev_check "${args[@]}"

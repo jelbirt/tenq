@@ -10,7 +10,9 @@ from test_rules import _choice, _good, _noul, _pack
 import tenq.jev
 from tenq import jev_check
 from tenq.jev import QuestionSet, Result
+from tenq.llm import call_claude
 from tenq.pack import Pack
+from tenq.rules import load_rules
 
 
 class Asked:
@@ -59,7 +61,7 @@ def test_a_check_prints_answers_lean_call_and_cost(
     assert "tokens in 9000 out 120, cost $0.000380, 840 ms" in out
     assert "direction: good" in out and "first-option lean +0.04" in out
     assert ": Buy (confidence" in out
-    assert out.rstrip().endswith("total cost $0.000380")
+    assert out.rstrip().endswith("total Jev cost $0.000380")
 
 
 def test_a_stock_with_no_prices_is_not_asked(
@@ -123,7 +125,7 @@ def test_one_stock_failing_to_gather_costs_only_its_own_line(
     assert gathered == ["CRDW", "ACME"] and len(asked.calls) == 1
     assert "== CRDW: no facts pack (LookupError), nothing asked" in out
     assert "secret-ish" not in out
-    assert out.rstrip().endswith("total cost $0.000380")
+    assert out.rstrip().endswith("total Jev cost $0.000380")
 
 
 def test_five_tickers_are_allowed_and_their_costs_add_up(
@@ -132,7 +134,7 @@ def test_five_tickers_are_allowed_and_their_costs_add_up(
     asked, _ = _setup(monkeypatch, _measured(), _pack())
     assert jev_check.main(["A", "B", "C", "D", "E"]) == 0
     assert len(asked.calls) == 5
-    assert capsys.readouterr().out.rstrip().endswith("total cost $0.001900")
+    assert capsys.readouterr().out.rstrip().endswith("total Jev cost $0.001900")
 
 
 def test_a_broken_rules_file_fails_before_anything_is_fetched(
@@ -147,3 +149,98 @@ def test_a_broken_rules_file_fails_before_anything_is_fetched(
     with pytest.raises(ValueError):
         jev_check.main(["ACME"])
     assert gathered == [] and asked.calls == []
+
+
+NEWS_ID = "news:ACME:0123456789"
+
+
+class Opus:
+    """A fake claude: Opus's own call, then the why for Jev's call."""
+
+    def __init__(self, *texts: str | None) -> None:
+        self.texts = list(texts)
+        self.systems: list[str] = []
+
+    def __call__(self, message: str, **kw: Any) -> Any:
+        from tenq.llm import INFRA, AgentRun
+
+        self.systems.append(kw["system"])
+        run = AgentRun(kw["model"], text=self.texts.pop(0))
+        if run.text is None:
+            run.fail(INFRA, "api error: down")
+        return run
+
+
+def _news_pack() -> Pack:
+    from tenq.pack import Headline
+
+    pack = _pack()
+    pack.news.append(Headline(NEWS_ID, "Acme beats", "report", "2026-11-03", ""))
+    return pack
+
+
+def test_with_opus_both_calls_run_and_each_reason_is_checked(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from tenq import opus
+
+    _setup(monkeypatch, _measured(), _news_pack())
+    fake = Opus(
+        '{"call": "Hold", "confidence": 0.35, "reasons": ['
+        f'{{"text": "Results beat.", "cites": ["{NEWS_ID}"]}},'
+        f'{{"text": "Shares rose 40%.", "cites": ["{NEWS_ID}"]}}]}}',
+        f'{{"reasons": [{{"text": "The news was good.", "cites": ["{NEWS_ID}"]}},'
+        f'{{"text": "Shares rose 40%.", "cites": ["{NEWS_ID}"]}}]}}',
+    )
+    lines, ok, _ = jev_check.check(
+        "ACME",
+        tenq.jev.load_questions(),
+        load_rules(tenq.jev.load_questions()),
+        datetime.now().astimezone(),
+        claude=fake,
+    )
+    out = "\n".join(lines)
+    assert ok
+    assert fake.systems == [opus.load_call_prompt().text, opus.load_why_prompt().text]
+    assert "Opus: Hold (confidence 35%)" in out
+    assert f"Opus reason kept: Results beat. ['{NEWS_ID}']" in out
+    assert "Opus reason dropped (a figure typed in its own words ('4'))" in out
+    assert "why reason kept: The news was good." in out
+    assert "why reason dropped (a figure typed in its own words ('4'))" in out
+
+
+def test_with_no_jev_call_the_why_is_not_asked() -> None:
+    fake = Opus('{"call": "Hold", "confidence": 0.5, "reasons": []}')
+    lines, made = jev_check.opus_lines(_news_pack(), None, fake)
+    assert made and len(fake.systems) == 1
+    assert not any("why" in line for line in lines)
+
+
+def test_with_opus_no_call_from_opus_is_a_failed_check(monkeypatch: pytest.MonkeyPatch) -> None:
+    _setup(monkeypatch, _measured(), _news_pack())
+    lines, ok, _ = jev_check.check(
+        "ACME",
+        tenq.jev.load_questions(),
+        load_rules(tenq.jev.load_questions()),
+        datetime.now().astimezone(),
+        claude=Opus(None, None),
+    )
+    out = "\n".join(lines)
+    assert not ok
+    assert "Opus: no call (api error: down)" in out
+    assert "why for Jev's call: none (api error: down)" in out
+
+
+def test_opus_runs_only_when_asked(monkeypatch: pytest.MonkeyPatch) -> None:
+    _setup(monkeypatch, _measured(), _pack())
+    seen: list[Any] = []
+    real = jev_check.check
+
+    def spy(*a: Any, **kw: Any) -> Any:
+        seen.append(kw.get("claude"))
+        return real(*a, **{**kw, "claude": None})
+
+    monkeypatch.setattr(jev_check, "check", spy)
+    jev_check.main(["ACME"])
+    jev_check.main(["--opus", "ACME"])
+    assert seen[0] is None and seen[1] is call_claude

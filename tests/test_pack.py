@@ -152,7 +152,10 @@ def test_recent_8ks_are_quoted_from_the_exhibit(store: FilingStore, current: Fil
     p = _build(store, current)
     assert [r.doc for r in p.reports] == ["CRWD-0001535527-26-000040"]
     r = p.reports[0]
-    assert r.items == ("2.02 results of operations", "9.01 financial statements and exhibits")
+    assert r.items == (
+        "Item 2.02 results of operations",
+        "Item 9.01 financial statements and exhibits",
+    )
     texts = [e.text for e in r.excerpts]
     assert texts == [
         "CrowdStrike reports record quarterly revenue of $1.5 billion.",
