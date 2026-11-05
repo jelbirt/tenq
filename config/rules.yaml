@@ -3,7 +3,7 @@
 # scorecard can tell rule sets apart (a test pins this file's hash for each
 # version). src/tenq/rules.py applies it, and checks every label below against
 # prompts/jev.yaml.
-version: rules-v5
+version: rules-v6
 
 # 1. News: Jev's direction answer as an expected value from -1 (bad for the
 #    business) to +1 (good), times the probability the recent news is
@@ -21,11 +21,12 @@ evidence:
   opinion: 0.4
   none: 0.0
 
-# 2. Guidance: an expected value from -1 to +1.
+# 2. Guidance: an expected value from -1 to +1. Kept guidance is the outlook
+#    investors already had, so it counts for nothing either way.
 guidance:
   raised: 1.0
   lowered: -1.0
-  kept: 0.2
+  kept: 0.0
   issued: 0.0
   mixed: 0.0
   none: 0.0

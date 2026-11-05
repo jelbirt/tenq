@@ -41,6 +41,7 @@ KNOWN_RULES = {
     "rules-v3": "4ed506bcd451cf06d5f3eaeae41adffdf0e12b0c37323c2bf0d39c18e53a91e7",
     "rules-v4": "21d1ba4bf231fabbd4dfe12e2c5112ae6fca22b4b562a65271aa3a47f67e6df5",
     "rules-v5": "a0231854f80cd0a4c2093cdfa1191b252f6df3fe274d34da6629290af7475d73",
+    "rules-v6": "32e85d14721d79fd3fdf52e785c0787e7cd319b4a3c20e3028acfda7be4dc21a",
 }
 
 
@@ -114,7 +115,7 @@ def test_good_news_is_a_buy_worked_by_hand() -> None:
     # coverage: material 80% sits 0.6 from a coin flip (the news part's least
     # decisive answer), 10% risk sits 0.8 from one, the rest are one-sided
     assert call.coverage == pytest.approx(0.45 * 0.6 + 0.25 + 0.15 + 0.15 * 0.8)
-    assert call.version == "rules-v5" and call.rules_sha == RULES.sha256
+    assert call.version == "rules-v6" and call.rules_sha == RULES.sha256
     assert call.day == "2026-11-03"
     assert call.notes == ["no price move to weigh the market's reaction"]
 
@@ -284,6 +285,13 @@ def test_no_answers_is_no_call() -> None:
     assert decide(_pack(), Result(QUESTIONS.version, "jev-latest"), RULES, QUESTIONS) is None
 
 
+def test_kept_guidance_counts_for_nothing_either_way() -> None:
+    call = decide(_pack(), _good(guidance=_choice("guidance", {"kept": 1.0})), RULES, QUESTIONS)
+    assert call is not None
+    parts = {p.name: p.contribution for p in call.parts}
+    assert parts["guidance"] == pytest.approx(0.0)
+
+
 def test_a_jev_that_knew_nothing_is_a_hold_without_confidence() -> None:
     flat_way = dict.fromkeys(RULES.direction, 0.25)
     flat_guide = dict.fromkeys(RULES.guidance, 1 / 6)
@@ -296,7 +304,7 @@ def test_a_jev_that_knew_nothing_is_a_hold_without_confidence() -> None:
     )
     call = decide(_pack(), result, RULES, QUESTIONS)
     assert call is not None
-    assert call.call == "Hold" and abs(call.score) < 0.01  # kept guidance's 0.2 / 6
+    assert call.call == "Hold" and call.score == pytest.approx(0.0)
     assert call.coverage == 0.0 and call.confidence == 0.0
 
 
