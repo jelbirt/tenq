@@ -33,6 +33,10 @@ QUARTER_DAYS = range(80, 101)  # a fiscal quarter, allowing 13/14-week quarters
 YEAR_DAYS = range(357, 379)  # a fiscal year, allowing 52/53-week years
 PERIOD_TOLERANCE = 4  # report date vs fact end date in a 52/53-week calendar
 POOL_DEPTH = 6  # the filing and five before it: a year before the prior quarter is 5 back
+# The current, prior and year-ago columns read only the newest five, so the sixth
+# filing (needed only for prior_year_ago) cannot change them: its own copy of an
+# old quarter can differ from a later recast and mark a year-to-date total restated.
+BASE_DEPTH = 5
 
 
 @dataclass(frozen=True)
@@ -311,7 +315,8 @@ def _combine(name: str, a: Value | None, b: Value | None, op: str) -> Value | No
 def build_table(filings: Sequence[tuple[FilingMeta, list[Fact]]]) -> MetricsTable:
     """Metrics for filings[0], using the rest (newest first) for comparatives."""
     meta = filings[0][0]
-    pool = _Pool(filings)
+    pool = _Pool(filings[:BASE_DEPTH])
+    deep = _Pool(filings)
     concepts = {c for m in BASE_METRICS for c in m.concepts}
     ends = pool.ends(concepts)
     # the report date can sit a few days off the facts' own end date
@@ -332,7 +337,7 @@ def build_table(filings: Sequence[tuple[FilingMeta, list[Fact]]]) -> MetricsTabl
     # a year before the prior quarter: the prior filing's own year-ago comparatives
     prior_year_ago = None
     if prior is not None:
-        found = _snap(_d(prior) - timedelta(days=364), ends)
+        found = _snap(_d(prior) - timedelta(days=364), deep.ends(concepts))
         if found is not None and (_d(prior) - _d(found)).days in YEAR_DAYS:
             prior_year_ago = found
     table = MetricsTable(
@@ -354,7 +359,8 @@ def build_table(filings: Sequence[tuple[FilingMeta, list[Fact]]]) -> MetricsTabl
         ("prior_year_ago", prior_year_ago),
     )
     for end_name, end in ends_by_name:
-        vals: dict[str, Value | None] = {m.name: _base_value(pool, m, end) for m in BASE_METRICS}
+        source = deep if end_name == "prior_year_ago" else pool
+        vals: dict[str, Value | None] = {m.name: _base_value(source, m, end) for m in BASE_METRICS}
         vals["free_cash_flow"] = _combine(
             "operating cash flow - capex", vals["operating_cash_flow"], vals["capex"], "-"
         )

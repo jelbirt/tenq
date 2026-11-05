@@ -203,3 +203,32 @@ def test_to_dict_is_json_ready(store: FilingStore) -> None:
 
     d = metrics_for(store, "CRWD").to_dict()
     assert json.loads(json.dumps(d))["metrics"]["revenue"]["current"] == 1_470_897_000
+
+
+def test_the_sixth_filing_cannot_change_the_older_columns() -> None:
+    """The sixth filing holds an old quarter as first reported. Pooled with the
+    rest, its value disagrees with a later recast, marks that quarter restated,
+    and blanks the year-ago flow derived from it. It is read only for the
+    quarter a year before the prior quarter."""
+    ocf = "us-gaap:NetCashProvidedByUsedInOperatingActivities"
+    filings = [
+        (
+            _meta("a6", "2026-06-30"),
+            [_flow(ocf, "2026-01-01", "2026-06-30", 300.0),
+             _flow(ocf, "2025-01-01", "2025-06-30", 250.0)],
+        ),
+        (
+            _meta("a5", "2026-03-31"),
+            [_flow(ocf, "2026-01-01", "2026-03-31", 140.0),
+             _flow(ocf, "2025-01-01", "2025-03-31", 100.0)],
+        ),
+        (_meta("a4", "2025-12-31", "10-K"), []),
+        (_meta("a3", "2025-09-30"), []),
+        (_meta("a2", "2025-06-30"), [_flow(ocf, "2025-01-01", "2025-06-30", 250.0)]),
+        (_meta("a1", "2025-03-31"), [_flow(ocf, "2025-01-01", "2025-03-31", 90.0)]),
+    ]  # fmt: skip
+    five = build_table(filings[:5]).rows["operating_cash_flow"]
+    six = build_table(filings).rows["operating_cash_flow"]
+    for field in ("current", "prior_quarter", "year_ago", "yoy_pct", "qoq_pct"):
+        assert six.number(field) == five.number(field), field
+    assert six.number("year_ago") == 150.0
