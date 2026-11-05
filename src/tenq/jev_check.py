@@ -13,9 +13,9 @@ the answers, the measured first-option lean, the call and what it cost. Runs
 where OPENROUTER_API_KEY is set (the jev-check workflow on Actions). Prints
 nothing secret: the packs are public data and Jev's answers are public under
 the plan's record decision. Ends with a balance line per method (mean score
-and how many of each call), so a lean toward one call shows the same day.
-Exits 1 when any stock gets no usable call, so a
-failed check shows red.
+before and after the reaction cut, and how many of each call), so a lean
+toward one call shows the same day. Exits 1 when any stock gets no usable
+call, so a failed check shows red.
 """
 
 from __future__ import annotations
@@ -47,9 +47,14 @@ class Tally:
     def lines(self) -> list[str]:
         out: list[str] = []
         if self.jev:
-            mean = sum(c.score for c in self.jev) / len(self.jev)
+            n = len(self.jev)
+            raw = sum(c.raw for c in self.jev) / n
+            score = sum(c.score for c in self.jev) / n
             counts = _counts([c.call for c in self.jev])
-            out.append(f"balance, Jev over {len(self.jev)}: mean score {mean:+.2f}, {counts}")
+            out.append(
+                f"balance, Jev over {n}: mean before the reaction cut {raw:+.2f}, "
+                f"mean score {score:+.2f}, {counts}"
+            )
         if self.opus:
             out.append(f"balance, Opus over {len(self.opus)}: {_counts(self.opus)}")
         return out
@@ -169,7 +174,8 @@ def main(argv: list[str] | None = None) -> int:
         )
         print("\n".join(lines))
         ok, total = ok and called, total + cost
-    print("\n".join(tally.lines()))
+    for line in tally.lines():
+        print(line)
     print(f"total Jev cost ${total:.6f}")  # Opus runs on the subscription
     return 0 if ok else 1
 

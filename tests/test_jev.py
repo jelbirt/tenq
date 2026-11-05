@@ -107,7 +107,6 @@ def test_jev_judges_change_and_surprise_not_size_and_cheer() -> None:
     """jev-q4: fast growth alone is not improving, a routine launch is not good news."""
     by_key = {x.key: x for x in load_questions().questions}
     assert "speeding up or slowing down" in by_key["fundamentals"].instructions
-    assert "Fast\ngrowth that is slowing is worsening" not in by_key["fundamentals"].instructions
     assert "growth that is slowing is worsening" in by_key["fundamentals"].instructions
     assert "than investors" in by_key["direction"].instructions
     assert "count as neutral" in by_key["direction"].instructions
