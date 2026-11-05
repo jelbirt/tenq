@@ -16,16 +16,17 @@ judgement:
    is it good or bad for the business, and how strong is its source (results
    the company reported, the company's own statement, a news outlet's
    reporting, or opinion).
-2. Guidance: did the company raise, lower, keep or first issue its outlook.
+2. Guidance: did the company raise, lower, keep or first issue its outlook,
+   or raise some figures and lower others.
 3. The latest filing's numbers: is the business getting stronger or weaker.
-4. Risk: any recent risk event, such as a lawsuit, an outage, an
-   investigation or a lost customer.
+4. Risk: any recent risk event: a lawsuit, investigation, outage or breach,
+   a downgrade, an executive leaving, or a customer loss.
 5. The market's reaction: how the stock moved against QQQ over the last five
    sessions, against its usual move for its volatility. A move the same way
-   as the news means some of it is already priced in; a move the other way
-   means the market doubts it. Either way a large move is a reason for less
-   conviction, never a signal of its own: it can pull a call toward Hold,
-   not past it.
+   as the case for your call means some of it is already priced in; a move
+   the other way means the market doubts it. Either way, the bigger the move,
+   the less conviction. It is never a signal of its own: it can pull a call
+   toward Hold, not past it.
 
 The other price lines are context for these, not reasons on their own. Older
 items are context only. When little is known, Hold with low confidence is the

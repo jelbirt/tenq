@@ -172,8 +172,13 @@ def test_opus_is_told_to_weigh_what_the_rules_weigh() -> None:
         "fundamentals": "3. The latest filing's numbers",
         "risk": "4. Risk:",
     }
-    assert list(lines) == list(PARTS) and set(RULES.weights) == set(PARTS)
+    assert list(lines) == list(PARTS)
     text = opus.load_call_prompt().text
-    for line in [*lines.values(), "5. The market's reaction:", "the other way"]:
+    for line in [
+        *lines.values(),
+        "5. The market's reaction:",
+        "the other way",
+        "never a signal of its own",
+    ]:
         assert line in text, line
     assert RULES.sessions == 5 and "the last five" in text
