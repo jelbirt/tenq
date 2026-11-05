@@ -82,7 +82,7 @@ PACK = Pack(
     reports=[
         Report("ACME-0000000000-26-000001", "2026-11-02", ("Item 2.02",), (Excerpt(EXCERPT, "x"),))
     ],
-    news=[Headline(NEWS, "Acme stock drops 18% on outlook", "report", "2026-11-03", "")],
+    news=[Headline(NEWS, "Acme stock drops 18% on outlook", "reuters.com", "2026-11-03", "")],
 )
 
 

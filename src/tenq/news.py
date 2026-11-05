@@ -11,14 +11,11 @@ a one or two letter symbol, or one that is an English word (NOW, NET, TEAM), nee
 a cashtag, brackets or an exchange prefix, so neither the "S" in "U.S." nor "BUY
 NOW" is a stock; a company name matches without its legal suffix.
 
-Each item is labelled by kind, so a reader can weigh a company's own announcement
-above a columnist's take: KIND_COMPANY (the company's own press release), KIND_REPORT
-(news reporting), KIND_RELEASE (another company's press release that names it) and
-KIND_OPINION (buy-or-sell columns, ratings templates, stock-picking sites). The label
-comes from the link's site, the headline's wording and a press release's dateline;
-it is a heuristic, and a story it cannot place is a report. The per-ticker cap keeps
-the highest kinds first, then the newest, so a busy day's clickbait cannot push out
-the company's own release. Video and podcast hosts are dropped outright.
+Each item carries its link's site, and the models judge for themselves what kind of
+evidence a story is: a company's own release, reporting or a columnist's take. An
+earlier version guessed a label from keywords and ranked by it; the guesses were too
+often wrong to help. The per-ticker cap keeps the newest stories. Video and podcast
+hosts are dropped outright.
 
 Headline text is data from the open web, never instructions. Nothing here raises: a
 dead feed is skipped with a note.
@@ -51,6 +48,11 @@ TIMEOUT_S = 20
 MAX_FEED_BYTES = 5_000_000
 ATTEMPTS = 2
 PER_TICKER = 10
+PER_SITE = 3  # a burst from one site fills at most this many slots until the rest are used
+# what a site may look like once shown to the models: DNS labels, ASCII (an IDN as punycode)
+SITE = re.compile(
+    r"(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+(?:[a-z]{2,63}|xn--[a-z0-9-]{1,59})"
+)
 MAX_TITLE = 300
 MAX_SUMMARY = 600
 
@@ -67,62 +69,8 @@ LEGAL_SUFFIXES = frozenset(
     | {"plc", "co", "company", "nv", "sa", "ag", "se"}
 )
 
-KIND_COMPANY = "company release"
-KIND_REPORT = "report"
-KIND_RELEASE = "release"
-KIND_OPINION = "opinion"
-KIND_RANK = {KIND_COMPANY: 0, KIND_REPORT: 1, KIND_RELEASE: 2, KIND_OPINION: 3}
-# sites whose items are stock-picking columns, ratings or chatter rather than reporting
-OPINION_HOSTS = frozenset(
-    {"fool.com", "tikr.com", "trefis.com", "247wallst.com", "barchart.com", "stocktwits.com"}
-    | {"marketbeat.com", "investorshub.advfn.com", "beincrypto.com", "seekingalpha.com"}
-    | {"zacks.com", "simplywall.st", "insidermonkey.com"}
-)
 # sites with no reporting at all (HubSpot's podcasts, filed under HUBS by Yahoo)
 DROP_HOSTS = frozenset({"videonest.co"})
-# headline shapes of columns and ratings templates that Yahoo hosts on its own site
-OPINION_TITLE = re.compile(
-    r"\b(?:buy|sell|hold)\b[^.]{0,30}\?|better buy|should you|is it (?:time|a buy)"
-    r"|time to (?:buy|sell|hold)|facts to (?:know|note)|bigger fall than|as market (?:rises|dips)"
-    r"|stocks? to (?:buy|watch)|fair value|overvalued|undervalued|price i'?d pay"
-    r"|what'?s in (?:store|the cards)|beat estimates again|read this before|worth the wait"
-    r"|billionaire|\bvs\.?\s[^?]*\?|top analyst calls|brokers suggest|could derail"
-    # stock-site templates syndicated through Yahoo, whose links hide the site
-    r"|\bzacks\b|here[\u2019']?s why|don[\u2019']?t overlook|compared to estimates|on the horizon"
-    r"|look at key metrics|doubters|^prediction:"
-    r"|^why\b.*\bstock\b.*\b(?:today|this week|on (?:monday|tuesday|wednesday|thursday|friday))\b",
-    re.IGNORECASE,
-)
-# a market-research firm's promotion that lists companies in its headline
-RESEARCH_TITLE = re.compile(
-    r"\bmarket (?:report|size|forecast)\b|\bmarket 20[0-9]{2}\b|\bcagr\b|\bto reach \$",
-    re.IGNORECASE,
-)
-# the transcript or summary of an earnings call reports what was said, whatever the site
-CALL_TITLE = re.compile(r"earnings call (?:transcript|summary|highlights)", re.IGNORECASE)
-# a press release opens with a dateline, an all-caps city then the date ("AUSTIN,
-# Texas, November 04, 2026--"), or with its own name and listing, then "today
-# announced" or a description of itself ("Palo Alto Networks (NASDAQ: PANW), the
-# global ..."). Reporters write "Shares of CrowdStrike (NASDAQ: CRWD) fell", "said
-# Tuesday it agreed", and use "--" as a dash in plain-text copy.
-MONTH = r"(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\.?"
-LISTING = r"\((?:NASDAQ|Nasdaq|NYSE)(?: Global Select Market)?: ?[A-Z.]{1,6}\)"
-RELEASE_TEXT = re.compile(
-    rf"^[A-Z]{{2}}[A-Z .'-]*,[^\n]{{0,80}}?\b{MONTH}\s+[0-9]{{1,2}},\s+20[0-9]{{2}}\s*"
-    r"(?:--|\(GLOBE NEWSWIRE\)|/PRNewswire/|\(BUSINESS WIRE\))"
-    rf"|{LISTING},?\s+(?:today announced|announced today)\b"
-    rf"|^(?:[A-Z][\w.&'-]*,?\s+){{1,5}}{LISTING},\s+(?:the|a|an)\s"
-)
-# how near the start a release names its own subject
-RELEASE_SUBJECT = 250
-# with no release text, only the headline of a results release in the company's own
-# words ("Datadog Announces Third Quarter 2026 Financial Results"); "CrowdStrike
-# Reports Strong Results, Shares Jump" is a report
-OWN_RESULTS = re.compile(
-    r"\s+(?:Announces|Reports)\s+(?:Preliminary\s+)?"
-    r"(?:(?:First|Second|Third|Fourth)\s+Quarter|Q[1-4]|Fiscal|Full[- ]Year|Year[- ]End)"
-    r"[\w\s-]*?\bResults\s*$"
-)
 TAG = re.compile(r"<[^>]*>")
 SPACE = re.compile(r"\s+")
 
@@ -138,7 +86,6 @@ class NewsItem:
     source: str  # the feed it came from
     published: datetime
     summary: str
-    kind: str  # one of KIND_RANK
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -149,7 +96,6 @@ class NewsItem:
             "source": self.source,
             "published": self.published.isoformat(),
             "summary": self.summary,
-            "kind": self.kind,
         }
 
 
@@ -249,37 +195,25 @@ def mentions(text: str, ticker: str, name: str | None) -> bool:
 
 
 def host(link: str) -> str:
-    """The link's site without "www.": "https://www.fool.com/x" to "fool.com"."""
+    """The link's site without "www.": "https://www.fool.com/x" to "fool.com".
+
+    The models see this text, so anything but a plain web address gives "": another
+    scheme, an IP address, spaces or marks, an overlong name. A non-ASCII name is shown
+    as punycode ("xn--..."), so a look-alike letter cannot pass for a known site.
+    """
     try:
-        return (urlsplit(link).hostname or "").removeprefix("www.")
-    except ValueError:  # "http://[oops/x" is not a URL; never let one sink the run
+        parts = urlsplit(link)
+        if parts.scheme.lower() not in ("http", "https"):
+            return ""
+        name = (parts.hostname or "").rstrip(".")
+        site = name.encode("idna").decode("ascii").lower().removeprefix("www.")
+    except (ValueError, UnicodeError):  # "http://[oops/x" is not a URL; never sink the run
         return ""
+    return site if SITE.fullmatch(site) else ""
 
 
 def _on(site: str, hosts: frozenset[str]) -> bool:
     return any(site == h or site.endswith("." + h) for h in hosts)
-
-
-def kind_of(entry: Entry, ticker: str, name: str | None) -> str:
-    """Which kind of item a story is for this stock; see the module docstring."""
-    if CALL_TITLE.search(entry.title):
-        return KIND_REPORT
-    if _on(host(entry.link), OPINION_HOSTS) or OPINION_TITLE.search(entry.title):
-        return KIND_OPINION
-    if RESEARCH_TITLE.search(entry.title):
-        return KIND_RELEASE
-    own = (
-        bool(name)
-        and len(key := normalise_name(name or "")) >= MIN_NAME
-        and entry.title.lower().startswith(key)
-    )
-    if RELEASE_TEXT.search(entry.summary):
-        # a partner's release can lead its headline with the bigger name
-        subject = own and key in entry.summary[:RELEASE_SUBJECT].lower()
-        return KIND_COMPANY if subject else KIND_RELEASE
-    if own and OWN_RESULTS.match(entry.title[len(key) :]):
-        return KIND_COMPANY
-    return KIND_REPORT
 
 
 def link_key(entry: Entry) -> str:
@@ -344,7 +278,6 @@ def collect(
             source=entry.source,
             published=entry.published,
             summary=entry.summary,
-            kind=kind_of(entry, ticker, tickers[ticker]),
         )
         seen = found[ticker]
         title = item.title.lower()
@@ -379,12 +312,34 @@ def collect(
     if undated:
         log.info("left out %d undated entries", undated)
 
-    def ranked(seen: dict[str, NewsItem]) -> tuple[NewsItem, ...]:
-        newest = sorted(seen.values(), key=lambda i: i.published, reverse=True)
-        return tuple(sorted(newest, key=lambda i: KIND_RANK[i.kind])[:cap])  # stable sort
+    def newest(seen: dict[str, NewsItem]) -> tuple[NewsItem, ...]:
+        return keep_newest(seen.values(), cap)
 
-    items = {t: ranked(seen) for t, seen in found.items()}
+    items = {t: newest(seen) for t, seen in found.items()}
     return News(items=items, notes=tuple(notes))
+
+
+def keep_newest(items: Iterable[NewsItem], cap: int) -> tuple[NewsItem, ...]:
+    """The newest `cap` items, newest first, with at most PER_SITE from any one site
+    unless there are not enough others to fill the cap.
+
+    Without the per-site limit, a burst of stories from one site in a busy hour would
+    push out everything older, the company's own release included.
+    """
+    ordered = sorted(items, key=lambda i: i.published, reverse=True)
+    taken: list[NewsItem] = []
+    per_site: dict[str, int] = {}
+    for item in ordered:
+        site = host(item.link)
+        if len(taken) < cap and per_site.get(site, 0) < PER_SITE:
+            taken.append(item)
+            per_site[site] = per_site.get(site, 0) + 1
+    for item in ordered:
+        if len(taken) >= cap:
+            break
+        if item not in taken:
+            taken.append(item)
+    return tuple(sorted(taken, key=lambda i: i.published, reverse=True))
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -404,7 +359,7 @@ def main(argv: list[str] | None = None) -> int:
     for ticker in tickers:
         print(f"{ticker}: {len(news.items[ticker])}")
         for item in news.items[ticker]:
-            print(f"  {item.published:%m-%d %H:%M} {item.kind:<15} {item.id} {item.title}")
+            print(f"  {item.published:%m-%d %H:%M} {host(item.link):<22} {item.id} {item.title}")
     return 0
 
 

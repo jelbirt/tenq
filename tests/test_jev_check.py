@@ -9,7 +9,7 @@ from test_rules import _choice, _good, _noul, _pack
 
 import tenq.jev
 from tenq import jev_check
-from tenq.jev import QuestionSet, Result
+from tenq.jev import QuestionSet, Result, load_questions
 from tenq.llm import call_claude
 from tenq.pack import Pack
 from tenq.rules import load_rules
@@ -76,7 +76,11 @@ def test_no_answers_is_a_failed_check(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     failed = Result(
-        "jev-q2", "jev-latest", errors=["HTTP 401"], down=True, error="no usable answer"
+        load_questions().version,
+        "jev-latest",
+        errors=["HTTP 401"],
+        down=True,
+        error="no usable answer",
     )
     _setup(monkeypatch, failed, _pack())
     assert jev_check.main(["ACME"]) == 1
@@ -175,7 +179,7 @@ def _news_pack() -> Pack:
     from tenq.pack import Headline
 
     pack = _pack()
-    pack.news.append(Headline(NEWS_ID, "Acme beats", "report", "2026-11-03", ""))
+    pack.news.append(Headline(NEWS_ID, "Acme beats", "reuters.com", "2026-11-03", ""))
     return pack
 
 
