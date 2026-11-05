@@ -26,11 +26,14 @@ Rules, which code checks before anything is sent:
   add no direction, size or period words of your own to it.
   This covers the sheet's numbers for their own periods. If a recent 8-K
   excerpt or headline reports a later quarter than the sheet's filing, say
-  what it reports in words, with no figure, and cite it.
+  what it reports in words, with no figure, and cite it. Call it "the
+  latest quarter" or "the quarter just reported", never "a quarter" or its
+  name.
   Your own words are for what the headlines and 8-K excerpts report, what
-  a number means for your call (for example
-  "{fin:TICKER:deferred_revenue:yoy_pct}, which points to demand holding
-  up"), and how the points fit together.
+  a number means for your call without saying again how big it is or which
+  way it moved ("{fin:TICKER:deferred_revenue:yoy_pct}, which points to
+  demand holding up", not "..., a sign of strong growth"), and how the
+  points fit together.
   Each placeholder becomes a whole clause with its own subject and verb, so
   it must open a clause: start the reason with it, or put it right after a
   comma, semicolon, colon, full stop or opening bracket, or right after one
@@ -61,8 +64,9 @@ Rules, which code checks before anything is sent:
   software stocks sold off."
 - Never type a figure yourself. Your own words may hold no figure at all:
   no digits, no "%" or "$", no numbers in words ("five", "doubled", "a
-  third", "millions", "percent", "mid-teens"), no ordinals from "third" up, no "first quarter", "second
-  half" or "first time", no month or weekday names and no labels like Q4.
+  third", "millions", "percent", "mid-teens"), no ordinals from "third"
+  up, no "first quarter", "second half" or "first time", no month or
+  weekday names and no labels like Q4.
   When a headline or excerpt needs a time or a size, say it in words
   ("this week", "lately", "a large contract"). Any figure in your own words
   drops the whole reason.
