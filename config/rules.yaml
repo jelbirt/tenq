@@ -60,8 +60,7 @@ weights:
 #    Either way the score shrinks by `per_move` for each usual move the stock
 #    made (its 20-session volatility scaled to that window), never by more
 #    than `most`. The move is not a signal of its own: it can pull the call
-#    toward Hold, never past it. Opus is given this same list of things to
-#    weigh (prompts/call.md), without these numbers.
+#    toward Hold, never past it.
 reaction:
   sessions: 5
   per_move: 0.25

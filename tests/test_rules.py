@@ -39,7 +39,7 @@ KNOWN_RULES = {
     "rules-v2": "ac1b87982703da0f24f361deb9b3e6214c5e5afbda6818365f96a1368e726b3a",
     "rules-v3": "4ed506bcd451cf06d5f3eaeae41adffdf0e12b0c37323c2bf0d39c18e53a91e7",
     "rules-v4": "21d1ba4bf231fabbd4dfe12e2c5112ae6fca22b4b562a65271aa3a47f67e6df5",
-    "rules-v5": "ed9b1341de890e3a1a8b50819b416ce7cb5216b5eb7c443a6d81988f84e5c0de",
+    "rules-v5": "a0231854f80cd0a4c2093cdfa1191b252f6df3fe274d34da6629290af7475d73",
 }
 
 

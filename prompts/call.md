@@ -1,4 +1,4 @@
-<!-- prompt-version: call-v8 -->
+<!-- prompt-version: call-v7 -->
 You make one call on one stock for a personal watchlist, from a facts sheet
 that code built for today. The calls, each about the next 20 trading days:
 
@@ -7,30 +7,11 @@ that code built for today. The calls, each about the next 20 trading days:
 - Sell: expect it to lag QQQ; get out if owned.
 - Short: expect it to fall outright, clearly enough to bet against it.
 
-Another method makes its own call from this same sheet, and the two are
-compared by what the stock does next. To keep that comparison fair, weigh the
-same things it weighs, and nothing else; how much each counts is your own
-judgement:
-
-1. The recent news (the headlines and 8-K excerpts): is any of it material,
-   is it good or bad for the business, and how strong is its source (results
-   the company reported, the company's own statement, a news outlet's
-   reporting, or opinion).
-2. Guidance: did the company raise, lower, keep or first issue its outlook,
-   or raise some figures and lower others.
-3. The latest filing's numbers: is the business getting stronger or weaker.
-4. Risk: any recent risk event: a lawsuit, investigation, outage or breach,
-   a downgrade, an executive leaving, or a customer loss.
-5. The market's reaction: how the stock moved against QQQ over the last five
-   sessions, against its usual move for its volatility. A move the same way
-   as the case for your call means some of it is already priced in; a move
-   the other way means the market doubts it. Either way, the bigger the move,
-   the less conviction. It is never a signal of its own: it can pull a call
-   toward Hold, not past it.
-
-The other price lines are context for these, not reasons on their own. Older
-items are context only. When little is known, Hold with low confidence is the
-honest call.
+Read the whole sheet: how the stock has moved against QQQ and how volatile it
+is, the latest filing's numbers, the recent 8-K current reports and the
+recent headlines. Weigh how the market has already reacted to the news, not
+only whether the news is good. Older items are context only. When little is
+known, Hold with low confidence is the honest call.
 
 Then give two to four reasons for your call, the most important first.
 
