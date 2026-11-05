@@ -10,7 +10,7 @@ from test_rules import QUESTIONS, RULES, _good, _pack
 from tenq import opus
 from tenq.llm import INFRA, AgentRun
 from tenq.opus import explain_call, opus_call, parse_call, parse_why
-from tenq.reasons import MAX_REASON_CHARS, Reason
+from tenq.reasons import MAX_REASON_CHARS, Reason, check_reasons
 from tenq.rules import decide
 
 
@@ -45,6 +45,7 @@ def test_opus_calls_from_the_pack_alone_with_no_tools() -> None:
     message, kw = claude.calls[0]
     assert message == PACK.render()
     assert kw["mcp_servers"] == {} and kw["allowed_tools"] == []
+    assert kw["log_detail"] is False
     assert kw["model"] == "opus" and kw["timeout"] == opus.TIMEOUT_S
     assert kw["system"] == opus.load_call_prompt().text and "Jev" not in message
     assert got.call == "Hold" and got.confidence == 0.4 and got.error is None
@@ -110,6 +111,13 @@ def test_reasons_are_capped_and_malformed_ones_skipped() -> None:
     assert [len(r.text) for r in long.reasons] == [MAX_REASON_CHARS, MAX_REASON_CHARS + 1]
 
 
+def test_a_reason_padded_with_spaces_is_dropped_never_cut() -> None:
+    padded = "{px:ACME:ret_5d}" + " " * (MAX_REASON_CHARS * 2) + " " + "word " * 130
+    got = parse_call(json.dumps({"call": "Buy", "reasons": [{"text": padded, "cites": []}]}))
+    assert [len(r.text) for r in got.reasons] == [MAX_REASON_CHARS + 1]
+    assert check_reasons(got.reasons, PACK).kept == []
+
+
 def test_reasons_without_cites_and_with_lone_surrogates_are_kept_printable() -> None:
     raw = '{"call": "Buy", "reasons": [{"text": "A \\ud800 rival cut its outlook."}]}'
     got = parse_call(raw)
@@ -148,5 +156,5 @@ def test_a_failed_why_run_says_why() -> None:
 
 
 def test_prompts_are_versioned() -> None:
-    assert opus.load_call_prompt().version == "call-v5"
-    assert opus.load_why_prompt().version == "why-v5"
+    assert opus.load_call_prompt().version == "call-v6"
+    assert opus.load_why_prompt().version == "why-v6"

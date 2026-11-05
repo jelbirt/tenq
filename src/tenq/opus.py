@@ -83,8 +83,9 @@ def parse_reasons(raw: Any) -> list[Reason]:
         ids = tuple(
             dict.fromkeys(_printable(c).strip() for c in cites[:MAX_CITES] if isinstance(c, str))
         )
-        # kept just over the limit, so tenq.reasons drops it and says why
-        text = " ".join(_printable(text[: MAX_REASON_CHARS * 2]).split())[: MAX_REASON_CHARS + 1]
+        # spaces collapsed first, then kept just over the limit, so an over-long
+        # reason reaches tenq.reasons and is dropped with a why, never cut short
+        text = " ".join(_printable(text).split())[: MAX_REASON_CHARS + 1]
         if text:
             out.append(Reason(text, ids))
     return out
@@ -148,6 +149,7 @@ def _run(claude: Claude, message: str, prompt: Prompt, model: str) -> AgentRun:
         allowed_tools=[],
         model=model,
         timeout=TIMEOUT_S,
+        log_detail=False,
     )
 
 

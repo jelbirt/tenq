@@ -11,18 +11,21 @@ A reason is sent only when:
 - each placeholder opens a clause: it starts the reason, or follows a
   comma, semicolon, colon or opening bracket, or one of a few joining words
   (CONNECTORS), so no word of the model's can become part of code's subject
-  ("Subscription {...}") or negate it ("not that {...}");
+  ("Subscription {...}");
 - the words the model wrote itself hold no figure at all: no digit or other
   numeric character, no "%" or currency sign, no number word ("doubled",
   "five", "a third", "millions"), no quarter, month or weekday name, and no
   stray curly bracket.
 
-So a wrong value, sign, direction, period, unit or subject cannot reach an
-email: code wrote all of them, and every phrase names its own company. What
-still can is a weak or beside-the-point reason, or words that argue with the
-filled-in phrase ("despite the rally, ACME fell 21.47%"); a reader sees
-those, next to the true number. The word "one" and "first" or "second" on
-their own are allowed, since they are far more often plain English.
+So the clause code writes is always right: its value, sign, direction,
+period, unit and company come from the pack. What this does not stop, by
+design, is the model's own words disagreeing with that clause ("{...}, and it
+beat QQQ", "{...} is not what happened", "{...}, and so did its rival"), or
+a weak or beside-the-point reason. Those words hold no figure, and the true
+number sits in the same sentence for the reader. Judging them would mean
+reading the model's English for truth, which is the design this replaced.
+The word "one" and "first" or "second" on their own are allowed, since they
+are far more often plain English.
 
 This replaces reading the model's English to judge its numbers, which no set
 of rules can do reliably. The quarterly brief still uses tenq.checker.
@@ -30,6 +33,7 @@ of rules can do reliably. The quarterly brief still uses tenq.checker.
 
 from __future__ import annotations
 
+import math
 import re
 import unicodedata
 from dataclasses import dataclass, field
@@ -195,7 +199,7 @@ def _filing(n: Number, pack: Pack, metric: str, fld: str) -> str | None:
 def phrase(number_id: str, pack: Pack) -> str | None:
     """Code's words for one pack number, or None if the pack has no such number."""
     n = pack.number(number_id)
-    if n is None:
+    if n is None or not math.isfinite(n.value):
         return None
     parts = number_id.split(":")
     if len(parts) == 3 and parts[0] == "px" and parts[1] == pack.ticker:

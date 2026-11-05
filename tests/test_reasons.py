@@ -398,3 +398,33 @@ def test_spaces_inside_a_placeholder_are_ignored() -> None:
 def test_a_label_without_the_fields_wording_has_no_words() -> None:
     odd = replace(PACK, numbers=[_n("fin:ACME:revenue:current", "Revenue", 1.0, "usd")])
     assert phrase("fin:ACME:revenue:current", odd) is None
+
+
+@pytest.mark.parametrize("value", [float("nan"), float("inf"), float("-inf")])
+@pytest.mark.parametrize(
+    ("number_id", "label", "kind"),
+    [
+        ("px:ACME:ret_20d", "Return over 20 sessions", "percent"),
+        ("fin:ACME:revenue:current", "Revenue, latest quarter", "usd"),
+    ],
+)
+def test_a_number_that_is_not_finite_has_no_words(
+    number_id: str, label: str, kind: str, value: float
+) -> None:
+    bad = replace(PACK, numbers=[_n(number_id, label, value, kind)])
+    assert phrase(number_id, bad) is None
+    assert not isinstance(render(Reason("{" + number_id + "}.", ()), bad), Rendered)
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "{px:ACME:excess_5d}, and it beat QQQ.",
+        "{px:ACME:ret_5d}; shares actually rose this week.",
+        "{px:ACME:ret_5d}, and so did its rival.",
+    ],
+)
+def test_words_that_argue_with_codes_clause_are_left_to_the_reader(text: str) -> None:
+    # Deliberate: code writes the number clause and never judges the model's
+    # own words for truth. They hold no figure, and the true number is beside them.
+    assert isinstance(render(Reason(text, ()), PACK), Rendered)

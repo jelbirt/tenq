@@ -1,4 +1,4 @@
-<!-- prompt-version: call-v5 -->
+<!-- prompt-version: call-v6 -->
 You make one call on one stock for a personal watchlist, from a facts sheet
 that code built for today. The calls, each about the next 20 trading days:
 
@@ -35,8 +35,8 @@ Rules, which code checks before anything is sent:
   - volatility: "ACME's annualised volatility over the last 20 sessions was 81.57%"
   - a filing amount: "ACME's revenue was $1.121 billion in the quarter ended
     2026-07-31", "ACME's operating income was a loss of $4.000 million in
-    the quarter ended 2026-07-31", "ACME's free cash flow was negative
-    $5.000 million in the prior quarter"
+    the quarter ended 2026-07-31", "ACME's free cash flow (operating cash flow
+    less capex) was negative $5.000 million in the prior quarter"
   - a filing change: "ACME's revenue rose 35.64% from a year earlier",
     "ACME's operating income rose by $88.10 million from the prior quarter",
     "ACME's gross margin rose 1.20 points from a year earlier"
