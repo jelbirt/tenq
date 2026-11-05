@@ -7,8 +7,9 @@ import pytest
 from tenq.brief import Claim, load_prompt
 from tenq.checker import Checked, check, check_claim, metrics_view, visible_docs
 from tenq.filings import FilingStore
-from tenq.metrics import MetricsTable, metrics_for
+from tenq.metrics import MetricsTable, growth_reading, metrics_for
 from tenq.opus import load_call_prompt, load_why_prompt
+from tenq.pack import _shown
 from tenq.reasons import MAX_REASON_CHARS, fill, phrase, placeholders, table_facts
 
 LATEST = "CRWD-0001535527-26-000031"
@@ -328,4 +329,32 @@ def test_growth_change_reads_as_steady_faster_slower_or_the_same(store: FilingSt
     assert phrase(cash.id, still) == (
         "CRWD's cash and cash equivalents growth from a year earlier was the same at the end "
         "of the quarter ended 2026-07-31 as at the end of the quarter ended 2026-04-30"
+    )
+
+
+@pytest.mark.parametrize(
+    ("value", "steady", "pace"),
+    [
+        (0.0199, True, "1.99 points faster"),
+        (0.02, False, "2.00 points faster"),
+        (-0.0199, True, "1.99 points slower"),
+        (-0.02, False, "2.00 points slower"),
+    ],
+)
+def test_the_growth_wording_turns_at_exactly_two_points(
+    store: FilingStore, value: float, steady: bool, pace: str
+) -> None:
+    facts = table_facts(metrics_for(store, "CRWD"))
+    edge = replace(facts.numbers["fin:CRWD:revenue:growth_change"], value=value)
+    at = replace(facts, numbers={**facts.numbers, edge.id: edge})
+    said = str(phrase(edge.id, at))
+    assert pace in said and ("was steady" in said) is steady
+    # the sheet's bracket and the rules read the same value the same way
+    word = "steady" if steady else pace.rsplit(" ", 1)[1]
+    assert f"({word}" in _shown(edge) and growth_reading(value) == word
+    balance = replace(facts.numbers["fin:CRWD:cash:growth_change"], value=0.01)
+    undated = replace(facts, prior_period=None, numbers={**facts.numbers, balance.id: balance})
+    assert str(phrase(balance.id, undated)).startswith(
+        "CRWD's cash and cash equivalents growth from a year earlier was steady at the end of "
+        "the quarter ended 2026-07-31 against the end of the prior quarter (1.00 points faster"
     )

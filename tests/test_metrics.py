@@ -266,6 +266,7 @@ def _rates(now: float, prior: float) -> MetricRow:
     ("now", "prior", "reading"),
     [
         (130.0, 128.0, "faster"),  # 30% against 28%: exactly 2 points, from subtraction
+        (110.375, 108.375, "faster"),  # prints 10.38% and 8.38%: 2.00 points as shown
         (128.0, 130.0, "slower"),
         (129.99, 128.0, "steady"),  # 1.99 points
         (128.0, 129.99, "steady"),

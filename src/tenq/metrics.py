@@ -200,8 +200,9 @@ class MetricRow:
         now, before = self.yoy_pct, self.prior_yoy_pct
         if now is None or before is None:
             return None
-        # from the rates as shown (two decimals of a percent), so they subtract to it
-        return round(round(now, 4) - round(before, 4), 4)
+        # from the rates exactly as the sheet prints them (two decimals of a percent),
+        # so the printed rates always subtract to the printed change
+        return round(round(now * 100, 2) - round(before * 100, 2), 2) / 100
 
     def number(self, field_name: str) -> float | None:
         if field_name in PERIOD_FIELDS:
