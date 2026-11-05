@@ -7,20 +7,32 @@ reader of a daily email: two to four reasons, the most important first.
 
 Explain the call; do not change it or judge it. If something on the sheet
 points the other way, you may say so in one reason, for example "The rules
-scored the news as good, while {px:TICKER:excess_5d}." Never describe a
-sheet number in your own words; show it as a placeholder.
+scored the news as good, while {px:TICKER:excess_5d}." Every sheet number
+goes in as its placeholder (see the rules below).
 
 Rules, which code checks before anything is sent:
-- Never type a figure yourself. Where a reason uses a number from the sheet,
-  write that line's id in curly brackets, for example {px:TICKER:ret_5d},
-  and code writes that part of the sentence from the sheet, with the value,
-  the direction and the period. Each placeholder becomes a whole clause with
-  its own subject and verb, so it must open a clause: start the reason with
-  it, or put it right after a comma, semicolon, colon, full stop or opening
-  bracket, or right after one of: and, but, while, as, after, because,
-  though, although, when, yet, since, so, then, whereas, even as, even
-  though. Anything else before it drops the reason ("shares {...}", "not
-  {...}", "that {...}").
+- Anything you say about a number the sheet lists (its level, which way it
+  moved, how big it is) must be that line's id in curly brackets, for
+  example {px:TICKER:ret_5d}; never put it in your own words. Not "deferred
+  revenue kept growing" or "the company still reports an operating loss",
+  but {fin:TICKER:deferred_revenue:yoy_pct} or
+  {fin:TICKER:operating_income:current}. Code writes that part of the
+  sentence from the sheet, with the value, the direction and the period, so
+  add no direction, size or period words of your own to it.
+  This covers the sheet's numbers for their own periods. If a recent 8-K
+  excerpt or headline reports a later quarter than the sheet's filing, say
+  what it reports in words, with no figure, and cite it.
+  Your own words are for what the headlines and 8-K excerpts report, how
+  the rules read and weighed the news, the latest filing and the market's
+  move (with the number itself as its placeholder: "{px:TICKER:excess_5d},
+  so the rules counted the news for less"), and how each point bears on
+  the call.
+  Each placeholder becomes a whole clause with its own subject and verb, so
+  it must open a clause: start the reason with it, or put it right after a
+  comma, semicolon, colon, full stop or opening bracket, or right after one
+  of: and, but, while, as, after, because, though, although, when, yet,
+  since, so, then, whereas, even as, even though. Anything else before it
+  drops the reason ("shares {...}", "not {...}", "that {...}").
   It must also close its clause: end the sentence with it, or follow it
   with a comma, semicolon, colon, full stop or closing bracket, or with
   "and", "but", "while", "whereas" or "yet" and another placeholder.
@@ -43,23 +55,13 @@ Rules, which code checks before anything is sent:
     "ACME's gross margin rose 1.20 points from a year earlier"
   Example reason: "{px:TICKER:ret_5d}, after a rival cut its outlook and
   software stocks sold off."
-- Your own words may hold no figure at all: no digits, no "%" or "$", no
-  numbers in words ("five", "doubled", "a third", "millions", "percent",
-  "mid-teens"), no ordinals from "third" up, no "first quarter", "second
+- Never type a figure yourself. Your own words may hold no figure at all:
+  no digits, no "%" or "$", no numbers in words ("five", "doubled", "a
+  third", "millions", "percent", "mid-teens"), no ordinals from "third" up, no "first quarter", "second
   half" or "first time", no month or weekday names and no labels like Q4.
-  Where you describe something the sheet has no line for, write periods
-  and sizes in words ("this week", "lately", "sharply"). Any figure in
-  your own words drops the whole reason.
-  Do not add direction or period words to a placeholder's number; code
-  already wrote them, and words that disagree with it mislead the reader.
-- Anything you say about a number the sheet has a line for (its level,
-  which way it moved, growth, a loss, how big it is) must be that line's
-  placeholder; never put it in your own words. "Deferred revenue kept
-  growing" and "the company still reports an operating loss" are not
-  allowed: write {fin:TICKER:deferred_revenue:yoy_pct} or
-  {fin:TICKER:operating_income:current} instead. Your own words are for what
-  the numbers cannot say: what the headlines and 8-K excerpts report, how
-  the rules weighed them, and how the reasons connect.
+  When a headline or excerpt needs a time or a size, say it in words
+  ("this week", "lately", "a large contract"). Any figure in your own words
+  drops the whole reason.
 - In "cites", list the ids of the headlines and 8-K excerpts a reason relies
   on. Never cite a number id: a number is shown as a placeholder, which
   counts as cited. Every id must be on the sheet. A reason with no

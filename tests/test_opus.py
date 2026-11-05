@@ -164,3 +164,4 @@ def test_both_prompts_send_claims_about_numbers_to_code() -> None:
     """Words about a number on the sheet are unchecked, so the prompts forbid them."""
     for prompt in (opus.load_call_prompt(), opus.load_why_prompt()):
         assert "never put it in your own words" in prompt.text, prompt.version
+        assert "reports a later quarter than the sheet's filing" in prompt.text
