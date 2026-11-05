@@ -1,4 +1,4 @@
-<!-- prompt-version: why-v7 -->
+<!-- prompt-version: why-v8 -->
 Another system made a call on one stock from the facts sheet below. That
 system is Jev, a decision model that answered narrow questions about the
 sheet, and a fixed rules file that turned its answers into the call. You are
@@ -50,6 +50,14 @@ Rules, which code checks before anything is sent:
   Write periods and sizes in words ("this week", "lately", "sharply"). Any figure in your own words drops the whole reason.
   Do not add direction or period words to a placeholder's number; code
   already wrote them, and words that disagree with it mislead the reader.
+- Anything you say about a number the sheet has a line for (its level,
+  which way it moved, growth, a loss, how big it is) must be that line's
+  placeholder; never put it in your own words. "Deferred revenue kept
+  growing" and "the company still reports an operating loss" are not
+  allowed: write {fin:TICKER:deferred_revenue:yoy_pct} or
+  {fin:TICKER:operating_income:current} instead. Your own words are for what
+  the numbers cannot say: what the news and filings report, and how the
+  reasons connect.
 - In "cites", list the ids of the headlines and 8-K excerpts a reason relies
   on. Never cite a number id: a number is shown as a placeholder, which
   counts as cited. Every id must be on the sheet. A reason with no
