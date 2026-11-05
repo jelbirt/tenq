@@ -97,14 +97,14 @@ def _ask(questions: QuestionSet, server: Server, **kw: Any) -> jev.Result:
 
 def test_the_committed_question_file_loads() -> None:
     q = load_questions()
-    assert q.version == "jev-q6"
+    assert q.version == "jev-q7"
     assert len(q.questions) == 5
     assert {x.type for x in q.questions} == {"noul", "choice"}
     assert "\u2014" not in jev.QUESTIONS_PATH.read_text(encoding="utf-8")
 
 
 def test_jev_reads_text_only_and_judges_surprise_not_cheer() -> None:
-    """jev-q6: no question asks Jev to compare figures; routine news is neutral both ways."""
+    """jev-q7: no question asks Jev to compare figures; routine news is neutral both ways."""
     by_key = {x.key: x for x in load_questions().questions}
     assert "fundamentals" not in by_key  # the filing trend is read in code (rules.trend)
     for q in by_key.values():
@@ -112,6 +112,10 @@ def test_jev_reads_text_only_and_judges_surprise_not_cheer() -> None:
     direction = by_key["direction"].instructions
     assert "than investors" in direction and "count as neutral" in direction
     assert "does not tie to a shortfall or a change in plans" in direction
+    # a headline that gives only figures ("EPS $0.93 vs $0.81 est.") is not Jev's to compare
+    guidance = by_key["guidance"].instructions
+    for text, fallback in ((direction, "counts as neutral"), (guidance, "counts as issued")):
+        assert "Never compare figures yourself" in text and fallback in text
 
 
 def test_questions_are_sent_in_the_system_one_shape(questions: QuestionSet) -> None:

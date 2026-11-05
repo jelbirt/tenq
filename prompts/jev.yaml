@@ -18,7 +18,7 @@
 # Types (OpenRouter System One): noul is the probability a statement is
 # true; choice picks one label from criteria; score picks a level from an
 # ordered list (0 is the first). Changing any question bumps the version.
-version: jev-q6
+version: jev-q7
 questions:
   material:
     type: noul
@@ -41,7 +41,10 @@ questions:
       talk, an award, a customer win the company does not say changes its
       revenue or outlook, a routine debt or convertible note offering the
       company does not tie to a shortfall or a change in plans, or an
-      insider's stock sale under a preset plan.
+      insider's stock sale under a preset plan. Judge only from what the text
+      says in words (beat, missed, above or below estimates, ahead of or
+      behind plan). Never compare figures yourself; an item that gives only
+      figures, with no words saying which way, counts as neutral.
     criteria:
       neutral: Nothing recent beyond what investors would expect, or only routine announcements.
       mixed: Real better and worse than expected items that roughly offset.
@@ -65,7 +68,10 @@ questions:
     type: choice
     instructions: >-
       Did the company give or change its outlook (guidance) in the recent 8-K
-      or recent headline sections? Ignore guidance in older items.
+      or recent headline sections? Ignore guidance in older items. Judge only
+      from what the text says in words (raised, lowered, cut, reaffirmed,
+      maintained). Never compare figures yourself; guidance given only as
+      figures, with no words saying which way it moved, counts as issued.
     criteria:
       none: No recent item gives guidance.
       kept: Guidance was reaffirmed.
