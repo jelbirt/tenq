@@ -156,5 +156,5 @@ def test_a_failed_why_run_says_why() -> None:
 
 
 def test_prompts_are_versioned() -> None:
-    assert opus.load_call_prompt().version == "call-v6"
-    assert opus.load_why_prompt().version == "why-v6"
+    assert opus.load_call_prompt().version == "call-v7"
+    assert opus.load_why_prompt().version == "why-v7"

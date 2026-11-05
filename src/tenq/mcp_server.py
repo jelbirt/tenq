@@ -75,7 +75,8 @@ def build_server(
         values, with changes computed in code. Each number has an id and the
         exact words code writes for it. Put a number in a claim as its id in
         curly brackets, "{fin:CRWD:revenue:yoy_pct}"; never type a figure."""
-        return metrics_view(metrics_for(store, ticker, target.accession if target else None))
+        table = metrics_for(store, ticker, target.accession if target else None)
+        return metrics_view(table, target.period if target else None)
 
     @server.tool(annotations=READ_ONLY)
     def search_filing(query: str, k: int = 5) -> list[dict[str, Any]]:

@@ -35,6 +35,11 @@ dropped whole, never fixed:
   "as", "after", "because", "though", "although", "when", "yet", "since",
   "so", "then" or "whereas". The words code writes already name the company
   and the period.
+- A placeholder must also close its clause: end the claim with it, or follow
+  it with a comma, semicolon, colon, full stop or closing bracket, or with
+  "and", "but", "while", "whereas" or "yet" and another placeholder. Words
+  straight after it would change what code's number measures
+  ("{...} excluding acquisitions" drops the claim).
 - Your own words hold no figure at all: no digits, no "%" or "$", no number
   words ("doubled", "twenty", "half", "millions", "a third"), no month,
   quarter or weekday names, no form names with digits. Say "the filing", not

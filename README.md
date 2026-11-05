@@ -32,8 +32,10 @@ A GitHub Actions workflow ([brief.yml](.github/workflows/brief.yml)) runs daily:
 5. **Check** ([checker.py](src/tenq/checker.py)): a claim is kept only if its passage exists in
    this filing or an earlier one, every id is one of the filing's numbers, and the model's own
    words hold no figure. Code then writes each number's clause from the tagged data
-   ([reasons.py](src/tenq/reasons.py), the same code the daily calls use). Failures are dropped
-   whole, never cut, and logged with a reason.
+   ([reasons.py](src/tenq/reasons.py), the same code the daily calls use). Each id must stand
+   as its own clause, so words cannot attach straight after code's number and change what it
+   measures. Failures are dropped whole, never cut, and logged with a reason. What code does
+   not judge is the meaning of the model's own words around a clause.
 6. **Email** ([deliver.py](src/tenq/deliver.py)): the kept claims with their quoted passages and
    a table of the numbers, or the numbers alone if step 3 or 4 failed.
 7. **Record and trace** ([run.py](src/tenq/run.py), [trace.py](src/tenq/trace.py)): a JSON run

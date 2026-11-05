@@ -11,16 +11,20 @@ A claim is sent only if:
 1. its passage_id resolves to a saved passage of this ticker's briefed filing
    or an earlier one;
 2. every placeholder is a number of the briefed filing that has a value, and
-   each one opens a clause;
+   each one is a clause of its own: it opens one, and what follows it is the
+   end, a punctuation mark, or "and", "but", "while", "whereas" or "yet" and
+   another placeholder;
 3. the words the model wrote itself hold no figure (no digit, "%", currency
    sign, number word, month or quarter name);
 4. it is at most MAX_REASON_CHARS long (a longer one is dropped, never cut),
    and it is not a repeat of a kept claim.
 
 What this cannot catch: a real passage that does not support the claim, or the
-model's own words disagreeing with the clause code wrote ("{...}, a record").
-Those words hold no figure, and the true number is in the same sentence for
-the reader. That is left to Jake's review of the briefs, not asserted here.
+model's own words disagreeing with or recasting the clause code wrote
+("{...}, a record", "On an adjusted basis, {...}"). Those words hold no
+figure, the true number is in the same sentence and its passage is quoted
+under it. Reading the model's prose for meaning is not attempted (it is the
+regex trap this design left); that is left to Jake's review of the briefs.
 """
 
 from __future__ import annotations
@@ -56,10 +60,10 @@ class CheckResult:
     dropped: list[Dropped] = field(default_factory=list)
 
 
-def metrics_view(table: MetricsTable) -> dict[str, Any]:
+def metrics_view(table: MetricsTable, period: str | None = None) -> dict[str, Any]:
     """What get_metrics shows the model: each usable number's id, and the exact
     words code will write for it. A number code cannot write is not listed."""
-    facts = table_facts(table)
+    facts = table_facts(table, period)
     numbers = []
     for number_id, n in facts.numbers.items():
         words = phrase(number_id, facts)
@@ -98,7 +102,7 @@ def visible_docs(store: FilingStore, meta: FilingMeta) -> set[str]:
 def check(
     claims: list[Claim], table: MetricsTable, store: FilingStore, meta: FilingMeta
 ) -> CheckResult:
-    facts = table_facts(table)
+    facts = table_facts(table, meta.period)
     visible = visible_docs(store, meta)
     result = CheckResult()
     seen: set[str] = set()
