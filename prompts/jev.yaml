@@ -3,7 +3,9 @@
 # badly, and it is weak at arithmetic and dates, so every number and every
 # item's age was computed in code. Rules (task 6) combine the answers into
 # the call; anything that needs a threshold (how big a move is, whether news
-# is already in the price) is decided there, in code, not asked here.
+# is already in the price) is decided there, in code, not asked here. Jev
+# reads text only: no question asks it to compare or combine figures, so the
+# filing's trend is read in code too (rules.trend).
 #
 # "Recent" is decided in code: the pack prints recent 8-Ks and headlines
 # (7 days old or less) in their own sections, apart from older context.
@@ -16,7 +18,7 @@
 # Types (OpenRouter System One): noul is the probability a statement is
 # true; choice picks one label from criteria; score picks a level from an
 # ordered list (0 is the first). Changing any question bumps the version.
-version: jev-q5
+version: jev-q6
 questions:
   material:
     type: noul
@@ -37,7 +39,8 @@ questions:
       are what companies normally put out and count as neutral, whether they
       sound upbeat or downbeat: a product launch, a partnership, a conference
       talk, an award, a customer win the company does not say changes its
-      revenue or outlook, a debt or convertible note offering, or an
+      revenue or outlook, a routine debt or convertible note offering the
+      company does not tie to a shortfall or a change in plans, or an
       insider's stock sale under a preset plan.
     criteria:
       neutral: Nothing recent beyond what investors would expect, or only routine announcements.
@@ -70,27 +73,6 @@ questions:
       mixed: Some figures were raised and others lowered.
       lowered: Guidance was lowered.
       raised: Guidance was raised.
-  fundamentals:
-    # Rules ignore this answer when the pack has no fin: numbers.
-    type: score
-    instructions: >-
-      From the latest 10-Q or 10-K numbers, is the business getting better or
-      worse? Judge the direction of change, not the size. Each line ending
-      "less the prior quarter's, points" says how much faster (above zero)
-      or slower (below zero) growth from a year ago was than in the prior
-      quarter. A move of under 2 points either way is steady: most companies
-      slow a little almost every quarter. Weigh revenue first, then margins
-      and operating and free cash flow; capital expenditures and cash swing
-      widely and count least. Also say whether margins are widening or
-      narrowing from a year ago. Fast growth slowing by more than 2 points is
-      worsening; slow growth speeding up by more than 2 points is improving.
-      When no line compares growth, judge from margins and cash flow alone.
-    criteria:
-      - Clearly worsening.
-      - Somewhat worsening.
-      - Steady.
-      - Somewhat improving.
-      - Clearly improving.
   risk:
     type: noul
     instructions: >-

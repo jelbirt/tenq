@@ -7,7 +7,6 @@ import pytest
 
 from tenq import jev
 from tenq.jev import QuestionSet, ask, average, load_questions
-from tenq.pack import FIELD_LABELS
 
 QUESTIONS = """\
 version: test-q1
@@ -98,25 +97,21 @@ def _ask(questions: QuestionSet, server: Server, **kw: Any) -> jev.Result:
 
 def test_the_committed_question_file_loads() -> None:
     q = load_questions()
-    assert q.version == "jev-q5"
-    assert len(q.questions) == 6
-    assert {x.type for x in q.questions} == {"noul", "choice", "score"}
+    assert q.version == "jev-q6"
+    assert len(q.questions) == 5
+    assert {x.type for x in q.questions} == {"noul", "choice"}
     assert "\u2014" not in jev.QUESTIONS_PATH.read_text(encoding="utf-8")
 
 
-def test_jev_judges_change_and_surprise_not_size_and_cheer() -> None:
-    """jev-q5: fast growth alone is not improving, routine news is neutral both ways."""
+def test_jev_reads_text_only_and_judges_surprise_not_cheer() -> None:
+    """jev-q6: no question asks Jev to compare figures; routine news is neutral both ways."""
     by_key = {x.key: x for x in load_questions().questions}
-    fundamentals = by_key["fundamentals"].instructions
-    # the line it is told to read is the sheet's own label for growth_change
-    assert FIELD_LABELS["growth_change"].endswith("less the prior quarter's, points")
-    assert "less the prior quarter's, points" in fundamentals
-    assert "under 2 points either way is steady" in fundamentals
-    assert "judge from margins and cash flow alone" in fundamentals
-    assert "debt or convertible note offering" in by_key["direction"].instructions
-    assert "growth slowing by more than 2 points is worsening" in fundamentals
-    assert "than investors" in by_key["direction"].instructions
-    assert "count as neutral" in by_key["direction"].instructions
+    assert "fundamentals" not in by_key  # the filing trend is read in code (rules.trend)
+    for q in by_key.values():
+        assert "points" not in q.instructions and "%" not in q.instructions, q.key
+    direction = by_key["direction"].instructions
+    assert "than investors" in direction and "count as neutral" in direction
+    assert "does not tie to a shortfall or a change in plans" in direction
 
 
 def test_questions_are_sent_in_the_system_one_shape(questions: QuestionSet) -> None:
@@ -516,10 +511,9 @@ def test_every_option_leads_exactly_once_in_the_committed_file() -> None:
             assert heads.count(question.criteria[0]) == heads.count(question.criteria[-1])
 
 
-def test_a_lean_toward_the_first_option_is_measured() -> None:
+def test_a_lean_toward_the_first_option_is_measured(questions: QuestionSet) -> None:
     q = load_questions()
     (direction,) = [x for x in q.questions if x.key == "direction"]
-    (trend,) = [x for x in q.questions if x.key == "fundamentals"]
     labels = direction.labels()
     # a model that gives whichever label is shown first 0.55 and the rest 0.15
     replies = [
@@ -537,11 +531,13 @@ def test_a_lean_toward_the_first_option_is_measured() -> None:
     answer = out["direction"]
     assert answer.balanced and answer.first_lift == pytest.approx(0.55 - 0.25)
     assert answer.probabilities == pytest.approx({lab: 0.25 for lab in labels})  # cancelled
-    # a score that always lands on the first-listed level: 0 in file order, top reversed
+    # a score (none is committed now; the test set has one) that always lands
+    # on the first-listed level: 0 in file order, top reversed
+    (trend,) = [x for x in questions.questions if x.key == "trend"]
     top = len(trend.criteria) - 1
-    raw = [{"fundamentals": {"score": 0.0}} for _ in range(trend.rounds())]
-    flipped = [q.unflip(r, i) for i, r in enumerate(raw)]
-    lean = average(q, flipped)["fundamentals"]
+    raw = [{"trend": {"score": 0.0}} for _ in range(trend.rounds())]
+    flipped = [questions.unflip(r, i) for i, r in enumerate(raw)]
+    lean = average(questions, flipped)["trend"]
     assert lean.balanced and lean.first_lift == pytest.approx(top / 2)
     assert lean.value == pytest.approx(top / 2)  # the middle, as a fair answer would be
 

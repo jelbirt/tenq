@@ -21,7 +21,9 @@ would be credited with a move it could not have traded.
 
 Kinds of number: "usd" amounts, "percent" values held as fractions
 (0.258 is 25.8%), "points" differences of two percents held as fractions (a
-ratio's change, or a return less QQQ's).
+ratio's change, a return less QQQ's, or one quarter's growth less the prior
+quarter's). A growth line also shows code's reading of it: faster, slower,
+or steady when under `STEADY_GROWTH` either way, so no reader does that sum.
 
 Text from feeds and filings is data. It is shown on single lines with square
 brackets turned into parentheses, so it can never pose as a cited id.
@@ -42,7 +44,7 @@ from typing import Any, Literal
 
 from tenq.current import describe
 from tenq.filings import FilingMeta, FilingStore, Passage
-from tenq.metrics import CHANGE_FIELDS, FIELDS, metrics_for
+from tenq.metrics import CHANGE_FIELDS, FIELDS, STEADY_GROWTH, growth_reading, metrics_for
 from tenq.news import NewsItem, host
 from tenq.prices import (
     BENCHMARK,
@@ -260,7 +262,14 @@ def _shown(n: Number) -> str:
     if n.kind == "usd":
         return money(n.value)
     if n.kind == "points":
-        return f"{n.value * 100:+.2f} points"
+        v = 0.0 if round(n.value * 100, 2) == 0 else n.value  # never "-0.00"
+        shown = f"{v * 100:+.2f} points"
+        if n.id.endswith(":growth_change"):
+            word: str = growth_reading(n.value)
+            if word == "steady":
+                word = f"steady, under {STEADY_GROWTH * 100:g} points either way"
+            return f"{shown} ({word})"
+        return shown
     return f"{n.value * 100:.2f}%"
 
 
@@ -317,7 +326,7 @@ FIELD_LABELS = {
     "yoy_change": "change from a year ago",
     "yoy_pct": "change from a year ago, percent",
     "prior_yoy_pct": "prior quarter's change from a year before it, percent",
-    "growth_change": "change from a year ago less the prior quarter's, points",
+    "growth_change": "growth from a year ago less the prior quarter's growth, points",
 }
 
 

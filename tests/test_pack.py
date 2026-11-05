@@ -115,6 +115,13 @@ def test_the_latest_filing_known_at_the_time_gives_tagged_numbers(
     prior_growth = p.number("fin:CRWD:revenue:prior_yoy_pct")
     assert prior_growth is not None and prior_growth.kind == "percent"
     assert "Revenue, prior quarter's change from a year before it, percent" in p.render()
+    # the growth line carries code's reading, so no reader does the subtraction
+    growth = p.number("fin:CRWD:revenue:growth_change")
+    assert growth is not None and growth.kind == "points"
+    assert (
+        "[fin:CRWD:revenue:growth_change] Revenue, growth from a year ago less the prior "
+        "quarter's growth, points: +0.26 points (steady, under 2 points either way)"
+    ) in p.render()
     # the quarters its numbers compare with, so code's words can date them
     assert (p.filing.prior_period, p.filing.year_ago_period) == ("2026-04-30", "2025-07-31")
     assert phrase("fin:CRWD:revenue:prior_quarter", p) == (
@@ -580,3 +587,18 @@ def test_recent_and_older_items_are_split_in_code(store: FilingStore, current: F
 def test_an_unreadable_date_is_never_recent() -> None:
     assert pack._recent(AS_OF, "not a date") is False
     assert pack._age(AS_OF, "not a date") == "age unknown"
+
+
+@pytest.mark.parametrize(
+    ("value", "shown"),
+    [
+        (-0.00001, "+0.00 points (steady, under 2 points either way)"),
+        (0.02, "+2.00 points (faster)"),
+        (-0.035, "-3.50 points (slower)"),
+    ],
+)
+def test_a_growth_line_shows_codes_reading_and_never_minus_zero(value: float, shown: str) -> None:
+    n = pack.Number("fin:ACME:revenue:growth_change", "Revenue growth", value, "points")
+    assert pack._shown(n) == shown
+    other = pack.Number("px:ACME:excess_5d", "ACME return less QQQ", -0.00001, "points")
+    assert pack._shown(other) == "+0.00 points"

@@ -305,3 +305,14 @@ def test_growth_change_reads_as_faster_slower_or_the_same(store: FilingStore) ->
         "CRWD's revenue growth from a year earlier was the same for the quarter ended "
         "2026-07-31 as for the quarter ended 2026-04-30"
     )
+    undated = replace(facts, prior_period=None)
+    assert phrase("fin:CRWD:revenue:growth_change", undated) == (
+        "CRWD's revenue growth from a year earlier was 0.26 points faster for the quarter "
+        "ended 2026-07-31 than for the prior quarter"
+    )
+    cash = replace(facts.numbers["fin:CRWD:cash:growth_change"], value=0.0)
+    still = replace(facts, numbers={**facts.numbers, cash.id: cash})
+    assert phrase(cash.id, still) == (
+        "CRWD's cash and cash equivalents growth from a year earlier was the same at the end "
+        "of the quarter ended 2026-07-31 as at the end of the quarter ended 2026-04-30"
+    )

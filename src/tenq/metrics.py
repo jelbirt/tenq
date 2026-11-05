@@ -39,6 +39,13 @@ POOL_DEPTH = 6  # the filing and five before it: a year before the prior quarter
 BASE_DEPTH = 5
 
 
+def growth_reading(change: float) -> Literal["faster", "slower", "steady"]:
+    """Code's reading of a growth_change: steady under `STEADY_GROWTH` either way."""
+    if abs(change) < STEADY_GROWTH:
+        return "steady"
+    return "faster" if change > 0 else "slower"
+
+
 @dataclass(frozen=True)
 class Metric:
     name: str
@@ -106,6 +113,9 @@ PERIOD_FIELDS = ("current", "prior_quarter", "year_ago")
 # prior_yoy_pct is the prior quarter's own change from a year before it, and
 # growth_change is yoy_pct less prior_yoy_pct, in points: code does the
 # subtraction, so a reader only has to say whether growth sped up or slowed
+# The sheet shows code's reading of each one and the rules score the filing
+# from it, so the two can never disagree and no model does the subtraction.
+STEADY_GROWTH = 0.02  # a growth_change under 2 points either way reads as steady
 CHANGE_FIELDS = (
     "qoq_change",
     "qoq_pct",
@@ -184,7 +194,10 @@ class MetricRow:
     @property
     def growth_change(self) -> float | None:
         now, before = self.yoy_pct, self.prior_yoy_pct
-        return None if now is None or before is None else now - before
+        if now is None or before is None:
+            return None
+        # from the rates as shown (two decimals of a percent), so they subtract to it
+        return round(now, 4) - round(before, 4)
 
     def number(self, field_name: str) -> float | None:
         if field_name in PERIOD_FIELDS:

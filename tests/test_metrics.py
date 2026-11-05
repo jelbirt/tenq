@@ -240,7 +240,10 @@ def test_growth_change_is_this_quarters_growth_less_the_prior_quarters(
     row = metrics_for(store, "CRWD").rows["revenue"]
     now, before = row.yoy_pct, row.prior_yoy_pct
     assert now is not None and before is not None
-    assert row.growth_change == pytest.approx(now - before)
+    # from the rates as the sheet shows them, so the shown figures subtract to it
+    change = row.growth_change
+    assert change is not None and change == pytest.approx(round(now, 4) - round(before, 4))
+    assert round(change * 100, 2) == pytest.approx(round(now * 100, 2) - round(before * 100, 2))
     assert metrics_for(store, "CRWD").rows["gross_margin"].growth_change is None
 
 
