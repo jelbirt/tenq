@@ -349,8 +349,17 @@ def test_video_and_podcast_hosts_are_dropped() -> None:
         ("https://www.fool.com/x", "fool.com"),
         ("https://m.fool.com/x", "m.fool.com"),
         ("https://finance.yahoo.com/x", "finance.yahoo.com"),
+        ("https://WWW.Reuters.COM./x", "reuters.com"),
+        ("https://xn--crwdstrke-o5a.com/x", "xn--crwdstrke-o5a.com"),
+        ("https://cr\u0131wdstrike.com/x", "xn--crwdstrike-yub.com"),
         ("", ""),
         ("http://[oops/x", ""),
+        ("javascript://fool.com/x", ""),
+        ("ftp://fool.com/x", ""),
+        ("https://127.0.0.1/x", ""),
+        ("https://fool.com\u202e.moc/x", ""),
+        ("https://" + "a" * 250 + ".com/x", ""),
+        ("https://bad_host.com/x", ""),
     ],
 )
 def test_a_story_s_site_is_its_link_s_host(link: str, site: str) -> None:
@@ -374,3 +383,39 @@ def test_a_link_that_is_not_a_url_never_sinks_the_run() -> None:
     got = _collect(pages, {"CRWD": "CrowdStrike", "ZS": "Zscaler"})
     assert [i.title for i in got.items["CRWD"]] == ["CRWD rises"]
     assert [i.title for i in got.items["ZS"]] == ["Zscaler falls"]
+
+
+def _story(n: int, link: str, hour: int) -> tuple[str, str, str, str]:
+    return (f"CrowdStrike story {n}", link, f"Wed, 04 Nov 2026 {hour:02d}:00:00 GMT", "")
+
+
+def test_a_burst_from_one_site_cannot_push_out_the_rest() -> None:
+    burst = [_story(n, f"https://www.fool.com/{n}", 10 + n) for n in range(6)]
+    release = _story(9, "https://www.businesswire.com/r", 2)
+    got = collect(
+        {"CRWD": "CrowdStrike"},
+        SINCE,
+        fetch=Feeds({GENERAL: _rss(release, *burst)}),
+        general=[GENERAL],
+        per_ticker=None,
+        cap=5,
+    )
+    # three from the busy site, then the release, then the busy site tops up the cap
+    assert [i.title for i in got.items["CRWD"]] == [
+        f"CrowdStrike story {n}" for n in (5, 4, 3, 2, 9)
+    ]
+
+
+def test_one_site_still_fills_the_cap_when_nothing_else_came_in() -> None:
+    burst = [_story(n, f"https://finance.yahoo.com/{n}", 10 + n) for n in range(6)]
+    got = collect(
+        {"CRWD": "CrowdStrike"},
+        SINCE,
+        fetch=Feeds({GENERAL: _rss(*burst)}),
+        general=[GENERAL],
+        per_ticker=None,
+        cap=5,
+    )
+    assert [i.title for i in got.items["CRWD"]] == [
+        f"CrowdStrike story {n}" for n in (5, 4, 3, 2, 1)
+    ]

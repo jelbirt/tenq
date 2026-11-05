@@ -48,6 +48,11 @@ TIMEOUT_S = 20
 MAX_FEED_BYTES = 5_000_000
 ATTEMPTS = 2
 PER_TICKER = 10
+PER_SITE = 3  # a burst from one site fills at most this many slots until the rest are used
+# what a site may look like once shown to the models: DNS labels, ASCII (an IDN as punycode)
+SITE = re.compile(
+    r"(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+(?:[a-z]{2,63}|xn--[a-z0-9-]{1,59})"
+)
 MAX_TITLE = 300
 MAX_SUMMARY = 600
 
@@ -190,11 +195,21 @@ def mentions(text: str, ticker: str, name: str | None) -> bool:
 
 
 def host(link: str) -> str:
-    """The link's site without "www.": "https://www.fool.com/x" to "fool.com"."""
+    """The link's site without "www.": "https://www.fool.com/x" to "fool.com".
+
+    The models see this text, so anything but a plain web address gives "": another
+    scheme, an IP address, spaces or marks, an overlong name. A non-ASCII name is shown
+    as punycode ("xn--..."), so a look-alike letter cannot pass for a known site.
+    """
     try:
-        return (urlsplit(link).hostname or "").removeprefix("www.")
-    except ValueError:  # "http://[oops/x" is not a URL; never let one sink the run
+        parts = urlsplit(link)
+        if parts.scheme.lower() not in ("http", "https"):
+            return ""
+        name = (parts.hostname or "").rstrip(".")
+        site = name.encode("idna").decode("ascii").lower().removeprefix("www.")
+    except (ValueError, UnicodeError):  # "http://[oops/x" is not a URL; never sink the run
         return ""
+    return site if SITE.fullmatch(site) else ""
 
 
 def _on(site: str, hosts: frozenset[str]) -> bool:
@@ -298,10 +313,33 @@ def collect(
         log.info("left out %d undated entries", undated)
 
     def newest(seen: dict[str, NewsItem]) -> tuple[NewsItem, ...]:
-        return tuple(sorted(seen.values(), key=lambda i: i.published, reverse=True)[:cap])
+        return keep_newest(seen.values(), cap)
 
     items = {t: newest(seen) for t, seen in found.items()}
     return News(items=items, notes=tuple(notes))
+
+
+def keep_newest(items: Iterable[NewsItem], cap: int) -> tuple[NewsItem, ...]:
+    """The newest `cap` items, newest first, with at most PER_SITE from any one site
+    unless there are not enough others to fill the cap.
+
+    Without the per-site limit, a burst of stories from one site in a busy hour would
+    push out everything older, the company's own release included.
+    """
+    ordered = sorted(items, key=lambda i: i.published, reverse=True)
+    taken: list[NewsItem] = []
+    per_site: dict[str, int] = {}
+    for item in ordered:
+        site = host(item.link)
+        if len(taken) < cap and per_site.get(site, 0) < PER_SITE:
+            taken.append(item)
+            per_site[site] = per_site.get(site, 0) + 1
+    for item in ordered:
+        if len(taken) >= cap:
+            break
+        if item not in taken:
+            taken.append(item)
+    return tuple(sorted(taken, key=lambda i: i.published, reverse=True))
 
 
 def main(argv: list[str] | None = None) -> int:

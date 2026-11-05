@@ -2,7 +2,7 @@
 
 A daily call reads only this. Numbers are computed in code (price returns
 against QQQ, the latest filing's tagged metrics); text is quoted as it came
-(recent 8-K passages, ranked headlines). Each number carries an id such as
+(recent 8-K passages, the newest headlines). Each number carries an id such as
 `px:CRWD:excess_20d` or `fin:CRWD:revenue:yoy_pct`, and each text item keeps
 its passage or news id, so the "why" written later can be checked against
 exactly what the deciders saw. The same pack goes to Jev and to Opus, and it

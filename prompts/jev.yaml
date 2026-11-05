@@ -44,7 +44,9 @@ questions:
     instructions: >-
       What is the strongest kind of evidence behind the most important item
       in the recent 8-K and recent headline sections? Headlines are not
-      labelled; judge each from its site, headline and summary.
+      labelled; judge each one's kind from its site (when shown), headline
+      and summary. A site such as finance.yahoo.com may be republishing
+      another outlet's story.
     criteria:
       none: There is no recent item.
       opinion: Analyst or columnist opinion, previews, or speculation.
