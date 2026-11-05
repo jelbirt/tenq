@@ -16,7 +16,7 @@
 # Types (OpenRouter System One): noul is the probability a statement is
 # true; choice picks one label from criteria; score picks a level from an
 # ordered list (0 is the first). Changing any question bumps the version.
-version: jev-q4
+version: jev-q5
 questions:
   material:
     type: noul
@@ -33,10 +33,12 @@ questions:
     instructions: >-
       Taken together, is the information in the recent 8-K and recent headline
       sections better or worse for this company's business than investors
-      would already have expected (not for its stock price)? Routine
-      announcements, such as a product launch, a partnership, a customer win,
-      a conference talk or an award, are what companies normally put out and
-      count as neutral.
+      would already have expected (not for its stock price)? Routine items
+      are what companies normally put out and count as neutral, whether they
+      sound upbeat or downbeat: a product launch, a partnership, a conference
+      talk, an award, a customer win the company does not say changes its
+      revenue or outlook, a debt or convertible note offering, or an
+      insider's stock sale under a preset plan.
     criteria:
       neutral: Nothing recent beyond what investors would expect, or only routine announcements.
       mixed: Real better and worse than expected items that roughly offset.
@@ -73,12 +75,16 @@ questions:
     type: score
     instructions: >-
       From the latest 10-Q or 10-K numbers, is the business getting better or
-      worse? Judge the direction of change, not the size: compare the
-      quarter's change from a year ago with the prior quarter's change from a
-      year before it (is growth speeding up or slowing down?), and say whether
-      margins and cash flow are widening or narrowing from a year ago. Fast
-      growth that is slowing is worsening; slow growth that is speeding up is
-      improving.
+      worse? Judge the direction of change, not the size. Each line ending
+      "less the prior quarter's, points" says how much faster (above zero)
+      or slower (below zero) growth from a year ago was than in the prior
+      quarter. A move of under 2 points either way is steady: most companies
+      slow a little almost every quarter. Weigh revenue first, then margins
+      and operating and free cash flow; capital expenditures and cash swing
+      widely and count least. Also say whether margins are widening or
+      narrowing from a year ago. Fast growth slowing by more than 2 points is
+      worsening; slow growth speeding up by more than 2 points is improving.
+      When no line compares growth, judge from margins and cash flow alone.
     criteria:
       - Clearly worsening.
       - Somewhat worsening.

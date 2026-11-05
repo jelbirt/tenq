@@ -103,9 +103,17 @@ DERIVED: tuple[tuple[str, str, Literal["usd", "ratio"]], ...] = (
 )
 
 PERIOD_FIELDS = ("current", "prior_quarter", "year_ago")
-# prior_yoy_pct is the prior quarter's own change from a year before it, so a
-# reader can tell whether growth from a year ago is speeding up or slowing
-CHANGE_FIELDS = ("qoq_change", "qoq_pct", "yoy_change", "yoy_pct", "prior_yoy_pct")
+# prior_yoy_pct is the prior quarter's own change from a year before it, and
+# growth_change is yoy_pct less prior_yoy_pct, in points: code does the
+# subtraction, so a reader only has to say whether growth sped up or slowed
+CHANGE_FIELDS = (
+    "qoq_change",
+    "qoq_pct",
+    "yoy_change",
+    "yoy_pct",
+    "prior_yoy_pct",
+    "growth_change",
+)
 FIELDS = PERIOD_FIELDS + CHANGE_FIELDS
 
 
@@ -172,6 +180,11 @@ class MetricRow:
     @property
     def prior_yoy_pct(self) -> float | None:
         return self._between(self.prior_quarter, self.prior_year_ago, pct=True)
+
+    @property
+    def growth_change(self) -> float | None:
+        now, before = self.yoy_pct, self.prior_yoy_pct
+        return None if now is None or before is None else now - before
 
     def number(self, field_name: str) -> float | None:
         if field_name in PERIOD_FIELDS:

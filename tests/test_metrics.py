@@ -232,3 +232,21 @@ def test_the_sixth_filing_cannot_change_the_older_columns() -> None:
     for field in ("current", "prior_quarter", "year_ago", "yoy_pct", "qoq_pct"):
         assert six.number(field) == five.number(field), field
     assert six.number("year_ago") == 150.0
+
+
+def test_growth_change_is_this_quarters_growth_less_the_prior_quarters(
+    store: FilingStore,
+) -> None:
+    row = metrics_for(store, "CRWD").rows["revenue"]
+    now, before = row.yoy_pct, row.prior_yoy_pct
+    assert now is not None and before is not None
+    assert row.growth_change == pytest.approx(now - before)
+    assert metrics_for(store, "CRWD").rows["gross_margin"].growth_change is None
+
+
+def test_growth_change_needs_both_growth_rates() -> None:
+    newest = (_meta("a2", "2026-06-30"), [_flow(REV, "2026-04-01", "2026-06-30", 120.0)])
+    older = (_meta("a1", "2025-06-30"), [_flow(REV, "2025-04-01", "2025-06-30", 100.0)])
+    row = build_table([newest, older]).rows["revenue"]
+    assert row.yoy_pct == pytest.approx(0.2)
+    assert row.prior_yoy_pct is None and row.growth_change is None

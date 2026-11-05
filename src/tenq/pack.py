@@ -299,6 +299,8 @@ def price_numbers(ticker: str, facts: PriceFacts) -> list[Number]:
 
 
 def _field_kind(unit: str, name: str) -> Kind:
+    if name == "growth_change":
+        return "points"  # one percent less another
     if name.endswith("_pct"):
         return "percent"
     if unit == "ratio":
@@ -315,6 +317,7 @@ FIELD_LABELS = {
     "yoy_change": "change from a year ago",
     "yoy_pct": "change from a year ago, percent",
     "prior_yoy_pct": "prior quarter's change from a year before it, percent",
+    "growth_change": "change from a year ago less the prior quarter's, points",
 }
 
 

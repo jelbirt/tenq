@@ -7,6 +7,7 @@ import pytest
 
 from tenq import jev
 from tenq.jev import QuestionSet, ask, average, load_questions
+from tenq.pack import FIELD_LABELS
 
 QUESTIONS = """\
 version: test-q1
@@ -97,17 +98,23 @@ def _ask(questions: QuestionSet, server: Server, **kw: Any) -> jev.Result:
 
 def test_the_committed_question_file_loads() -> None:
     q = load_questions()
-    assert q.version == "jev-q4"
+    assert q.version == "jev-q5"
     assert len(q.questions) == 6
     assert {x.type for x in q.questions} == {"noul", "choice", "score"}
     assert "\u2014" not in jev.QUESTIONS_PATH.read_text(encoding="utf-8")
 
 
 def test_jev_judges_change_and_surprise_not_size_and_cheer() -> None:
-    """jev-q4: fast growth alone is not improving, a routine launch is not good news."""
+    """jev-q5: fast growth alone is not improving, routine news is neutral both ways."""
     by_key = {x.key: x for x in load_questions().questions}
-    assert "speeding up or slowing down" in by_key["fundamentals"].instructions
-    assert "growth that is slowing is worsening" in by_key["fundamentals"].instructions
+    fundamentals = by_key["fundamentals"].instructions
+    # the line it is told to read is the sheet's own label for growth_change
+    assert FIELD_LABELS["growth_change"].endswith("less the prior quarter's, points")
+    assert "less the prior quarter's, points" in fundamentals
+    assert "under 2 points either way is steady" in fundamentals
+    assert "judge from margins and cash flow alone" in fundamentals
+    assert "debt or convertible note offering" in by_key["direction"].instructions
+    assert "growth slowing by more than 2 points is worsening" in fundamentals
     assert "than investors" in by_key["direction"].instructions
     assert "count as neutral" in by_key["direction"].instructions
 
