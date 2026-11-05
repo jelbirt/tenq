@@ -96,6 +96,30 @@ def test_a_flow_is_in_the_quarter_not_at_its_end(table: MetricsTable, metric: st
 
 
 @pytest.mark.parametrize(
+    ("number_id", "words"),
+    [
+        (
+            "fin:CRWD:revenue:prior_quarter",
+            "CRWD's revenue was $1.386 billion in the quarter ended 2026-04-30",
+        ),
+        (
+            "fin:CRWD:net_income:year_ago",
+            "CRWD's net income was a loss of $70.15 million in the quarter ended 2025-07-31",
+        ),
+        (
+            "fin:CRWD:cash:prior_quarter",
+            "CRWD's cash and cash equivalents were $4.553 billion"
+            " at the end of the quarter ended 2026-04-30",
+        ),
+    ],
+)
+def test_an_earlier_quarters_amount_names_that_quarter(
+    table: MetricsTable, number_id: str, words: str
+) -> None:
+    assert phrase(number_id, table_facts(table)) == words
+
+
+@pytest.mark.parametrize(
     ("number_id", "want"),
     [
         (

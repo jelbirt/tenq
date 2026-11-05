@@ -123,7 +123,10 @@ def test_the_why_is_told_which_move_the_rules_weighed() -> None:
     call = decide(moved, _good(), RULES, QUESTIONS)
     assert call is not None and call.reaction_id == f"px:{moved.ticker}:excess_5d"
     message = opus.why_message(moved, call)
-    assert f"the market reaction was measured on {{{call.reaction_id}}}" in message
+    id_line = f"- the market reaction was measured on {{{call.reaction_id}}}\n"
+    reaction_line = next(x for x in call.explain() if x.startswith("market reaction:"))
+    assert f"- {reaction_line}\n{id_line}" in message  # right under the cut it measures
+    assert call.to_dict()["reaction_id"] == call.reaction_id
     still = decide(_pack(), _good(), RULES, QUESTIONS)
     assert still is not None and still.reaction_id == ""
     assert "measured on" not in opus.why_message(_pack(), still)

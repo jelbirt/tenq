@@ -112,6 +112,8 @@ class Facts:
     ticker: str
     numbers: dict[str, Number]
     period: str | None = None  # the latest quarter's end, for "the quarter ended ..."
+    prior_period: str | None = None  # the quarters its changes compare with
+    year_ago_period: str | None = None
     day: date | None = None  # the price session, for "closed at ... on ..."
     sources: frozenset[str] = frozenset()  # ids that may be cited but hold no number
 
@@ -130,12 +132,15 @@ def _by_id(numbers: Iterable[Number]) -> dict[str, Number]:
 
 
 def pack_facts(pack: Pack) -> Facts:
+    f = pack.filing
     return Facts(
         pack.ticker,
         _by_id(pack.numbers),
-        pack.filing.period if pack.filing else None,
-        pack.day,
-        frozenset(pack.ids() - {n.id for n in pack.numbers}),
+        period=f.period if f else None,
+        prior_period=f.prior_period if f else None,
+        year_ago_period=f.year_ago_period if f else None,
+        day=pack.day,
+        sources=frozenset(pack.ids() - {n.id for n in pack.numbers}),
     )
 
 
@@ -144,7 +149,13 @@ def table_facts(table: MetricsTable, period: str | None = None) -> Facts:
     the filing's own period, the date the email and the daily pack show; the
     table's is the tagged data's, which can be a few days off."""
     numbers = _by_id(filing_numbers(table.ticker, table.to_dict()))
-    return Facts(table.ticker, numbers, period or table.period)
+    return Facts(
+        table.ticker,
+        numbers,
+        period or table.period,
+        prior_period=table.prior_period,
+        year_ago_period=table.year_ago_period,
+    )
 
 
 def _facts(source: Pack | Facts) -> Facts:
@@ -252,8 +263,14 @@ def _filing(n: Number, facts: Facts, metric: str, fld: str) -> str | None:
     latest = f"the quarter ended {facts.period}" if facts.period else "the latest quarter"
     when = {
         "current": latest,
-        "prior_quarter": "the prior quarter",
-        "year_ago": "the same quarter a year earlier",
+        "prior_quarter": (
+            f"the quarter ended {facts.prior_period}" if facts.prior_period else "the prior quarter"
+        ),
+        "year_ago": (
+            f"the quarter ended {facts.year_ago_period}"
+            if facts.year_ago_period
+            else "the same quarter a year earlier"
+        ),
     }
     # a balance is held at the quarter's end; a flow happens in it
     at = "at the end of" if metric in STOCK_METRICS else "in"

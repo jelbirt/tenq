@@ -137,7 +137,14 @@ class Call:
                 "against": ("moved against the signal", ", the market doubts it"),
             }.get(self.reaction_way, ("moved", ""))
             m = re.fullmatch(r"px:[^:]+:excess_([0-9]+)d", self.reaction_id)
-            span = f" over the last {m.group(1)} sessions" if m else ""
+            n = int(m.group(1)) if m else 0
+            span = (
+                ""
+                if not m
+                else " over the last session"
+                if n == 1
+                else f" over the last {n} sessions"
+            )
             lines.append(
                 f"market reaction: score cut by {self.reaction:.0%} ({way}{span}{meaning})"
             )

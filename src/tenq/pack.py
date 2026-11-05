@@ -35,7 +35,7 @@ import logging
 import math
 import re
 from collections.abc import Iterable, Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import Any, Literal
@@ -115,6 +115,9 @@ class Filing:
     days_old: int  # from the day it became known (acceptance in New York, else filing date)
     accepted: str = ""
     url: str = ""
+    # the ends of the quarters its numbers compare with, from its metrics table
+    prior_period: str | None = None
+    year_ago_period: str | None = None
 
 
 @dataclass
@@ -470,8 +473,13 @@ def build(
         if age > FILING_DAYS:
             pack.notes.append(f"latest {latest.form} is {age} days old")
         try:
-            table = metrics_for(filings, ticker, latest.accession).to_dict()
-            pack.numbers.extend(filing_numbers(ticker, table))
+            metrics = metrics_for(filings, ticker, latest.accession)
+            pack.numbers.extend(filing_numbers(ticker, metrics.to_dict()))
+            pack.filing = replace(
+                pack.filing,
+                prior_period=metrics.prior_period,
+                year_ago_period=metrics.year_ago_period,
+            )
         except Exception as exc:
             log.warning("filing metrics failed for %s (%s)", ticker, type(exc).__name__)
             pack.notes.append(f"filing metrics unavailable for {ticker}")

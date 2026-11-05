@@ -29,9 +29,9 @@ Rules, which code checks before anything is sent:
   market's move), with any sheet number in it as its placeholder, for
   example "{px:TICKER:excess_5d}, so the rules took the news as partly
   priced in"; and how each point bears on the call. For the market's move
-  behind the rules' cut, use the id the rules' summary says it was measured
-  on, not another window's. Say what a number
-  means without saying again how big it is or which way it moved.
+  behind the rules' cut, use the id that "How the rules reached it" says
+  the market reaction was measured on, not another window's. Say what a
+  number means without saying again how big it is or which way it moved.
   Each placeholder becomes a whole clause with its own subject and verb, so
   it must open a clause: start the reason with it, or put it right after a
   comma, semicolon, colon, full stop or opening bracket, or right after one
@@ -54,7 +54,8 @@ Rules, which code checks before anything is sent:
   - a filing amount: "ACME's revenue was $1.121 billion in the quarter ended
     2026-07-31", "ACME's operating income was a loss of $4.000 million in
     the quarter ended 2026-07-31", "ACME's free cash flow (operating cash flow
-    less capex) was negative $5.000 million in the prior quarter"
+    less capex) was negative $5.000 million in the quarter ended
+    2026-04-30"
   - a filing change: "ACME's revenue for the quarter ended 2026-07-31 rose
     35.64% from a year earlier", "ACME's operating income for the quarter
     ended 2026-07-31 rose by $88.10 million from the prior quarter", "ACME's

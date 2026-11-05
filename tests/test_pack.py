@@ -13,6 +13,7 @@ from tenq.filings import FilingMeta, FilingStore
 from tenq.news import NewsItem
 from tenq.pack import build, build_all, cutoff, excerpts, money, visible
 from tenq.prices import Bar, Prices
+from tenq.reasons import phrase
 
 LAST = date(2026, 10, 25)
 AS_OF = datetime(2026, 10, 26, 1, 0, tzinfo=UTC)  # 21:00 New York on the 25th
@@ -110,6 +111,11 @@ def test_the_latest_filing_known_at_the_time_gives_tagged_numbers(
     margin_now = p.number("fin:CRWD:gross_margin:current")
     assert margin_now is not None and margin_now.kind == "percent"
     assert p.number("fin:CRWD:gross_margin:yoy_pct") is None  # no percent change of a ratio
+    # the quarters its numbers compare with, so code's words can date them
+    assert (p.filing.prior_period, p.filing.year_ago_period) == ("2026-04-30", "2025-07-31")
+    assert phrase("fin:CRWD:revenue:prior_quarter", p) == (
+        "CRWD's revenue was $1.386 billion in the quarter ended 2026-04-30"
+    )
 
 
 def test_a_filing_filed_after_as_of_is_not_seen(store: FilingStore, current: FilingStore) -> None:

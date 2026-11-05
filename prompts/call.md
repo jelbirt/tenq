@@ -56,7 +56,8 @@ Rules, which code checks before anything is sent:
   - a filing amount: "ACME's revenue was $1.121 billion in the quarter ended
     2026-07-31", "ACME's operating income was a loss of $4.000 million in
     the quarter ended 2026-07-31", "ACME's free cash flow (operating cash flow
-    less capex) was negative $5.000 million in the prior quarter"
+    less capex) was negative $5.000 million in the quarter ended
+    2026-04-30"
   - a filing change: "ACME's revenue for the quarter ended 2026-07-31 rose
     35.64% from a year earlier", "ACME's operating income for the quarter
     ended 2026-07-31 rose by $88.10 million from the prior quarter", "ACME's
