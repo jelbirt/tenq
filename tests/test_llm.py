@@ -132,14 +132,22 @@ def test_call_runs_locked_down_and_parses(fake_claude: Path) -> None:
 def test_run_secrets_never_reach_the_model_process(
     fake_claude: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    for k in ("SMTP_PASS", "LANGFUSE_SECRET_KEY", "RECIPIENT_EMAILS", "EDGAR_IDENTITY"):
+    for k in (
+        "SMTP_PASS",
+        "LANGFUSE_SECRET_KEY",
+        "RECIPIENT_EMAILS",
+        "EDGAR_IDENTITY",
+        "OPENROUTER_API_KEY",
+    ):
         monkeypatch.setenv(k, "secret")
     monkeypatch.setenv("CLAUDE_CODE_OAUTH_TOKEN", "token")
     fake_claude.write_text(_events())
     _call()
     env = json.loads(Path(f"{fake_claude}.call").read_text())["env"]
     assert "CLAUDE_CODE_OAUTH_TOKEN" in env
-    assert not [k for k in env if k.startswith(("SMTP_", "LANGFUSE_", "RECIPIENT", "EDGAR"))]
+    assert not [
+        k for k in env if k.startswith(("SMTP_", "LANGFUSE_", "RECIPIENT", "EDGAR", "OPENROUTER"))
+    ]
 
 
 def test_a_run_offered_other_tools_is_discarded(fake_claude: Path) -> None:
