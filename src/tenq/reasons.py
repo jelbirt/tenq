@@ -41,7 +41,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass, field
 from datetime import date
 
-from tenq.metrics import BASE_METRICS, MetricsTable
+from tenq.metrics import BASE_METRICS, STEADY_GROWTH, MetricsTable, growth_reading
 from tenq.pack import FIELD_LABELS, Number, Pack, filing_numbers, money
 from tenq.prices import BENCHMARK
 
@@ -293,6 +293,13 @@ def _filing(n: Number, facts: Facts, metric: str, fld: str) -> str | None:
         if _zero(v, "points"):
             return f"{subject} was the same {at_q} {latest} as {at_q} {when['prior_quarter']}"
         pace = "faster" if v > 0 else "slower"
+        if growth_reading(v) == "steady":
+            vs = "the end of " if metric in STOCK_METRICS else ""
+            # the same word the sheet and the rules use, with the size kept for checking
+            return (
+                f"{subject} was steady {at_q} {latest} against {vs}{when['prior_quarter']}"
+                f" ({_pts(v)} {pace}, under {STEADY_GROWTH * 100:g} points either way)"
+            )
         return f"{subject} was {_pts(v)} {pace} {at_q} {latest} than {at_q} {when['prior_quarter']}"
     # a change names its quarter, so a later quarter in the news is not read into it
     quarter = when["prior_quarter"] if fld == "prior_yoy_pct" else latest

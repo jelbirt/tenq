@@ -285,20 +285,33 @@ def test_the_brief_prompts_example_is_what_code_writes(table: MetricsTable) -> N
     assert f'"{words.replace("CRWD", "ACME")}, driven by' in text
 
 
-def test_growth_change_reads_as_faster_slower_or_the_same(store: FilingStore) -> None:
+def test_growth_change_reads_as_steady_faster_slower_or_the_same(store: FilingStore) -> None:
     facts = table_facts(metrics_for(store, "CRWD"))
     assert phrase("fin:CRWD:revenue:growth_change", facts) == (
-        "CRWD's revenue growth from a year earlier was 0.26 points faster for the quarter "
-        "ended 2026-07-31 than for the quarter ended 2026-04-30"
+        "CRWD's revenue growth from a year earlier was steady for the quarter ended "
+        "2026-07-31 against the quarter ended 2026-04-30 (0.26 points faster, under 2 points "
+        "either way)"
     )
     assert phrase("fin:CRWD:gross_profit:growth_change", facts) == (
-        "CRWD's gross profit growth from a year earlier was 0.44 points slower for the "
-        "quarter ended 2026-07-31 than for the quarter ended 2026-04-30"
+        "CRWD's gross profit growth from a year earlier was steady for the quarter ended "
+        "2026-07-31 against the quarter ended 2026-04-30 (0.44 points slower, under 2 points "
+        "either way)"
     )
     assert phrase("fin:CRWD:deferred_revenue:growth_change", facts) == (
-        "CRWD's total deferred revenue growth from a year earlier was 1.06 points faster at "
-        "the end of the quarter ended 2026-07-31 than at the end of the quarter ended 2026-04-30"
+        "CRWD's total deferred revenue growth from a year earlier was steady at the end of the "
+        "quarter ended 2026-07-31 against the end of the quarter ended 2026-04-30 (1.06 points "
+        "faster, under 2 points either way)"
     )
+    # past the line, code writes the size and the direction, the sheet's own reading
+    capex = facts.numbers["fin:CRWD:capex:growth_change"]
+    assert capex.value is not None and capex.value > 0.02
+    assert phrase(capex.id, facts) == (
+        "CRWD's capital expenditures growth from a year earlier was 294.10 points faster for "
+        "the quarter ended 2026-07-31 than for the quarter ended 2026-04-30"
+    )
+    fcf = facts.numbers["fin:CRWD:free_cash_flow:growth_change"]
+    assert fcf.value is not None and fcf.value < -0.02
+    assert "points slower for the quarter ended 2026-07-31 than for" in str(phrase(fcf.id, facts))
     same = replace(facts.numbers["fin:CRWD:revenue:growth_change"], value=0.00001)
     flat = replace(facts, numbers={**facts.numbers, same.id: same})
     assert phrase(same.id, flat) == (
@@ -307,8 +320,8 @@ def test_growth_change_reads_as_faster_slower_or_the_same(store: FilingStore) ->
     )
     undated = replace(facts, prior_period=None)
     assert phrase("fin:CRWD:revenue:growth_change", undated) == (
-        "CRWD's revenue growth from a year earlier was 0.26 points faster for the quarter "
-        "ended 2026-07-31 than for the prior quarter"
+        "CRWD's revenue growth from a year earlier was steady for the quarter ended "
+        "2026-07-31 against the prior quarter (0.26 points faster, under 2 points either way)"
     )
     cash = replace(facts.numbers["fin:CRWD:cash:growth_change"], value=0.0)
     still = replace(facts, numbers={**facts.numbers, cash.id: cash})
