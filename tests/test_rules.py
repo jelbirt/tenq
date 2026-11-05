@@ -311,6 +311,11 @@ def test_a_jev_that_knew_nothing_is_a_hold_without_confidence() -> None:
     assert call is not None
     assert call.call == "Hold" and call.score == pytest.approx(0.0)
     assert call.coverage == 0.0 and call.confidence == 0.0
+    # with a steady growth line, code's own trend reading is all the evidence
+    call = decide(_pack(growth=0.0), result, RULES, QUESTIONS)
+    assert call is not None
+    assert call.call == "Hold" and call.score == pytest.approx(0.0)
+    assert call.coverage == pytest.approx(0.15) and call.confidence == pytest.approx(0.15)
 
 
 @pytest.mark.parametrize(

@@ -22,7 +22,7 @@ the included parts could reach that way; for Hold, how close the score sits to
 the weighted certainty that came in, each part also scaled by how decisive its
 answers were (how far from a coin flip, and for a choice how many rounds picked
 its winner). A Jev that knew nothing, flat answers every round, is a Hold with
-no confidence, not full confidence.
+no confidence beyond what code's own reading of the filing trend supplies.
 
 A Jev result with no answers is no call (Opus's call goes out alone); a
 missing answer, one of the wrong type, or an unreadable one (a NaN, a wrong

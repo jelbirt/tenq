@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 
 from tenq.filings import Fact, FilingMeta, FilingStore
-from tenq.metrics import build_table, metrics_for
+from tenq.metrics import MetricRow, Value, build_table, growth_reading, metrics_for
 
 REV = "us-gaap:RevenueFromContractWithCustomerExcludingAssessedTax"
 OCF = "us-gaap:NetCashProvidedByUsedInOperatingActivities"
@@ -253,3 +253,27 @@ def test_growth_change_needs_both_growth_rates() -> None:
     row = build_table([newest, older]).rows["revenue"]
     assert row.yoy_pct == pytest.approx(0.2)
     assert row.prior_yoy_pct is None and row.growth_change is None
+
+
+def _rates(now: float, prior: float) -> MetricRow:
+    def v(x: float) -> Value:
+        return Value(x, (), "tagged")
+
+    return MetricRow("revenue", "Revenue", "usd", v(now), v(prior), v(100.0), v(100.0))
+
+
+@pytest.mark.parametrize(
+    ("now", "prior", "reading"),
+    [
+        (130.0, 128.0, "faster"),  # 30% against 28%: exactly 2 points, from subtraction
+        (128.0, 130.0, "slower"),
+        (129.99, 128.0, "steady"),  # 1.99 points
+        (128.0, 129.99, "steady"),
+        (101.0, 101.0, "steady"),
+    ],
+)
+def test_the_growth_reading_matches_the_shown_figure(
+    now: float, prior: float, reading: str
+) -> None:
+    change = _rates(now, prior).growth_change
+    assert change is not None and growth_reading(change) == reading
