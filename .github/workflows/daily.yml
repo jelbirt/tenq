@@ -1,0 +1,73 @@
+name: daily
+# Both calls on every watchlist stock after the close, one email, and the
+# day's record committed to runs/daily/. Manual only until the first emailed
+# run has been checked; then a weekday schedule after the close is added here.
+on:
+  workflow_dispatch:
+    inputs:
+      tickers: {description: "A check on these tickers only (space separated); empty: the whole watchlist", required: false, default: ""}
+      email: {description: "Send the email", type: boolean, default: true}
+
+permissions:
+  contents: write # commits runs/daily/: the record, and what stops a second email
+
+# serialized: two overlapping runs would email the same day twice
+concurrency:
+  group: daily
+  cancel-in-progress: false
+
+jobs:
+  daily:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180 # 20 stocks: Jev, then two claude runs each
+    steps:
+      - uses: actions/checkout@v4
+        with: {ref: main, persist-credentials: false}
+      - uses: astral-sh/setup-uv@v6
+        with: {python-version: "3.12", enable-cache: true}
+      - run: uv sync --locked
+      - run: npm install -g @anthropic-ai/claude-code@2.1.300
+      - name: make the calls
+        env:
+          # dispatch input is untrusted text: passed as env, never spliced into the script
+          TICKERS: ${{ inputs.tickers }}
+          EMAIL: ${{ inputs.email }}
+          EDGAR_IDENTITY: ${{ secrets.EDGAR_IDENTITY }}
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          SMTP_USER: ${{ secrets.SMTP_USER }}
+          SMTP_PASS: ${{ secrets.SMTP_PASS }}
+          RECIPIENT_EMAILS: ${{ secrets.RECIPIENT_EMAILS }}
+          LANGFUSE_PUBLIC_KEY: ${{ secrets.LANGFUSE_PUBLIC_KEY }}
+          LANGFUSE_SECRET_KEY: ${{ secrets.LANGFUSE_SECRET_KEY }}
+          LANGFUSE_HOST: ${{ secrets.LANGFUSE_HOST }}
+          PYTHONUNBUFFERED: "1" # each stock's lines reach the log even if the job is cut off
+        run: |
+          args=()
+          read -ra tickers <<< "$TICKERS"
+          for t in "${tickers[@]}"; do args+=(--ticker "$t"); done
+          [[ "$EMAIL" == "false" ]] && args+=(--no-email)
+          uv run --locked python -m tenq.daily "${args[@]}"
+      - name: commit the record
+        if: ${{ always() }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git config user.name tenq-bot
+          git config user.email bot@users.noreply.github.com
+          git remote set-url origin "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          git add runs/daily
+          if git diff --cached --quiet; then
+            echo "no new daily record"
+            exit 0
+          fi
+          git commit -m "runs: daily record $(git diff --cached --name-only | xargs -n1 basename | tr '\n' ' ')"
+          # the brief job also commits runs/ (other files): rebase onto it, retry once
+          for attempt in 1 2; do
+            if git pull --rebase origin main && git push; then
+              exit 0
+            fi
+            git rebase --abort 2>/dev/null || true
+            sleep 5
+          done
+          exit 1

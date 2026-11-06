@@ -44,6 +44,20 @@ A GitHub Actions workflow ([brief.yml](.github/workflows/brief.yml)) runs daily:
    trace is stored only after a lookup through Langfuse's API finds it. The `trace-check`
    workflow sends one test trace the same way, to prove the secrets work.
 
+## The daily calls
+
+A second workflow ([daily.yml](.github/workflows/daily.yml), [daily.py](src/tenq/daily.py)) makes
+two calls (Buy, Hold, Sell or Short) on every watchlist stock after the close, from the same
+facts sheet ([pack.py](src/tenq/pack.py)): Jev answers text-only questions and fixed rules
+([rules.py](src/tenq/rules.py), [config/rules.yaml](config/rules.yaml)) turn the answers into a
+call; Opus makes its own call and writes the why for Jev's ([opus.py](src/tenq/opus.py)). Code
+checks every reason and writes every figure in it ([reasons.py](src/tenq/reasons.py)). One email
+shows both calls per stock with links to what each reason cites
+([daily_email.py](src/tenq/daily_email.py)). The day's record, `runs/daily/<day>.json`, holds
+the facts, both calls and the closes the calls will be scored against later; it is written
+before the email, so a rerun never sends the same day twice, and each stock gets its own
+Langfuse trace, grouped by day. `runs/` is written by both workflows, each only its own files.
+
 ## Guardrails
 
 - The model never sees a shell, files or the web: `--tools ""`, `--strict-mcp-config`, an
