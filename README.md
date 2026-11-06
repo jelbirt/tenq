@@ -82,7 +82,9 @@ A method whose call changes on identical facts owes part of its future score to 
 is the earliest read on either method, and worth repeating after any prompt, question or rules
 change. It prints, per method, on how many stocks the call stayed the same and how far Jev's
 score or Opus's confidence moved, and commits the record to `runs/consistency/`. Nothing is
-emailed, and the scorecard never reads these calls. A full run is about 60 Claude runs.
+emailed, and the scorecard never reads these calls. A full run is about 60 Claude runs, so
+with Opus on it is refused on weekday evenings (20:00 to 02:00 UTC), when the daily run needs
+the same subscription.
 
 ## Guardrails
 

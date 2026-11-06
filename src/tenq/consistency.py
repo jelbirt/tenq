@@ -17,9 +17,11 @@ method, on how many stocks the call was the same every time, and how far the
 score (Jev) or the confidence (Opus) moved between runs. Nothing is emailed,
 and the scorecard never reads these calls.
 
-Fails open like the daily run: if Jev is down or Claude is at its limit (or
-fails twice in a row), that method is skipped for the stocks left. Exits 1
-when no stock was asked at all.
+Fails open like the daily run: if Jev is down, Claude is at its limit (or
+fails twice in a row), or the run passes its 110 minute budget for Opus, that
+method is skipped for the stocks left. With Opus on, a run is refused on
+weekday evenings (20:00 to 02:00 UTC), when the daily run needs the same
+Claude subscription, and above 60 Opus runs. Exits 1 when no call was made.
 """
 
 from __future__ import annotations
@@ -48,11 +50,31 @@ KIND = "consistency"
 CONSISTENCY_DIR = "consistency"
 REPEATS = 3
 MAX_REPEATS = 5
+# Opus is skipped once the run passes this, so Jev still finishes every stock
+# inside the workflow step's 140 minutes.
+OPUS_BUDGET_S = 110 * 60
+MAX_OPUS_RUNS = 60  # repeats x stocks: more cannot fit the budget
+# The daily run uses the same Claude subscription from 22:30 UTC on weekdays.
+# A run that could still be asking Opus then is refused, so it never uses up
+# the quota the day's calls need.
+DAILY_WINDOW_UTC = (20, 2)  # from 20:00 to 02:00 the next morning, Monday to Friday nights
 
 
-def jev_runs(pack: Pack, ctx: Context, state: State, repeats: int) -> list[dict[str, Any]]:
-    """Jev's call `repeats` times on one pack, each a fresh set of answers."""
-    out: list[dict[str, Any]] = []
+def in_daily_window(now: datetime) -> bool:
+    """Whether `now` falls in a weekday evening's daily run window (UTC)."""
+    utc = now.astimezone(UTC)
+    start, end = DAILY_WINDOW_UTC
+    if utc.hour >= start:
+        return utc.weekday() < 5  # Monday to Friday evening
+    if utc.hour < end:
+        return 1 <= utc.weekday() <= 5  # Tuesday to Saturday, just after midnight
+    return False
+
+
+def jev_runs(
+    pack: Pack, ctx: Context, state: State, repeats: int, run_id: str, out: list[dict[str, Any]]
+) -> None:
+    """Jev's call `repeats` times on one pack, each a fresh set of answers, onto `out`."""
     for i in range(repeats):
         if state.jev_down:
             out.append({"call": None, "error": "not asked: Jev was down earlier in this run"})
@@ -60,7 +82,7 @@ def jev_runs(pack: Pack, ctx: Context, state: State, repeats: int) -> list[dict[
         result = ctx.ask(
             pack.render(),
             ctx.questions,
-            session_id=f"tenq-consistency-{pack.ticker}-{pack.day}-{i + 1}",
+            session_id=f"tenq-consistency-{run_id[:8]}-{pack.ticker}-{pack.day}-{i + 1}",
         )
         state.jev_down |= result.down
         state.jev_cost += result.cost
@@ -74,12 +96,12 @@ def jev_runs(pack: Pack, ctx: Context, state: State, repeats: int) -> list[dict[
                 "cost": result.cost,
             }
         )
-    return out
 
 
-def opus_runs(pack: Pack, ctx: Context, state: State, repeats: int) -> list[dict[str, Any]]:
-    """Opus's own call `repeats` times on one pack."""
-    out: list[dict[str, Any]] = []
+def opus_runs(
+    pack: Pack, ctx: Context, state: State, repeats: int, out: list[dict[str, Any]]
+) -> None:
+    """Opus's own call `repeats` times on one pack, onto `out`."""
     for _ in range(repeats):
         if ctx.claude is None:
             out.append({"call": None, "error": "Opus was off for this run"})
@@ -98,11 +120,13 @@ def opus_runs(pack: Pack, ctx: Context, state: State, repeats: int) -> list[dict
                 "agent": run.to_dict(),
             }
         )
-    return out
 
 
-def measure(ticker: str, company: str, ctx: Context, state: State, repeats: int) -> dict[str, Any]:
-    """One stock's repeated calls. Never raises: a failure is recorded on the stock."""
+def measure(
+    ticker: str, company: str, ctx: Context, state: State, repeats: int, run_id: str = ""
+) -> dict[str, Any]:
+    """One stock's repeated calls. Never raises: a failure in code is recorded on the
+    stock, after the runs it had already finished."""
     out: dict[str, Any] = {"ticker": ticker, "company": company}
     try:
         pack = ctx.gather(ticker, ctx.now)
@@ -110,15 +134,15 @@ def measure(ticker: str, company: str, ctx: Context, state: State, repeats: int)
         return out | {"error": f"no facts pack ({type(exc).__name__})"}
     if pack is None:
         return out | {"error": "no prices"}
-    out["day"] = pack.day.isoformat()
+    out |= {"day": pack.day.isoformat(), "jev": [], "opus": []}
     try:
-        out["jev"] = jev_runs(pack, ctx, state, repeats)
+        jev_runs(pack, ctx, state, repeats, run_id, out["jev"])
     except Exception as exc:
-        out["jev"] = [{"call": None, "error": f"failed in code ({type(exc).__name__})"}]
+        out["jev"].append({"call": None, "error": f"failed in code ({type(exc).__name__})"})
     try:
-        out["opus"] = opus_runs(pack, ctx, state, repeats)
+        opus_runs(pack, ctx, state, repeats, out["opus"])
     except Exception as exc:
-        out["opus"] = [{"call": None, "error": f"failed in code ({type(exc).__name__})"}]
+        out["opus"].append({"call": None, "error": f"failed in code ({type(exc).__name__})"})
     return out
 
 
@@ -128,11 +152,18 @@ def _spread(values: Sequence[float | None]) -> float | None:
     return max(got) - min(got) if len(got) >= 2 else None
 
 
+def _attempted(run: dict[str, Any]) -> bool:
+    """The method was really asked on this run (it may still have failed)."""
+    error = str(run.get("error") or "")
+    return bool(run.get("call")) or not error.startswith(("not asked", "Opus was off"))
+
+
 def summarize(stocks: Sequence[dict[str, Any]], method: str, measure_key: str) -> dict[str, Any]:
     """Per method: stocks with every run answered, how many kept one call, and the moves.
 
     A stock counts only when every run gave a call: a run that failed says
     nothing about steadiness, so it is left out rather than read as a change."""
+    asked = sum(1 for stock in stocks if any(_attempted(r) for r in stock.get(method) or []))
     complete: list[dict[str, Any]] = []
     for stock in stocks:
         runs = stock.get(method) or []
@@ -149,6 +180,7 @@ def summarize(stocks: Sequence[dict[str, Any]], method: str, measure_key: str) -
         if moved is not None:
             spreads.append(moved)
     return {
+        "asked": asked,
         "stocks": len(complete),
         "same_call": len(complete) - len(changed),
         "changed": changed,
@@ -161,8 +193,10 @@ def summarize(stocks: Sequence[dict[str, Any]], method: str, measure_key: str) -
 def lines(summary: dict[str, Any], repeats: int) -> list[str]:
     out = []
     for name, s in (("Jev", summary["jev"]), ("Opus", summary["opus"])):
+        left = s["asked"] - s["stocks"]
+        out_of = f" ({left} more left out: a run failed)" if left else ""
         if not s["stocks"]:
-            out.append(f"{name}: no stock got a call on every run")
+            out.append(f"{name}: no stock got a call on every run{out_of}")
             continue
         move = ""
         if s["median_move"] is not None:
@@ -173,7 +207,7 @@ def lines(summary: dict[str, Any], repeats: int) -> list[str]:
             )
         out.append(
             f"{name}: same call on {s['same_call']} of {s['stocks']} stocks "
-            f"over {repeats} runs each{move}"
+            f"with all {repeats} runs answered{move}{out_of}"
         )
         for c in s["changed"]:
             out.append(f"  {c['ticker']} changed: {' / '.join(c['calls'])}")
@@ -210,7 +244,17 @@ def main(argv: list[str] | None = None, *, ctx: Context | None = None) -> int:
         )
     if args.no_opus:
         ctx.claude = None
-    state = State(deadline=math.inf)
+    if ctx.claude is not None:
+        if args.repeats * len(tickers) > MAX_OPUS_RUNS:
+            print(f"{args.repeats} runs on {len(tickers)} stocks is over {MAX_OPUS_RUNS} Opus runs")
+            return 2
+        if in_daily_window(ctx.now):
+            print(
+                "refused: the daily run uses the same Claude subscription on weekday "
+                "evenings (20:00 to 02:00 UTC). Run it outside that window, or with --no-opus."
+            )
+            return 2
+    state = State(deadline=ctx.clock() + OPUS_BUDGET_S)
     run_id = uuid.uuid4().hex
     record: dict[str, Any] = {
         "kind": KIND,
@@ -224,6 +268,7 @@ def main(argv: list[str] | None = None, *, ctx: Context | None = None) -> int:
         "versions": {
             "questions": ctx.questions.version,
             "rules": ctx.rules.version,
+            "rules_sha256": ctx.rules.sha256,
             "call_prompt": ctx.call_prompt.version,
         },
         "opus_on": ctx.claude is not None,
@@ -234,7 +279,7 @@ def main(argv: list[str] | None = None, *, ctx: Context | None = None) -> int:
     path = args.runs / CONSISTENCY_DIR / f"{ctx.now.date().isoformat()}-{run_id[:8]}.json"
     stocks: list[dict[str, Any]] = record["stocks"]
     for ticker in tickers:
-        stock = measure(ticker, watch.names.get(ticker, ticker), ctx, state, args.repeats)
+        stock = measure(ticker, watch.names.get(ticker, ticker), ctx, state, args.repeats, run_id)
         stocks.append(stock)
         log.info(
             "%s: Jev %s, Opus %s",
@@ -249,8 +294,8 @@ def main(argv: list[str] | None = None, *, ctx: Context | None = None) -> int:
     for line in lines(record["summary"], args.repeats):
         print(line)
     print(f"Jev cost ${state.jev_cost:.4f}; record {path}")
-    asked = any("jev" in s or "opus" in s for s in stocks)
-    return 0 if asked else 1
+    called = any(r.get("call") for s in stocks for m in ("jev", "opus") for r in s.get(m) or [])
+    return 0 if called else 1
 
 
 def _finish(record: dict[str, Any], state: State, stocks: list[dict[str, Any]]) -> None:

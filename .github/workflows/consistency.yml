@@ -3,6 +3,8 @@ name: consistency
 # per stock, to see how steady each method is. Worth a run after any prompt,
 # question or rules change. Nothing is emailed; the record is committed to
 # runs/consistency/ and the summary is printed at the end of the log.
+# With Opus on it is refused on weekday evenings (20:00 to 02:00 UTC): the
+# daily run needs the same Claude subscription then.
 on:
   workflow_dispatch:
     inputs:
