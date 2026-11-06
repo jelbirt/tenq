@@ -1,9 +1,8 @@
 # How Jev's answers become a call. Read top to bottom. Every number here is a
-# setting; changing any of them, or any label, bumps the version so the
-# scorecard can tell rule sets apart (a test pins this file's hash for each
-# version). src/tenq/rules.py applies it, and checks every label below against
+# setting. Any edit, even to a comment, bumps the version so the scorecard
+# can tell rule sets apart (a test pins this file's hash for each version). src/tenq/rules.py applies it, and checks every label below against
 # prompts/jev.yaml.
-version: rules-v7
+version: rules-v8
 
 # 1. News: Jev's direction answer as an expected value from -1 (bad for the
 #    business) to +1 (good), times the probability the recent news is
@@ -76,4 +75,4 @@ reaction:
 calls:
   buy: 0.20     # at or above: expect it to beat QQQ
   sell: -0.20   # at or below: get out if you own it
-  short: -0.45  # at or below: expect it to fall
+  short: -0.45  # at or below: expect it to lag QQQ by a wide margin
