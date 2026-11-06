@@ -28,7 +28,7 @@ import json
 import logging
 import os
 import time
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Collection, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -442,19 +442,24 @@ def emit_daily(stock: dict[str, Any], record: dict[str, Any], tracer: Tracer) ->
 def send_daily_traces(
     record: dict[str, Any],
     *,
+    skip: Collection[str] = (),
     connect: Connect = connect,
     wait: float = FIND_WAIT_S,
     sleep: Callable[[float], None] = time.sleep,
     clock: Callable[[], float] = time.monotonic,
 ) -> tuple[bool, str, dict[str, str]]:
-    """One trace per stock, sent together, then each looked up within one
-    shared wait. Returns (all stored, status, trace id per ticker); never raises."""
+    """One trace per stock not in `skip` (already stored), sent together, then
+    each looked up within one shared wait. Returns (all stored, status, trace
+    id per ticker found stored); never raises."""
+    stocks = [s for s in record["stocks"] if s["ticker"] not in skip]
+    if not stocks:
+        return True, "traces already stored", {}
     env = _env()
     if env is None:
         return False, "trace skipped: Langfuse env not set", {}
     try:
         tracing = connect(*env)
-        ids = {s["ticker"]: emit_daily(s, record, tracing.tracer) for s in record["stocks"]}
+        ids = {s["ticker"]: emit_daily(s, record, tracing.tracer) for s in stocks}
         tracing.flush()
     except Exception as exc:
         log.warning("daily traces failed: %s", type(exc).__name__)
@@ -472,11 +477,12 @@ def send_daily_traces(
         log.info("daily traces stored in Langfuse: %d", stored)
         return True, f"traces stored: {stored} of {len(ids)}", ids
     log.warning("daily traces not found after %.0fs: %s", wait, ", ".join(missing))
+    found = {t: i for t, i in ids.items() if t not in missing}
     return (
         False,
         f"traces sent, {stored} of {len(ids)} found after {wait:.0f}s; "
         f"missing {', '.join(missing)}",
-        ids,
+        found,
     )
 
 

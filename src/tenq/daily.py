@@ -13,16 +13,23 @@ checks every reason (tenq.reasons). Then one email with both calls per stock
 
 The record, runs/daily/<day>.json, is written after every stock and before
 the email goes out. It holds everything the email is rendered from, plus
-each stock's close and QQQ's and the time the calls were made, which is what
-the scorecard needs to score the calls later. So:
+each stock's close and QQQ's, and the time the calls were made (made_at).
+Those closes are from before the calls were made, since the calls read news
+up to made_at: they are kept for reference and are not the price a call is
+scored from. So:
 - a run on a day whose record says the email went out stops at once: a
   holiday (the latest session is one already done) or a rerun sends nothing
   twice;
 - a run on a day whose record says the email failed sends it again from the
   record, without asking either model again;
-- a record that is unreadable, unfinished, or was being emailed when the job
-  stopped is never run or sent again by code: a person looks first, since the
-  email may already have gone out.
+- a record that is unreadable, unfinished, or whose email may have gone out
+  (it was claimed for sending, or the mail server's answer was lost) is never
+  run or sent again by code: a person looks first.
+
+In the workflow the run is three steps (--stage calls, claim, send). The
+claim, which marks the email as being sent, is saved to main before the send
+step runs. If that save fails, nothing was sent and a rerun is safe; once it
+has worked, any later failure leaves a record that asks a person.
 
 A run with --ticker, --no-email or --no-opus is a check: its record is
 runs/daily/<day>.check-<id>.json, it never stops or replaces the day's full
@@ -69,13 +76,16 @@ log = logging.getLogger(__name__)
 
 KIND = "daily"
 DAILY_DIR = "daily"
-OPUS_BUDGET_S = 150 * 60  # Opus is skipped once the run passes this; the job's limit is 180 min
+# Opus is skipped once the run passes this. The calls step's limit is 165 min: this
+# leaves room for one claude run still going (up to 5 min) and Jev on the stocks left.
+OPUS_BUDGET_S = 140 * 60
 CLAUDE_FAILS = 2  # this many failed claude runs in a row: Claude is treated as down
+STAGES = ("all", "calls", "claim", "send")
 
 Gather = Callable[[str, datetime], Pack | None]
 Ask = Callable[..., Result]
-Mailer = Callable[[Any], tuple[bool, str]]
-Tracer = Callable[[dict[str, Any]], tuple[bool, str, dict[str, str]]]
+Mailer = Callable[[Any], tuple[bool | None, str]]
+Tracer = Callable[..., tuple[bool, str, dict[str, str]]]  # (record, skip=tickers already stored)
 
 
 @dataclass
@@ -153,18 +163,43 @@ def _call_dict(call: Call) -> dict[str, Any]:
 
 
 def run_stock(ticker: str, company: str, day: date, ctx: Context, state: State) -> dict[str, Any]:
-    """Both calls for one stock, as a record entry. Never raises."""
+    """Both calls for one stock, as a record entry. Never raises: a failure in
+    code is recorded on this stock (its type only, since exception text is not
+    trusted to be clean) and the run goes on to the next."""
     steps = Steps()
     out: dict[str, Any] = {"ticker": ticker, "company": company, "steps": steps.items}
     t = time.time()
     try:
         pack = ctx.gather(ticker, ctx.now)
-    except Exception as exc:  # the type only: exception text is not trusted to be clean
+    except Exception as exc:
         steps.add("facts pack", t, None, type(exc).__name__)
         return out | {"error": f"no facts pack ({type(exc).__name__})"}
     if pack is None:
         steps.add("facts pack", t, None, "no prices")
         return out | {"error": "no prices"}
+    try:
+        _facts(out, pack, ticker, day, steps, t)
+    except Exception as exc:
+        return out | {"error": f"the facts pack could not be read ({type(exc).__name__})"}
+
+    call: Call | None = None
+    try:
+        call = _jev(out, pack, ticker, ctx, state, steps)
+    except Exception as exc:
+        out["jev"] = (out.get("jev") or {}) | {"error": f"failed in code ({type(exc).__name__})"}
+
+    try:
+        _opus(out, pack, call, ctx, state, steps)
+    except Exception as exc:
+        failed = f"failed in code ({type(exc).__name__})"
+        if not (out.get("opus") or {}).get("call"):
+            out["opus"] = (out.get("opus") or {}) | {"call": None, "error": failed}
+        if call is not None and "why" not in out:
+            out["why"] = {"error": failed}
+    return out
+
+
+def _facts(out: dict[str, Any], pack: Pack, ticker: str, day: date, steps: Steps, t: float) -> None:
     steps.add(
         "facts pack",
         t,
@@ -179,30 +214,40 @@ def run_stock(ticker: str, company: str, day: date, ctx: Context, state: State) 
     if pack.day != day:
         out["note"] = f"its latest price is from {pack.day}, not {day}"
 
-    call: Call | None = None
+
+def _jev(
+    out: dict[str, Any], pack: Pack, ticker: str, ctx: Context, state: State, steps: Steps
+) -> Call | None:
+    """Jev's call, recorded on `out` and the tally together, or not at all."""
     if state.jev_down:
         out["jev"] = {"error": "not asked: Jev was down earlier in this run"}
-    else:
-        t = time.time()
-        result = ctx.ask(pack.render(), ctx.questions, session_id=f"tenq-daily-{ticker}-{pack.day}")
-        state.jev_down |= result.down
-        state.jev_cost += result.cost
-        call = decide(pack, result, ctx.rules, ctx.questions) if result.answers else None
-        steps.add("jev", t, {"answers": len(result.answers)}, result.error)
-        out["jev"] = result.to_dict()
-    if call is not None:
-        out["call"] = _call_dict(call)
-        state.tally.jev.append(call)
+        return None
+    t = time.time()
+    result = ctx.ask(pack.render(), ctx.questions, session_id=f"tenq-daily-{ticker}-{pack.day}")
+    state.jev_down |= result.down
+    state.jev_cost += result.cost
+    out["jev"] = result.to_dict()
+    call = decide(pack, result, ctx.rules, ctx.questions) if result.answers else None
+    steps.add("jev", t, {"answers": len(result.answers)}, result.error)
+    if call is None:
+        return None
+    out["call"] = _call_dict(call)
+    state.tally.jev.append(call)
+    return call
 
+
+def _opus(
+    out: dict[str, Any], pack: Pack, call: Call | None, ctx: Context, state: State, steps: Steps
+) -> None:
     if ctx.claude is None:
         out["opus"] = {"error": "Opus was off for this run"}
-        return out
+        return
     skipped = state.opus_skipped(ctx.clock)
     if skipped:
         out["opus"] = {"error": f"not asked: {skipped}"}
         if call is not None:
             out["why"] = {"error": f"not asked: {skipped}"}
-        return out
+        return
     t = time.time()
     run, own = opus.opus_call(pack, ctx.call_prompt, claude=ctx.claude)
     state.claude_ran(run)
@@ -217,11 +262,11 @@ def run_stock(ticker: str, company: str, day: date, ctx: Context, state: State) 
     if own.call is not None:
         state.tally.opus.append(own.call)
     if call is None:
-        return out
+        return
     skipped = state.opus_skipped(ctx.clock)
     if skipped:
         out["why"] = {"error": f"not asked: {skipped}"}
-        return out
+        return
     t = time.time()
     run, why = opus.explain_call(pack, call, ctx.why_prompt, claude=ctx.claude)
     state.claude_ran(run)
@@ -232,7 +277,6 @@ def run_stock(ticker: str, company: str, day: date, ctx: Context, state: State) 
         **_checked(check_reasons(why.reasons, pack)),
         "agent": run.to_dict(),
     }
-    return out
 
 
 def called(stock: dict[str, Any]) -> bool:
@@ -272,9 +316,42 @@ def _needs_a_person(record: dict[str, Any] | None) -> str | None:
         return "its record is unreadable"
     if record.get("complete") is not True:
         return "its record is unfinished (the job stopped mid-run)"
-    if (record.get("email") or {}).get("status") == "sending":
-        return "the job stopped while emailing it, so it may have gone out"
+    email = record.get("email") or {}
+    if email.get("sent", False) is None:  # claimed for sending, or the server's answer was lost
+        return f"its email may have gone out ({email.get('status')})"
     return None
+
+
+def _output(**values: str) -> None:
+    """Tell the workflow's later steps what to do (no-op outside Actions)."""
+    out = os.environ.get("GITHUB_OUTPUT")
+    if out:
+        with open(out, "a", encoding="utf-8") as f:
+            f.writelines(f"{k}={v}\n" for k, v in values.items())
+
+
+def _claim(path: Path, record: dict[str, Any], token: str) -> None:
+    """Mark the email as being sent by this job. From here a run that finds the
+    record asks a person, so whatever stops the job, the email never goes twice."""
+    record["email"] = {"sent": None, "status": "sending", "claim": token}
+    _write(path, record)
+
+
+def _mail(path: Path, record: dict[str, Any], mailer: Mailer) -> dict[str, Any]:
+    message = render(record)
+    sent, status = mailer(message)  # sent None: the server may have taken it
+    record["email"] = {"sent": sent, "status": status, "subject": message.subject}
+    _write(path, record)
+    return record
+
+
+def _trace(path: Path, record: dict[str, Any], tracer: Tracer) -> dict[str, Any]:
+    """Trace every stock not already stored, keeping the ids of those that were."""
+    done = dict((record.get("trace") or {}).get("ids") or {})
+    stored, status, ids = tracer(record, skip=set(done))
+    record["trace"] = {"stored": stored, "status": status, "ids": done | ids}
+    _write(path, record)
+    return record
 
 
 def deliver(
@@ -284,26 +361,62 @@ def deliver(
     email: bool,
     mailer: Mailer = send,
     tracer: Tracer = send_daily_traces,
-    trace: bool = True,
 ) -> dict[str, Any]:
-    """Email and trace a finished, written record, writing it again after each."""
-    message = render(record)
+    """Email and trace a finished, written record in one go, writing it again
+    after each. The workflow does the same in steps instead, saving the claim
+    to main before the email goes out (see main's --stage)."""
     if email:
-        # a job stopped between here and the next write leaves "sending": the
-        # next run asks a person rather than risk a second email
-        record["email"] = {"sent": None, "status": "sending", "subject": message.subject}
-        _write(path, record)
-        sent, status = mailer(message)
+        _claim(path, record, "local")
+        record = _mail(path, record, mailer)
     else:
-        sent, status = False, "email skipped: --no-email"
-    record["email"] = {"sent": sent, "status": status, "subject": message.subject}
-    _write(path, record)
-    if trace:
-        stored, trace_status, ids = tracer(record)
-        record["trace"] = {"stored": stored, "status": trace_status, "ids": ids}
+        record["email"] = {"sent": False, "status": "email skipped: --no-email"}
         _write(path, record)
-    log.info("daily %s: %s, %s", record["day"], status, record["trace"]["status"])
+    if (record.get("trace") or {}).get("stored") is not True:
+        record = _trace(path, record, tracer)
+    log.info(
+        "daily %s: %s, %s", record["day"], record["email"]["status"], record["trace"]["status"]
+    )
     return record
+
+
+def _summary(record: dict[str, Any]) -> None:
+    for line in record["balance"]:
+        print(line)
+    print(f"total Jev cost ${record['jev_cost']:.6f}")
+
+
+def _finish(record: dict[str, Any], email: bool) -> int:
+    print(record["email"]["status"])
+    print(record["trace"]["status"])
+    if email and record["email"]["sent"] is not True:
+        return 1
+    return 0 if any(called(s) for s in record["stocks"]) else 1
+
+
+def send_claimed(path: Path, token: str, mailer: Mailer, tracer: Tracer) -> int:
+    """--stage send: email and trace a record this job claimed."""
+    record = _read(path)
+    email = (record or {}).get("email") or {}
+    if record is None or email.get("status") != "sending" or email.get("claim") != token:
+        print(f"{path.name}: not claimed by this job, nothing sent")
+        return 1
+    record = _trace(path, _mail(path, record, mailer), tracer)
+    return _finish(record, email=True)
+
+
+def claim(path: Path, token: str) -> int:
+    """--stage claim: mark a finished, unsent record as this job's to send."""
+    record = _read(path)
+    why = _needs_a_person(record)
+    if why is not None or record is None:
+        print(f"{path.name}: {why}; not claimed")
+        return 1
+    if _emailed(record):
+        print(f"{path.name}: already emailed; not claimed")
+        return 1
+    _claim(path, record, token)
+    print(f"{path.name}: claimed for this job's email")
+    return 0
 
 
 def run_day(
@@ -373,8 +486,24 @@ def main(
     ap.add_argument("--no-email", action="store_true", help="a check that emails nothing")
     ap.add_argument("--no-opus", action="store_true", help="a check of Jev's calls only")
     ap.add_argument("--runs", type=Path, default=Path("runs"))
+    ap.add_argument(
+        "--stage",
+        choices=STAGES,
+        default="all",
+        help="all: in one go; calls, claim, send: the workflow's steps, which save the "
+        "claim to main between claim and send",
+    )
+    ap.add_argument("--record", type=Path, help="claim, send: the record the calls stage wrote")
+    ap.add_argument("--claim", help="claim, send: this job's token")
     args = ap.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
+    if args.stage in ("claim", "send"):
+        if args.record is None or not args.claim:
+            print(f"--stage {args.stage} needs --record and --claim")
+            return 2
+        if args.stage == "claim":
+            return claim(args.record, args.claim)
+        return send_claimed(args.record, args.claim, mailer, tracer)
 
     watch = load_watchlist()
     tickers = list(dict.fromkeys(t.upper() for t in args.ticker or watch.tickers))
@@ -407,29 +536,28 @@ def main(
         done = _read(path)
         if done is not None and _emailed(done):
             print(f"{day}: already emailed, nothing to do")
+            _output(deliver="no")
             return 0
         why = _needs_a_person(done)
         if why is not None or done is None:
-            print(f"{day}: {why}; nothing run or sent. Check {path} and the inbox first.")
+            print(f"{day}: {why}; nothing run or sent. See the README's daily section.")
             return 1
         print(f"{day}: recorded but not emailed, sending it again from the record")
-        traced = (done.get("trace") or {}).get("stored") is True
-        done = deliver(path, done, email=True, mailer=mailer, tracer=tracer, trace=not traced)
-        return 0 if _emailed(done) else 1
+        if args.stage == "calls":
+            _output(record=str(path), deliver="yes")
+            return 0
+        return _finish(deliver(path, done, email=True, mailer=mailer, tracer=tracer), True)
 
     record = run_day(
         tickers, watch.names, day, bench_close, ctx, check_id=check_id,
         save=lambda r: _write(path, r),
     )  # fmt: skip
-    record = deliver(path, record, email=email, mailer=mailer, tracer=tracer)
-    for line in record["balance"]:
-        print(line)
-    print(f"total Jev cost ${record['jev_cost']:.6f}")
-    print(record["email"]["status"])
-    print(record["trace"]["status"])
-    if email and not record["email"]["sent"]:
-        return 1
-    return 0 if any(called(s) for s in record["stocks"]) else 1
+    _summary(record)
+    if args.stage == "calls" and email:
+        _output(record=str(path), deliver="yes")
+        return 0
+    _output(deliver="no")
+    return _finish(deliver(path, record, email=email, mailer=mailer, tracer=tracer), email)
 
 
 if __name__ == "__main__":

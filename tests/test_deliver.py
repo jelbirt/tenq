@@ -77,3 +77,15 @@ def test_a_bad_port_setting_fails_open(
 ) -> None:
     monkeypatch.setenv("SMTP_PORT", "five-eight-seven")
     assert send(EMAIL) == (False, "email delivery failed: ValueError")
+
+
+class LostAnswer(FakeSMTP):
+    def send_message(self, msg: Any) -> None:
+        raise TimeoutError("the server went quiet after DATA")
+
+
+def test_an_error_once_the_server_has_the_message_says_it_may_have_gone_out(
+    smtp: type[FakeSMTP], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("tenq.deliver.smtplib.SMTP", LostAnswer)
+    assert send(EMAIL) == (None, "email may have gone out: TimeoutError while sending")

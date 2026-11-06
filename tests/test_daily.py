@@ -120,7 +120,7 @@ class Outbox:
         return (True, "sent to 1 recipient") if self.ok else (False, "email failed: SMTPError")
 
 
-def _no_trace(record: dict[str, Any]) -> tuple[bool, str, dict[str, str]]:
+def _no_trace(record: dict[str, Any], **kw: Any) -> tuple[bool, str, dict[str, str]]:
     return False, "trace skipped: test", {}
 
 
@@ -275,7 +275,13 @@ def test_no_email_is_a_check_that_sends_nothing_and_never_takes_the_day(tmp_path
         ("{", "unreadable"),
         (json.dumps({"day": "2026-11-04", "complete": False, "stocks": []}), "unfinished"),
         (
-            json.dumps({"day": "2026-11-04", "complete": True, "email": {"status": "sending"}}),
+            json.dumps(
+                {
+                    "day": "2026-11-04",
+                    "complete": True,
+                    "email": {"sent": None, "status": "sending"},
+                }
+            ),
             "may have gone out",
         ),
     ],
@@ -316,7 +322,7 @@ def test_a_resend_also_sends_a_trace_that_never_went_out(tmp_path: Path) -> None
     assert _run(tmp_path, mailer=Outbox(ok=False)) == 1
     traced: list[str] = []
 
-    def tracer(record: dict[str, Any]) -> tuple[bool, str, dict[str, str]]:
+    def tracer(record: dict[str, Any], **kw: Any) -> tuple[bool, str, dict[str, str]]:
         traced.append(record["day"])
         return True, "traces stored: 20 of 20", {}
 
@@ -324,6 +330,112 @@ def test_a_resend_also_sends_a_trace_that_never_went_out(tmp_path: Path) -> None
     assert traced == ["2026-11-04"]
     assert _record(tmp_path)["trace"]["stored"] is True
     assert _run(tmp_path, tracer=tracer) == 0 and traced == ["2026-11-04"]
+
+
+def _stage(tmp_path: Path, stage: str, token: str, **kw: Any) -> int:
+    path = str(record_path(tmp_path, DAY))
+    return _run(tmp_path, "--stage", stage, "--record", path, "--claim", token, **kw)
+
+
+def _outputs(path: Path) -> dict[str, str]:
+    return dict(line.split("=", 1) for line in path.read_text().splitlines())
+
+
+def test_the_workflow_makes_the_calls_then_claims_then_sends(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    out = tmp_path / "github_output"
+    monkeypatch.setenv("GITHUB_OUTPUT", str(out))
+    outbox = Outbox()
+    assert _run(tmp_path, "--stage", "calls", mailer=outbox) == 0
+    assert _outputs(out) == {"record": str(record_path(tmp_path, DAY)), "deliver": "yes"}
+    assert outbox.sent == [] and _record(tmp_path)["email"]["status"] == "email pending"
+
+    assert _stage(tmp_path, "claim", "job-1") == 0
+    assert _record(tmp_path)["email"] == {"sent": None, "status": "sending", "claim": "job-1"}
+    assert _stage(tmp_path, "claim", "job-2") == 1  # a second job cannot take it
+    assert _stage(tmp_path, "send", "job-2", mailer=outbox) == 1  # nor send it
+    assert outbox.sent == []
+
+    assert _stage(tmp_path, "send", "job-1", mailer=outbox) == 0
+    assert len(outbox.sent) == 1 and _record(tmp_path)["email"]["sent"] is True
+    out.unlink()
+    assert _run(tmp_path, "--stage", "calls", mailer=outbox) == 0
+    assert _outputs(out) == {"deliver": "no"} and len(outbox.sent) == 1
+
+
+def test_a_claimed_record_is_never_run_or_sent_again(tmp_path: Path) -> None:
+    assert _run(tmp_path, "--stage", "calls") == 0
+    assert _stage(tmp_path, "claim", "job-1") == 0  # then the job stopped before sending
+    jev, claude, outbox = Jev(), Claude(), Outbox()
+    assert _run(tmp_path, ctx=_ctx(jev, claude), mailer=outbox) == 1
+    assert jev.asked == [] and claude.calls == [] and outbox.sent == []
+
+
+def test_the_stages_that_send_need_a_record_and_a_claim(tmp_path: Path) -> None:
+    assert _run(tmp_path, "--stage", "send") == 2
+    assert _run(tmp_path, "--stage", "claim", "--record", "x.json") == 2
+
+
+def test_an_email_that_may_have_gone_out_is_never_sent_again(tmp_path: Path) -> None:
+    def lost(email: Email) -> tuple[bool | None, str]:
+        return None, "email may have gone out: TimeoutError while sending"
+
+    assert _run(tmp_path, mailer=lost) == 1
+    assert _record(tmp_path)["email"]["sent"] is None
+    outbox = Outbox()
+    assert _run(tmp_path, mailer=outbox) == 1 and outbox.sent == []
+
+
+class Raising(Claude):
+    """A code failure while Opus is asked about one stock."""
+
+    def __call__(self, message: str, **kw: Any) -> AgentRun:
+        if _news("SNOW") in message:
+            raise RuntimeError("secret-bearing message")
+        return super().__call__(message, **kw)
+
+
+def test_a_code_failure_in_one_stock_is_noted_and_the_rest_go_on(tmp_path: Path) -> None:
+    jev = Jev()
+
+    def ask(state: str, questions: Any, **kw: Any) -> Result:
+        if "DDOG" in kw["session_id"]:
+            raise RuntimeError("secret-bearing message")
+        return jev(state, questions, **kw)
+
+    ctx = _ctx(claude=Raising())
+    ctx.ask = ask
+    assert _run(tmp_path, ctx=ctx) == 0
+    by = {s["ticker"]: s for s in _record(tmp_path)["stocks"]}
+    assert by["DDOG"]["jev"]["error"] == "failed in code (RuntimeError)"
+    assert by["DDOG"]["opus"]["call"] == "Hold"  # Opus's own call still made
+    assert "failed in code" in by["SNOW"]["opus"]["error"]
+    assert by["SNOW"]["call"]["call"] == "Buy"  # Jev's call still made
+    assert "secret" not in json.dumps(by)
+    assert by["CRWD"]["opus"]["call"] == "Hold" and by["CRWD"]["why"]["kept"]
+
+
+def test_a_resend_traces_only_the_stocks_not_yet_stored(tmp_path: Path) -> None:
+    def half(record: dict[str, Any], **kw: Any) -> tuple[bool, str, dict[str, str]]:
+        return False, "traces sent, 1 of 20 found", {"CRWD": "a" * 32}
+
+    assert _run(tmp_path, mailer=Outbox(ok=False), tracer=half) == 1
+    skipped: list[set[str]] = []
+
+    def rest(record: dict[str, Any], **kw: Any) -> tuple[bool, str, dict[str, str]]:
+        skipped.append(set(kw["skip"]))
+        return True, "traces stored: 19 of 19", {"DDOG": "b" * 32}
+
+    assert _run(tmp_path, tracer=rest) == 0
+    assert skipped == [{"CRWD"}]
+    assert _record(tmp_path)["trace"]["ids"] == {"CRWD": "a" * 32, "DDOG": "b" * 32}
+
+
+def test_daily_traces_skip_the_stocks_already_stored(tmp_path: Path) -> None:
+    rec = _day_record(tmp_path)
+    every = {s["ticker"] for s in rec["stocks"]}
+    assert send_daily_traces(rec, skip=every) == (True, "traces already stored", {})
 
 
 class Failing(Claude):
@@ -515,7 +627,7 @@ def test_daily_traces_report_any_not_found(tmp_path: Path, monkeypatch: pytest.M
         sleep=lambda s: None,
         clock=lambda: float(next(clock)),
     )
-    assert stored is False and set(ids) == {"CRWD", "DDOG"}
+    assert stored is False and set(ids) == {"CRWD"}
     assert status.startswith("traces sent, 1 of 2 found") and status.endswith("missing DDOG")
 
 
