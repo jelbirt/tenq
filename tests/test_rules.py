@@ -49,7 +49,8 @@ KNOWN_RULES = {
     "rules-v5": "a0231854f80cd0a4c2093cdfa1191b252f6df3fe274d34da6629290af7475d73",
     "rules-v6": "32e85d14721d79fd3fdf52e785c0787e7cd319b4a3c20e3028acfda7be4dc21a",
     "rules-v7": "abd8f7f459135a8d171faef67f43c0d261774046c69e3606edb9c1fe2db68da4",
-    "rules-v8": "748c1a4ec2ec1fc1539b3d74ec7ebc25d75474ca8e65e0e04e45dfbf8e7a6f67",
+    # v8: the same settings as v7; only comments changed (Short defined against QQQ)
+    "rules-v8": "e5c58c81f3a964dddf9810a5a0c13d4006622c4380efcfaf49a26c7de3a86a2a",
 }
 
 

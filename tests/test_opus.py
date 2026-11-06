@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from typing import Any
 
 import pytest
@@ -176,9 +177,18 @@ def test_prompts_are_versioned() -> None:
 
 def test_a_short_is_judged_against_qqq_like_every_call() -> None:
     """The scorecard judges every call against QQQ, so the prompt defines a Short that way."""
-    text = " ".join(opus.load_call_prompt().text.split())
-    assert "Short: expect it to trail QQQ by a wide margin" in text
-    assert "fall outright" not in text
+    text = opus.load_call_prompt().text
+    calls = {}
+    for line in text.splitlines():
+        for name in ("Buy", "Hold", "Sell", "Short"):
+            if line.startswith(f"- {name}:"):
+                calls[name] = line.lower()
+    assert set(calls) == {"Buy", "Hold", "Sell", "Short"}
+    for name in ("Buy", "Sell", "Short"):
+        assert "qqq" in calls[name], name
+    for name, line in calls.items():
+        assert not re.search(r"\b(fall|falls|fell|falling|drop|decline)\b", line), name
+    assert "wide margin" in calls["Short"] and "wide margin" not in calls["Sell"]
 
 
 def test_both_prompts_send_claims_about_numbers_to_code() -> None:
