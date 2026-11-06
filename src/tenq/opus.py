@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import math
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any, Literal
 
 from tenq.brief import Prompt, last_json_object, load_prompt
@@ -52,6 +52,7 @@ class OpusCall:
 class Why:
     reasons: list[Reason] = field(default_factory=list)
     error: str | None = None  # why there are no reasons
+    message: str = ""  # exactly what Opus was sent
 
 
 def load_call_prompt() -> Prompt:
@@ -150,6 +151,16 @@ def why_message(pack: Pack, call: Call) -> str:
     return f"{why_head(pack, call)}{SHEET_HEADER}\n\n{pack.render()}"
 
 
+def rebuild_why_message(stored: str, pack: dict[str, Any]) -> str:
+    """The whole why message again from a daily record, which keeps only its head and the pack.
+
+    Rendered by the code that runs this, so it matches the record's message_sha256 only when
+    the render has not changed since (the record's versions.code names the commit that ran).
+    """
+    head = stored.split(SHEET_HEADER, 1)[0]
+    return f"{head}{SHEET_HEADER}\n\n{Pack.from_dict(pack).render()}"
+
+
 def _run(claude: Claude, message: str, prompt: Prompt, model: str) -> AgentRun:
     return claude(
         message,
@@ -179,5 +190,7 @@ def explain_call(
     claude: Claude = call_claude,
 ) -> tuple[AgentRun, Why]:
     """Cited reasons for Jev's call. Never raises."""
-    run = _run(claude, why_message(pack, call), prompt, model)
-    return run, parse_why(run.text) if run.error is None else Why(error=run.error)
+    message = why_message(pack, call)
+    run = _run(claude, message, prompt, model)
+    why = parse_why(run.text) if run.error is None else Why(error=run.error)
+    return run, replace(why, message=message)
