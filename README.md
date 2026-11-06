@@ -119,9 +119,11 @@ the daily workflow writes the ledger.
 
 `uv run python -m tenq.replay` replays the baselines (always Hold, always Buy, last month's
 winners) over the last 3 years of prices ([replay.py](src/tenq/replay.py)), scored exactly as a
-live call is. Jev and Opus cannot be replayed, since the news they read is gone, but this
-shows the bar they must clear and how wide luck runs. The watchlist was chosen in 2026, which
-flatters always Buy in the past.
+live call is. Jev and Opus cannot be replayed, since the news they read is gone. This shows how
+the baselines have done over the last 3 years and how much they swing from year to year. The
+bar a live method must clear is still the baselines on the same days, on the scorecard. The
+luck range here is for 3 years of calls; a few months of live calls have a much wider one. The
+watchlist was chosen in 2026, which flatters every rule that mostly buys, always Buy most.
 
 ## Guardrails
 
