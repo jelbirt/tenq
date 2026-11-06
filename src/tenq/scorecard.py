@@ -574,7 +574,7 @@ def day_totals(pairs: Sequence[tuple[float, dict[str, Any]]]) -> dict[date, floa
     return dict(sorted(total.items()))
 
 
-def _standard_error(by_day: Sequence[float], pairs: int, carry: int) -> float | None:
+def standard_error(by_day: Sequence[float], pairs: int, carry: int) -> float | None:
     """The standard error of the mean gap per call, from the day totals: their
     spread, plus `carry` days of carry-over with Bartlett weights so it can
     never go below zero, scaled by m/(m-1) for a short sample."""
@@ -606,7 +606,7 @@ def paired(rows: Sequence[dict[str, Any]], cfg: ScoreConfig) -> dict[str, Any]:
     weeks = len({_week(r["day"]) for _, r in pairs})
     mean = _mean([dw * r["excess"] for dw, r in pairs])
     by_day = _by_day(pairs)
-    se = _standard_error(by_day, len(pairs), cfg.carry_days)
+    se = standard_error(by_day, len(pairs), cfg.carry_days)
     level = round(abs(mean or 0.0) * 100, 2) == 0
     out: dict[str, Any] = {
         "pairs": len(pairs),
