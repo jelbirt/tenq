@@ -84,9 +84,11 @@ Rules, which code checks before anything is sent:
 confidence is 0 to 1: how likely you think the call is right.
 
 lean is -1 to +1: how strongly you expect the stock to beat (+) or lag (-)
-QQQ over the 20 days, so stocks with the same call can be told apart. 0 is
-no edge. A Buy's lean is above 0, a Sell's or Short's below 0, and a Hold's
-can lean a little either way.
+QQQ over the 20 days. It is how stocks with the same call are told apart, so
+use the whole range rather than a few round values. Even a Hold usually leans
+a little one way; give 0 only when you see nothing either way. Code drops a
+lean that points against the call: a Buy's must be above 0, and a Sell's or
+Short's below 0.
 
 Answer with one JSON object and nothing else, exactly this shape:
 {"call": "Buy", "confidence": 0.55, "lean": 0.3,

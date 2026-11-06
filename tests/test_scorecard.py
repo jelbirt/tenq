@@ -549,9 +549,28 @@ def test_opus_is_ranked_by_its_lean_when_every_call_that_day_has_one() -> None:
     assert rank_ic(_opus_rows([-0.4, -0.2, 0.0, 0.1, 0.3]), "opus", CFG) == pytest.approx(1.0)
 
 
+def _mixed_day(day: str, missing: bool) -> list[dict[str, Any]]:
+    """Six Opus Buys whose confidence orders the stocks against their excess
+    returns while their leans order them with it."""
+    rows = [
+        {"day": day, "opus": "Buy", "opus_confidence": 0.9 - i / 10, "opus_lean": 0.1 + i / 10}
+        | {"excess": i}
+        for i in range(6)
+    ]
+    if missing:
+        rows[2]["opus_lean"] = None
+    return rows
+
+
 def test_one_missing_lean_ranks_the_whole_day_by_call_and_confidence() -> None:
-    # all five tie at Hold 0.4 by weight times confidence, so there is no ranking
-    assert rank_ic(_opus_rows([-0.4, -0.2, None, 0.1, 0.3]), "opus", CFG) is None
+    assert rank_ic(_mixed_day("2026-11-05", False), "opus", CFG) == pytest.approx(1.0)
+    # one lean missing: all six are ranked by weight times confidence, none dropped
+    assert rank_ic(_mixed_day("2026-11-05", True), "opus", CFG) == pytest.approx(-1.0)
+
+
+def test_each_day_picks_its_own_ranking_and_the_days_are_averaged() -> None:
+    rows = _mixed_day("2026-11-05", False) + _mixed_day("2026-11-06", True)
+    assert rank_ic(rows, "opus", CFG) == pytest.approx(0.0)
 
 
 def _card(tmp_path: Path, *records: dict[str, Any], today: date = EXIT) -> dict[str, Any]:

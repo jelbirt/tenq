@@ -110,9 +110,10 @@ shuffled across stocks), the days the two disagreed, how many calls are still op
 week's cost. It also shows how well each method ordered the stocks each day: Jev by its rules
 score, and Opus by its lean, a number from -1 to +1 it gives with each call (on a day where any
 Opus call lacks a lean, by call weight times confidence instead). A lean that points against
-its own call is dropped and the call stands. Only the full daily records count; check runs never do. The scorecard never holds
-back the email: if it fails, the email says so and goes out. `uv run python -m tenq.scorecard`
-prints the current card without saving anything: only the daily workflow writes the ledger.
+its own call is dropped and the call stands. Only the full daily records count; check runs
+never do. The scorecard never holds back the email: if it fails, the email says so and goes
+out. `uv run python -m tenq.scorecard` prints the current card without saving anything: only
+the daily workflow writes the ledger.
 
 ## Guardrails
 

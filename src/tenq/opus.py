@@ -126,6 +126,9 @@ def _lean(raw: Any, call: CallName) -> tuple[float | None, str | None]:
         return None, "the lean is not -1 to +1"
     if not (math.isfinite(v) and -1.0 <= v <= 1.0):
         return None, "the lean is not -1 to +1"
+    # a Hold's lean is not capped: the lean ranks expected excess, and the call
+    # is Opus's own judgment of whether that is enough to act on; the scorecard
+    # scores the two separately
     sign = LEAN_SIGN[call]
     if (sign > 0 and v <= 0) or (sign < 0 and v >= 0):
         return None, f"the lean {v:+.2f} points the other way from {call}"
