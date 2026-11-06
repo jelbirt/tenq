@@ -132,18 +132,22 @@ def call_message(pack: Pack) -> str:
     return pack.render()
 
 
-def why_message(pack: Pack, call: Call) -> str:
+SHEET_HEADER = "The facts sheet it was made from:"
+
+
+def why_head(pack: Pack, call: Call) -> str:
+    """The why message up to the facts sheet: Jev's call and how the rules reached it."""
     lines = call.explain()
     if call.reaction_id:
         # the sheet has moves over several windows; name the one the rules used
         at = next((i for i, x in enumerate(lines) if x.startswith("market reaction:")), -1)
         lines.insert(at + 1, f"the market reaction was measured on {{{call.reaction_id}}}")
     how = "\n".join(f"- {line}" for line in lines)
-    return (
-        f"Jev's call on {pack.ticker}: {call.call}.\n"
-        f"How the rules reached it:\n{how}\n\n"
-        f"The facts sheet it was made from:\n\n{pack.render()}"
-    )
+    return f"Jev's call on {pack.ticker}: {call.call}.\nHow the rules reached it:\n{how}\n\n"
+
+
+def why_message(pack: Pack, call: Call) -> str:
+    return f"{why_head(pack, call)}{SHEET_HEADER}\n\n{pack.render()}"
 
 
 def _run(claude: Claude, message: str, prompt: Prompt, model: str) -> AgentRun:

@@ -49,6 +49,7 @@ or when no settled session is found.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import html
 import json
 import logging
@@ -89,6 +90,7 @@ DAILY_DIR = "daily"
 OPUS_BUDGET_S = 140 * 60
 CLAUDE_FAILS = 2  # this many failed claude runs in a row: Claude is treated as down
 STAGES = ("all", "calls", "claim", "send", "notice")
+SHEET_NOTE = "(this record's pack, rendered; message_sha256 is of the whole message)"
 
 Gather = Callable[[str, datetime], Pack | None]
 Ask = Callable[..., Result]
@@ -295,7 +297,10 @@ def _opus(
     steps.add("opus why", t, {"reasons": len(why.reasons)}, why.error)
     out["why"] = {
         "error": why.error,
-        "message": opus.why_message(pack, call),  # what Opus was shown, to reproduce it
+        # what Opus was shown, without a second copy of the facts sheet: the sheet
+        # is this record's pack, rendered, and the hash pins the whole message
+        "message": f"{opus.why_head(pack, call)}{opus.SHEET_HEADER} {SHEET_NOTE}",
+        "message_sha256": hashlib.sha256(opus.why_message(pack, call).encode("utf-8")).hexdigest(),
         **_checked(check_reasons(why.reasons, pack)),
         "agent": run.to_dict(),
     }
@@ -315,7 +320,8 @@ def _write(path: Path, record: dict[str, Any]) -> None:
     """Whole or not at all: a job stopped mid-write leaves the old file."""
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_name(f".{path.name}.tmp")
-    tmp.write_text(json.dumps(record, indent=1, default=str) + "\n", encoding="utf-8")
+    # compact: a day's record is read by code, and indenting it added about 15%
+    tmp.write_text(json.dumps(record, separators=(",", ":"), default=str) + "\n", encoding="utf-8")
     os.replace(tmp, path)
 
 

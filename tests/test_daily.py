@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 from dataclasses import replace
 from datetime import UTC, date, datetime
@@ -580,6 +581,16 @@ def test_the_why_message_is_recorded_and_a_lagging_price_is_noted(tmp_path: Path
     rec = _record(tmp_path)
     assert "How the rules reached it" in rec["stocks"][0]["why"]["message"]
     assert rec["made_at"] == NOW.isoformat()
+    # the facts sheet is not stored twice; the hash pins the message Opus was shown
+    assert isinstance(ctx.claude, Claude)
+    shown = next(m for m in ctx.claude.calls if "How the rules reached it" in m)
+    ticker = next(t for t in WATCH.tickers if _news(t) in shown)
+    why = next(s for s in rec["stocks"] if s["ticker"] == ticker)["why"]
+    head, sheet = shown.split(opus.SHEET_HEADER)
+    assert why["message"].startswith(head + opus.SHEET_HEADER)
+    assert sheet.strip() not in why["message"] and len(why["message"]) < len(head) + 200
+    assert why["message_sha256"] == hashlib.sha256(shown.encode("utf-8")).hexdigest()
+    assert "\n " not in record_path(tmp_path, DAY).read_text()  # written compact
     assert rec["stocks"][1]["note"] == "its latest price is from 2026-11-03, not 2026-11-04"
     assert "Note: its latest price is from 2026-11-03" in outbox.sent[0].text
 
