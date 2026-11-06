@@ -100,9 +100,10 @@ jobs:
         run: scripts/commit-daily.sh
       # A scheduled run that failed before its daily email went out tells the
       # owner; GitHub's own failure emails depend on who last edited the
-      # schedule and their settings. Never sent once the daily email is out.
+      # schedule and their settings. Never sent once the daily email is out: the
+      # send step says so in its "emailed" output, whatever its exit code.
       - name: failure notice
-        if: ${{ (failure() || cancelled()) && github.event_name == 'schedule' && steps.send.outcome != 'success' }}
+        if: ${{ (failure() || cancelled()) && github.event_name == 'schedule' && steps.send.outputs.emailed != 'yes' }}
         env:
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           SMTP_USER: ${{ secrets.SMTP_USER }}

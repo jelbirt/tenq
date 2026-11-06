@@ -186,6 +186,13 @@ def test_the_why_prompt_offers_words_code_accepts_for_counts_and_nothing() -> No
 
     text = " ".join(opus.load_why_prompt().text.split())
     assert '"zero", "two", "five"' in text
+    assert figure_in("near zero") and figure_in("two red flags")  # what the prompt bans, code drops
     for words in ("a pair", "a few", "several", "close to neutral"):
         assert f'"{words}"' in text
-        assert figure_in(f"the rules saw {words} things") is None
+    for sentence in (
+        "Jev saw a pair of warnings in the latest filing.",
+        "A few analysts cut their targets this week after the outlook.",
+        "Several headlines pointed to slowing demand.",
+        "The rules left the score close to neutral, so the call is Hold.",
+    ):
+        assert figure_in(sentence) is None

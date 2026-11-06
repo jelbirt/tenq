@@ -70,7 +70,7 @@ from tenq.jev_check import Tally
 from tenq.llm import AgentRun, call_claude
 from tenq.opus import Claude
 from tenq.pack import Pack, gather
-from tenq.prices import BENCHMARK, Prices, YahooPrices, fetch
+from tenq.prices import BENCHMARK, MARKET_TZ, Prices, YahooPrices, fetch
 from tenq.reasons import ReasonCheck, check_reasons
 from tenq.rules import Call, Rules, decide, load_rules
 from tenq.trace import send_daily_traces
@@ -406,7 +406,12 @@ def send_claimed(path: Path, token: str, mailer: Mailer, tracer: Tracer) -> int:
     if record is None or email.get("status") != "sending" or email.get("claim") != token:
         print(f"{path.name}: not claimed by this job, nothing sent")
         return 1
-    record = _trace(path, _mail(path, record, mailer), tracer)
+    record = _mail(path, record, mailer)
+    # the failure notice reads this, not the step's exit code: a sent email
+    # with no calls in it still exits 1, and must not be followed by a notice
+    sent = record["email"]["sent"]
+    _output(emailed="yes" if sent is True else "no" if sent is False else "maybe")
+    record = _trace(path, record, tracer)
     return _finish(record, email=True)
 
 
@@ -568,7 +573,10 @@ def main(
     if check_id is None and path.exists():
         done = _read(path)
         if done is not None and _emailed(done):
-            print(f"{day}: already emailed, nothing to do")
+            # a holiday, or a trading day whose bar is not posted yet: the log
+            # shows which, until the run knows the market calendar
+            today = ctx.now.astimezone(MARKET_TZ).date()
+            print(f"{day}: already emailed, nothing to do (today in New York: {today})")
             _output(deliver="no")
             return 0
         why = _needs_a_person(done)

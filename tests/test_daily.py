@@ -359,6 +359,7 @@ def test_the_workflow_makes_the_calls_then_claims_then_sends(
 
     assert _stage(tmp_path, "send", "job-1", mailer=outbox) == 0
     assert len(outbox.sent) == 1 and _record(tmp_path)["email"]["sent"] is True
+    assert _outputs(out)["emailed"] == "yes"
     out.unlink()
     assert _run(tmp_path, "--stage", "calls", mailer=outbox) == 0
     assert _outputs(out) == {"deliver": "no"} and len(outbox.sent) == 1
@@ -760,9 +761,38 @@ def test_the_workflow_runs_on_weekdays_and_notices_only_a_failed_scheduled_run()
     steps = {s.get("name"): s for s in flow["jobs"]["daily"]["steps"]}
     assert steps["send the email and the traces"]["id"] == "send"
     notice = steps["failure notice"]
-    cond = notice["if"]
-    assert "failure()" in cond and "cancelled()" in cond
-    assert "github.event_name == 'schedule'" in cond
-    assert "steps.send.outcome != 'success'" in cond
+    assert notice["if"] == (
+        "${{ (failure() || cancelled()) && github.event_name == 'schedule' && "
+        "steps.send.outputs.emailed != 'yes' }}"
+    )
     assert "--stage notice" in notice["run"]
-    assert "CLAUDE_CODE_OAUTH_TOKEN" not in notice["env"]
+    assert set(notice["env"]) == {"RUN_URL", "SMTP_USER", "SMTP_PASS", "RECIPIENT_EMAILS"}
+
+
+@pytest.mark.parametrize(("ok", "emailed"), [(True, "yes"), (False, "no")])
+def test_the_send_step_says_whether_the_email_went_even_when_it_exits_1(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, ok: bool, emailed: str
+) -> None:
+    # every stock failed to get a call: the email still goes, the step exits 1,
+    # and only its "emailed" output keeps the failure notice from following it
+    out = tmp_path / "github_output"
+    monkeypatch.setenv("GITHUB_OUTPUT", str(out))
+    nobody = _ctx(Jev(down_after=0), Claude(limit_after=0))
+    assert _run(tmp_path, "--stage", "calls", ctx=nobody) == 0
+    assert _stage(tmp_path, "claim", "job-1") == 0
+    out.unlink()
+    assert _stage(tmp_path, "send", "job-1", mailer=Outbox(ok=ok)) == 1
+    assert _outputs(out) == {"emailed": emailed}
+
+
+def test_a_lost_mail_server_answer_says_maybe(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    out = tmp_path / "github_output"
+    monkeypatch.setenv("GITHUB_OUTPUT", str(out))
+    assert _run(tmp_path, "--stage", "calls") == 0
+    assert _stage(tmp_path, "claim", "job-1") == 0
+    out.unlink()
+    lost = lambda email: (None, "email may have gone out: TimeoutError while sending")  # noqa: E731
+    assert _stage(tmp_path, "send", "job-1", mailer=lost) == 1
+    assert _outputs(out) == {"emailed": "maybe"}
