@@ -76,6 +76,24 @@ When a run stops with "nothing run or sent", the day's record needs a person:
   on main; if not, set `"sent": false`. Then dispatch again.
 - **unfinished or unreadable**: it was never emailed. Delete it from main and dispatch again.
 
+### The scorecard
+
+Every call is scored by price alone ([scorecard.py](src/tenq/scorecard.py), settings in
+[config/score.yaml](config/score.yaml)): did the stock beat or lag QQQ the way the call said,
+from the first market open after the call was made to the close 20 sessions later. Buy counts
+the stock's lead over QQQ, Short counts its lag, Sell counts half its lag and Hold counts
+nothing. Prices come from one fresh fetch when a call is due, never from the closes stored in
+the daily record, and each finished score goes into a permanent ledger,
+`runs/daily/scores/<version>.json`. Changing any setting means a new version and a new ledger.
+
+On the last session of each week the daily email opens with a scorecard: the Jev against Opus
+verdict first ("too early to tell" until 13 weeks are scored, then only when the 90% range
+leaves no doubt), then each method next to simple baselines (always Hold, always Buy, buy last
+month's winners, and the same calls shuffled across stocks), the days the two disagreed, how
+many calls are still open and the week's cost. Only the full daily records count; check runs
+never do. The scorecard never holds back the email: if it fails, the email says so and goes out.
+`uv run python -m tenq.scorecard` prints the current card.
+
 ## Guardrails
 
 - The model never sees a shell, files or the web: `--tools ""`, `--strict-mcp-config`, an

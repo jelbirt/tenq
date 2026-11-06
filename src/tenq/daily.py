@@ -77,6 +77,7 @@ from tenq.pack import Pack, gather
 from tenq.prices import BENCHMARK, MARKET_TZ, SESSION_SETTLED, Prices, YahooPrices, fetch
 from tenq.reasons import ReasonCheck, check_reasons
 from tenq.rules import Call, Rules, decide, load_rules
+from tenq.scorecard import PriceFetch, weekly, yahoo
 from tenq.trace import send_daily_traces
 
 log = logging.getLogger(__name__)
@@ -528,6 +529,7 @@ def main(
     *,
     ctx: Context | None = None,
     prices: Callable[[], Prices] | None = None,
+    score_prices: PriceFetch = yahoo,
     mailer: Mailer = send,
     tracer: Tracer = send_daily_traces,
 ) -> int:
@@ -618,6 +620,12 @@ def main(
         tickers, watch.names, day, bench_close, ctx, check_id=check_id,
         save=lambda r: _write(path, r),
     )  # fmt: skip
+    if check_id is None:
+        # the week's last session: the scorecard rides at the top of the email
+        card = weekly(args.runs, day, score_prices)
+        if card is not None:
+            record["scorecard"] = card
+            _write(path, record)
     _summary(record)
     if args.stage == "calls" and email:
         _output(record=str(path), deliver="yes")

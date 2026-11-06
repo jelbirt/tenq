@@ -1,0 +1,41 @@
+# How the scorecard judges a call. Read top to bottom. Any edit, even to a
+# comment, bumps the version (a test pins this file's hash for each version),
+# and the version is written on every scored call, so a change can never
+# quietly rescore the past. src/tenq/scorecard.py applies it.
+version: score-v1
+
+# 1. How long a call is held, in trading sessions. A call is entered at the
+#    open of the first session that starts after the call was made (made_at in
+#    the day's record), and left at the close of the 20th session, counting
+#    the entry session. The stock's return over that span, less QQQ's over the
+#    same span, is the call's excess return.
+sessions: 20
+
+# 2. What each call bets on that excess return. A call's score is its weight
+#    times the excess return: a Buy gains what the stock beat QQQ by, a Short
+#    gains what it lagged by. A Sell ("get out if owned") counts half a Short.
+#    A Hold scores 0.
+weights:
+  Buy: 1.0
+  Hold: 0.0
+  Sell: -0.5
+  Short: -1.0
+
+# 3. The Sell weights the scorecard also shows each method's score under, so
+#    the choice of 0.5 can be watched. Shown only, never used for the verdict.
+sell_weights_shown: [0.25, 0.5, 1.0]
+
+# 4. The verdict. The difference between the two methods is measured on the
+#    stocks and days both made a call. Its range is a block bootstrap by week
+#    (calls made in the same week move together, so weeks are resampled, not
+#    calls). Until weeks_first_verdict weeks are scored the verdict is "too
+#    early to tell" whatever the numbers say; after that, a method is ahead
+#    only when the whole range is on its side of zero.
+weeks_first_verdict: 13
+range: 0.90
+draws: 2000
+seed: 20261106
+
+# 5. A stock whose price stops (delisted, renamed) while QQQ's goes on is
+#    marked unscored once QQQ is this many sessions past the planned exit.
+no_price_after: 5

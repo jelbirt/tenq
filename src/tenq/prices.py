@@ -6,9 +6,10 @@ compared on the same basis. The download is adapted from ticker-sentinel's
 `src/sentinel/data/prices.py` (MIT, same author); tenq has no Twelve Data key, so a
 ticker Yahoo cannot serve is left out with a note instead of falling back.
 
-Yahoo rescales past adjusted closes after each later dividend, so a stored close and one
-fetched weeks later are not on the same basis. Scoring a call must take its entry and exit
-closes from one fresh fetch, keyed by date, never from a stored close.
+Yahoo rescales past adjusted prices after each later dividend, so a stored close and one
+fetched weeks later are not on the same basis. Scoring a call must take its entry open and
+exit close from one fresh fetch, keyed by date, never from a stored close. Opens are
+adjusted the same way as closes.
 
 Every number here is computed in code. The model only ever sees the results.
 """
@@ -48,6 +49,7 @@ class Bar:
     day: date
     close: float
     volume: float | None
+    open: float | None = None  # None when the feed gave no usable open
 
 
 @dataclass(frozen=True)
@@ -90,17 +92,20 @@ def bars_from_frame(frame: Any, tickers: Sequence[str]) -> dict[str, tuple[Bar, 
             if ("Close", ticker) not in frame.columns:
                 continue
             closes, volumes = frame["Close"][ticker], frame.get(("Volume", ticker))
+            opens = frame.get(("Open", ticker))
         else:  # one ticker comes back with flat columns
             if len(tickers) != 1 or "Close" not in frame.columns:
                 continue
-            closes, volumes = frame["Close"], frame.get("Volume")
+            closes, volumes, opens = frame["Close"], frame.get("Volume"), frame.get("Open")
         bars = []
         for stamp, raw in closes.items():
             close = _number(raw)
             if close is None or close <= 0:
                 continue
             volume = _number(volumes[stamp]) if volumes is not None else None
-            bars.append(Bar(day=stamp.date(), close=close, volume=volume))
+            opened = _number(opens[stamp]) if opens is not None else None
+            opened = opened if opened is not None and opened > 0 else None
+            bars.append(Bar(day=stamp.date(), close=close, volume=volume, open=opened))
         if bars:
             out[ticker] = tuple(sorted(bars, key=lambda b: b.day))
     return out

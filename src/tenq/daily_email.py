@@ -97,7 +97,21 @@ def subject_for(record: dict[str, Any]) -> str:
     both = [s for s in stocks if _agree(s)]
     agree = sum(1 for s in both if _agree(s) == "agree")
     what = "daily check" if record.get("check_id") else "daily"
-    return f"tenq {what}, session {record['day']}: the two calls agree on {agree} of {len(both)}"
+    weekly = "Weekly scorecard + " if (record.get("scorecard") or {}).get("lines") else ""
+    return (
+        f"{weekly}tenq {what}, session {record['day']}: "
+        f"the two calls agree on {agree} of {len(both)}"
+    )
+
+
+def scorecard_lines(record: dict[str, Any]) -> list[str]:
+    """The week's scorecard for the top of the email, or why it is missing."""
+    card = record.get("scorecard")
+    if not card:
+        return []
+    if card.get("error"):
+        return [f"Weekly scorecard: {card['error']}."]
+    return [str(x) for x in card.get("lines") or []]
 
 
 def _notes(stock: dict[str, Any]) -> list[str]:
@@ -134,8 +148,13 @@ def render(record: dict[str, Any]) -> Email:
         f"and {record['versions']['why_prompt']}."
     )
 
+    card = scorecard_lines(record)
+
     # plain text
-    t = [f"tenq daily calls, session {record['day']}", ""]
+    t = []
+    if card:
+        t += ["WEEKLY SCORECARD", *card, ""]
+    t += [f"tenq daily calls, session {record['day']}", ""]
     t.append("Stock | Jev | Opus | the two")
     t += [" | ".join(r) for r in rows]
     t.append("")
@@ -184,8 +203,16 @@ def render(record: dict[str, Any]) -> Email:
         return "".join(parts)
 
     cell = "padding:4px 10px;text-align:left"
-    h = [
-        "<div style='font-family:Arial,sans-serif;max-width:760px'>",
+    h = ["<div style='font-family:Arial,sans-serif;max-width:760px'>"]
+    if card:
+        h.append(
+            "<div style='border:2px solid #246;background:#eef3fa;padding:10px 14px;"
+            "margin-bottom:16px'><h2 style='margin:0 0 6px 0'>Weekly scorecard</h2>"
+            f"<p style='font-size:15px;margin:0 0 6px 0'><b>{e(card[0])}</b></p>"
+            + "".join(f"<p style='font-size:13px;margin:2px 0'>{e(x)}</p>" for x in card[1:])
+            + "</div>"
+        )
+    h += [
         f"<h2 style='margin-bottom:4px'>tenq daily calls, session {e(record['day'])}</h2>",
         "<table style='border-collapse:collapse;font-size:13px'>",
         "<tr>"
