@@ -44,6 +44,31 @@ A GitHub Actions workflow ([brief.yml](.github/workflows/brief.yml)) runs daily:
    trace is stored only after a lookup through Langfuse's API finds it. The `trace-check`
    workflow sends one test trace the same way, to prove the secrets work.
 
+## The daily calls
+
+A second workflow ([daily.yml](.github/workflows/daily.yml), [daily.py](src/tenq/daily.py)) makes
+two calls (Buy, Hold, Sell or Short) on every watchlist stock after the close, from the same
+facts sheet ([pack.py](src/tenq/pack.py)): Jev answers text-only questions and fixed rules
+([rules.py](src/tenq/rules.py), [config/rules.yaml](config/rules.yaml)) turn the answers into a
+call; Opus makes its own call and writes the why for Jev's ([opus.py](src/tenq/opus.py)). Code
+checks every reason and writes every figure in it ([reasons.py](src/tenq/reasons.py)). One email
+shows both calls per stock with links to what each reason cites
+([daily_email.py](src/tenq/daily_email.py)). The day's record, `runs/daily/<day>.json`, holds
+the facts, both calls, the day's closes for reference and the time the calls were made. Each
+stock gets its own Langfuse trace, grouped by day. `runs/` is written by both workflows, each
+only its own files.
+
+The email never goes out twice. The workflow makes the calls, then marks the record's email
+as being sent and pushes that to main, and only then sends. If the push fails, nothing was
+sent and the job can simply be rerun. A rerun that finds the day already emailed does nothing;
+one that finds the email failed resends it from the record without asking the models again.
+
+When a run stops with "nothing run or sent", the day's record needs a person:
+- **its email may have gone out** (the job stopped while sending, or the mail server's answer
+  was lost): check the inbox. If the email arrived, set `"sent": true` in the record's `email`
+  on main; if not, set `"sent": false`. Then dispatch again.
+- **unfinished or unreadable**: it was never emailed. Delete it from main and dispatch again.
+
 ## Guardrails
 
 - The model never sees a shell, files or the web: `--tools ""`, `--strict-mcp-config`, an

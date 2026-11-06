@@ -1,0 +1,93 @@
+name: daily
+# Both calls on every watchlist stock after the close, one email, and the
+# day's record committed to runs/daily/. Manual only until the first emailed
+# run has been checked; then a weekday schedule after the close is added here.
+on:
+  workflow_dispatch:
+    inputs:
+      tickers: {description: "A check on these tickers only (space separated); empty: the whole watchlist", required: false, default: ""}
+      email: {description: "Send the email", type: boolean, default: true}
+
+permissions:
+  contents: write # commits runs/daily/: the record, and what stops a second email
+
+# serialized: two overlapping runs would email the same day twice
+concurrency:
+  group: daily
+  cancel-in-progress: false
+
+jobs:
+  daily:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180 # 20 stocks: Jev, then two claude runs each
+    steps:
+      - uses: actions/checkout@v4
+        with: {ref: main, persist-credentials: false}
+      - uses: astral-sh/setup-uv@v6
+        with: {python-version: "3.12", enable-cache: true}
+      - run: uv sync --locked
+      - run: npm install -g @anthropic-ai/claude-code@2.1.300
+      # Three steps so the email can never go out twice: the calls make the
+      # record; the claim marks the email as being sent and is pushed to main;
+      # only if that push worked does the send step email. A run that later
+      # finds a claimed record on main asks a person instead of sending.
+      - name: make the calls
+        id: calls
+        timeout-minutes: 165 # inside the job's 180, so the record steps always get time
+        env:
+          # dispatch input is untrusted text: passed as env, never spliced into the script
+          TICKERS: ${{ inputs.tickers }}
+          EMAIL: ${{ inputs.email }}
+          EDGAR_IDENTITY: ${{ secrets.EDGAR_IDENTITY }}
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          # a check with no email is traced in this step
+          LANGFUSE_PUBLIC_KEY: ${{ secrets.LANGFUSE_PUBLIC_KEY }}
+          LANGFUSE_SECRET_KEY: ${{ secrets.LANGFUSE_SECRET_KEY }}
+          LANGFUSE_HOST: ${{ secrets.LANGFUSE_HOST }}
+          PYTHONUNBUFFERED: "1" # each stock's lines reach the log even if the job is cut off
+        run: |
+          args=()
+          read -ra tickers <<< "$TICKERS"
+          for t in "${tickers[@]}"; do args+=(--ticker "$t"); done
+          [[ "$EMAIL" == "false" ]] && args+=(--no-email)
+          uv run --locked python -m tenq.daily --stage calls "${args[@]}"
+      - name: claim the email and save the claim to main
+        id: claim
+        if: ${{ steps.calls.outputs.deliver == 'yes' }}
+        env:
+          RECORD: ${{ steps.calls.outputs.record }}
+          CLAIM: ${{ github.run_id }}-${{ github.run_attempt }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          uv run --locked python -m tenq.daily --stage claim --record "$RECORD" --claim "$CLAIM"
+          scripts/commit-daily.sh
+      - name: send the email and the traces
+        if: ${{ steps.claim.outcome == 'success' }}
+        env:
+          RECORD: ${{ steps.calls.outputs.record }}
+          CLAIM: ${{ github.run_id }}-${{ github.run_attempt }}
+          SMTP_USER: ${{ secrets.SMTP_USER }}
+          SMTP_PASS: ${{ secrets.SMTP_PASS }}
+          RECIPIENT_EMAILS: ${{ secrets.RECIPIENT_EMAILS }}
+          LANGFUSE_PUBLIC_KEY: ${{ secrets.LANGFUSE_PUBLIC_KEY }}
+          LANGFUSE_SECRET_KEY: ${{ secrets.LANGFUSE_SECRET_KEY }}
+          LANGFUSE_HOST: ${{ secrets.LANGFUSE_HOST }}
+        run: uv run --locked python -m tenq.daily --stage send --record "$RECORD" --claim "$CLAIM"
+      - name: keep the record
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: daily-${{ github.run_id }}
+          path: runs/daily/
+          if-no-files-found: ignore
+          include-hidden-files: false
+          retention-days: 90
+      # Not after a failed calls step (an unfinished record was never emailed:
+      # leaving it off main lets a rerun redo the day) or a failed claim (its
+      # push failed, so nothing was sent; a rerun is safe). The artifact keeps both.
+      - name: commit the record
+        if: ${{ always() && steps.calls.outcome == 'success' && steps.claim.outcome != 'failure' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: scripts/commit-daily.sh

@@ -312,7 +312,7 @@ def call_claude(
             # that never got the model going is not
             run.fail(MODEL if model_started(t.stdout) else INFRA, f"timed out after {timeout}s")
         except Exception as exc:  # never let the model path break a run
-            run.fail(INFRA, f"{type(exc).__name__}: {exc}")
+            run.fail(INFRA, type(exc).__name__)  # the type only: its text may not be clean
         else:
             try:
                 parse_stream(stdout, run, times)

@@ -76,7 +76,7 @@ def brief_filing(
     model: str = DEFAULT_MODEL,
     email: bool = True,
     briefer: Briefer = write_brief,
-    sender: Callable[[Email], tuple[bool, str]] = send,
+    sender: Callable[[Email], tuple[bool | None, str]] = send,
     tracer: Callable[[dict[str, Any]], tuple[bool, str]] = send_trace,
     steps: Steps | None = None,
 ) -> dict[str, Any]:

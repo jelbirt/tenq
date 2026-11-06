@@ -28,7 +28,7 @@ import json
 import logging
 import os
 import time
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Collection, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -327,6 +327,163 @@ def send_trace(
     """Send one run's trace and confirm it is stored. Returns (stored,
     status); never raises."""
     return _send(lambda tracer: emit(record, tracer), connect, wait, sleep)
+
+
+def _agent_attrs(agent: dict[str, Any], prompt_version: str) -> dict[str, Any]:
+    usage = agent.get("usage") or {}
+    return {
+        A.OBSERVATION_TYPE: "generation",
+        A.OBSERVATION_MODEL: agent.get("resolved_model") or agent.get("model") or "",
+        A.OBSERVATION_OUTPUT: _json(agent.get("text") or ""),
+        A.OBSERVATION_USAGE_DETAILS: json.dumps(
+            {v: int(usage.get(k) or 0) for k, v in USAGE_KEYS.items()}
+        ),
+        f"{A.OBSERVATION_METADATA}.prompt_version": prompt_version,
+        f"{A.OBSERVATION_METADATA}.api_duration_ms": agent.get("api_duration_ms"),
+    }
+
+
+def emit_daily(stock: dict[str, Any], record: dict[str, Any], tracer: Tracer) -> str:
+    """One stock's daily trace on `tracer` (see tenq.daily for the record's
+    shape): a root span, a span per step, and a generation for Jev's answers
+    and for each Opus run. Returns the trace id as 32 hex characters."""
+    versions = record["versions"]
+    ticker = stock["ticker"]
+    jev_call = (stock.get("call") or {}).get("call")
+    opus_call = (stock.get("opus") or {}).get("call")
+    common = {
+        A.TRACE_NAME: "daily",
+        A.TRACE_SESSION_ID: f"daily-{record['day']}"
+        + (f"-check-{record['check_id']}" if record.get("check_id") else ""),
+        A.TRACE_TAGS: [ticker, "daily", *(["check"] if record.get("check_id") else [])],
+        A.VERSION: versions["rules"],
+        f"{A.TRACE_METADATA}.run_id": record["run_id"],
+        f"{A.TRACE_METADATA}.day": record["day"],
+    }
+
+    def start(name: str, at: float, parent: Context, attrs: dict[str, Any], error: Any) -> Span:
+        level = (
+            {A.OBSERVATION_LEVEL: "ERROR", A.OBSERVATION_STATUS_MESSAGE: str(error)}
+            if error
+            else {}
+        )
+        span = tracer.start_span(
+            name,
+            context=parent,
+            start_time=_ns(at),
+            attributes=_attrs({**common, **attrs, **level}),
+        )
+        if error:
+            span.set_status(Status(StatusCode.ERROR, str(error)))
+        return span
+
+    steps = stock.get("steps") or []
+    begin = steps[0]["start"] if steps else record["started_at"]
+    finish = steps[-1]["end"] if steps else begin
+    root = start(
+        f"daily {ticker}",
+        begin,
+        Context(),
+        {
+            A.OBSERVATION_TYPE: "span",
+            A.OBSERVATION_INPUT: _json(stock.get("pack") or {"ticker": ticker}),
+            A.OBSERVATION_OUTPUT: _json(
+                {
+                    "jev": jev_call,
+                    "opus": opus_call,
+                    "why_kept": len((stock.get("why") or {}).get("kept") or []),
+                    "opus_kept": len((stock.get("opus") or {}).get("kept") or []),
+                }
+            ),
+        },
+        stock.get("error"),
+    )
+    under = otel.set_span_in_context(root)
+    agents = {
+        "opus call": ((stock.get("opus") or {}).get("agent"), versions["call_prompt"]),
+        "opus why": ((stock.get("why") or {}).get("agent"), versions["why_prompt"]),
+    }
+    for step in steps:
+        name = step["name"]
+        attrs: dict[str, Any] = {
+            A.OBSERVATION_TYPE: "span",
+            A.OBSERVATION_OUTPUT: _json(step.get("output")),
+        }
+        if name == "jev":
+            jev = stock.get("jev") or {}
+            attrs = {
+                A.OBSERVATION_TYPE: "generation",
+                A.OBSERVATION_MODEL: jev.get("resolved_model") or jev.get("model") or "",
+                A.OBSERVATION_OUTPUT: _json(
+                    {"answers": jev.get("answers"), "call": stock.get("call")}
+                ),
+                A.OBSERVATION_USAGE_DETAILS: json.dumps(
+                    {
+                        "input": int(jev.get("input_tokens") or 0),
+                        "output": int(jev.get("output_tokens") or 0),
+                    }
+                ),
+                A.OBSERVATION_COST_DETAILS: json.dumps({"total": float(jev.get("cost") or 0.0)}),
+                f"{A.OBSERVATION_METADATA}.questions": versions["questions"],
+                f"{A.OBSERVATION_METADATA}.rounds": jev.get("rounds"),
+            }
+        elif name in agents and isinstance(agents[name][0], dict):
+            agent, version = agents[name]
+            attrs = _agent_attrs(dict(agent or {}), version)
+            if name == "opus why" and (stock.get("why") or {}).get("message"):
+                attrs[A.OBSERVATION_INPUT] = _json(stock["why"]["message"])
+        span = start(name, step["start"], under, attrs, step.get("error"))
+        end_at = step["end"]
+        span.end(end_time=_ns(max(end_at, step["start"])))
+    root.end(end_time=_ns(max(finish, begin)))
+    return trace_id_hex(root)
+
+
+def send_daily_traces(
+    record: dict[str, Any],
+    *,
+    skip: Collection[str] = (),
+    connect: Connect = connect,
+    wait: float = FIND_WAIT_S,
+    sleep: Callable[[float], None] = time.sleep,
+    clock: Callable[[], float] = time.monotonic,
+) -> tuple[bool, str, dict[str, str]]:
+    """One trace per stock not in `skip` (already stored), sent together, then
+    each looked up within one shared wait. Returns (all stored, status, trace
+    id per ticker found stored); never raises."""
+    stocks = [s for s in record["stocks"] if s["ticker"] not in skip]
+    if not stocks:
+        return True, "traces already stored", {}
+    env = _env()
+    if env is None:
+        return False, "trace skipped: Langfuse env not set", {}
+    try:
+        tracing = connect(*env)
+        ids = {s["ticker"]: emit_daily(s, record, tracing.tracer) for s in stocks}
+        tracing.flush()
+    except Exception as exc:
+        log.warning("daily traces failed: %s", type(exc).__name__)
+        return False, f"trace failed: {type(exc).__name__}", {}
+    deadline = clock() + wait
+    missing = []
+    for ticker, trace_id in ids.items():
+        ok, _ = wait_found(
+            tracing.found, trace_id, wait=max(0.0, deadline - clock()), sleep=sleep, clock=clock
+        )
+        if not ok:
+            missing.append(ticker)
+    stored = len(ids) - len(missing)
+    if not missing:
+        log.info("daily traces stored in Langfuse: %d", stored)
+        return True, f"traces stored: {stored} of {len(ids)}", ids
+    log.warning("daily traces not found after %.0fs: %s", wait, ", ".join(missing))
+    found = {t: i for t, i in ids.items() if t not in missing}
+    return (
+        False,
+        f"traces sent, {stored} of {len(ids)} found after {wait:.0f}s; "
+        f"missing {', '.join(missing)}",
+        found,
+    )
 
 
 def check_span(tracer: Tracer) -> str:
