@@ -28,6 +28,7 @@ from tenq.scorecard import (
     read_ledger,
     scorecard,
     spearman,
+    t95,
     update,
     weekly,
 )
@@ -35,6 +36,8 @@ from tenq.scorecard import (
 CFG = load_config()
 KNOWN_SCORES = {
     "score-v1": "6f1a5031248f812ac0841e2e329e3cd20fd66842f7898d3d061d83053090009a",
+    # v2: the luck range from daily moves, and a settled bar for weekly reading
+    "score-v2": "59eba966d9808100e3acbcca5af418c1d1ec46cf463d4e4272fd6ef9546cd4d4",
 }
 MADE = datetime(2026, 11, 6, 11, 55, tzinfo=UTC)  # Friday 06:55 New York, before the open
 ENTRY = date(2026, 11, 6)
@@ -53,7 +56,14 @@ def test_the_score_settings_are_pinned_to_their_version() -> None:
     [
         ("version: v\n", "exactly"),
         (Path("config/score.yaml").read_text().replace("Sell: -0.5", "Sell: 0.5"), "weights"),
-        (Path("config/score.yaml").read_text().replace("range: 0.90", "range: 1.5"), "range"),
+        (
+            Path("config/score.yaml").read_text().replace("settled_bar: 2.4", "settled_bar: 0.5"),
+            "settled_bar",
+        ),
+        (
+            Path("config/score.yaml").read_text().replace("carry_days: 2", "carry_days: -1"),
+            "carry_days",
+        ),
     ],
 )
 def test_bad_score_settings_are_refused(tmp_path: Path, bad: str, says: str) -> None:
@@ -236,7 +246,8 @@ def test_a_finished_call_is_written_once_and_never_rescored(tmp_path: Path) -> N
     done, opened, new = update(tmp_path, CFG, EXIT, _fetcher(_prices(), asked))
     assert new == 1 and opened == [] and asked == [(["CRWD"], "6mo")]
     [row] = done
-    assert row["excess"] == pytest.approx(0.08) and row["score_version"] == "score-v1"
+    assert row["excess"] == pytest.approx(0.08) and row["score_version"] == CFG.version
+    assert sum(row["moves"]) == pytest.approx(row["excess"]) and len(row["moves"]) == 20
     worse = {**_prices(), "CRWD": _bars(_sessions(20), 100.0, 101.0, 50.0)}
     done, _, new = update(tmp_path, CFG, EXIT, _fetcher(worse, asked))
     assert new == 0 and done[0]["excess"] == pytest.approx(0.08)
@@ -283,22 +294,69 @@ def test_the_verdict_waits_for_enough_weeks_whatever_the_numbers() -> None:
     assert p["mean"] == pytest.approx(0.05)
 
 
-def test_a_method_is_ahead_only_when_the_whole_range_is_on_its_side() -> None:
-    assert paired(_weeks(13, "Buy", "Hold", 0.05), CFG)["verdict"] == "Jev ahead"
-    assert paired(_weeks(13, "Hold", "Buy", 0.05), CFG)["verdict"] == "Opus ahead"
-    mixed = _weeks(7, "Buy", "Hold", 0.05) + _weeks(7, "Buy", "Hold", -0.05)
-    mixed = [
-        r | {"day": (date(2026, 11, 2) + timedelta(weeks=i)).isoformat()}
-        for i, r in enumerate(mixed)
-    ]
-    p = paired(mixed, CFG)
-    assert p["verdict"] == "no clear difference yet" and p["low"] < 0 < p["high"]
-    assert paired(mixed, CFG) == p  # the same seed, the same range
+def _skilled(weeks: int, gap: float) -> list[dict[str, Any]]:
+    """Twenty stocks a week where Jev's Buy beats Opus's Hold by about `gap`
+    a call, with noise, so the luck range has something to measure."""
+    rng = random.Random(7)
+    start = date(2026, 11, 2)
+    rows = []
+    for w in range(weeks):
+        for t in range(20):
+            excess = gap + rng.gauss(0, 0.05)
+            d = (start + timedelta(weeks=w)).isoformat()
+            rows.append({"day": d, "ticker": f"T{t}", "jev": "Buy", "opus": "Hold",
+                         "excess": excess})  # fmt: skip
+    return rows
+
+
+def test_the_leader_shows_from_the_first_pair_and_settles_only_when_clear() -> None:
+    early = paired(_skilled(3, 0.03), CFG)
+    assert early["leader"] == "Jev" and early["settled"] is None
+    assert early["verdict"] == "too early to tell (3 of 13 weeks scored)"
+    clear = paired(_skilled(13, 0.03), CFG)
+    assert clear["settled"] == "Jev" and clear["verdict"] == "Jev ahead"
+    flipped = [r | {"jev": "Hold", "opus": "Buy"} for r in _skilled(13, 0.03)]
+    assert paired(flipped, CFG)["verdict"] == "Opus ahead"
+    faint = paired(_skilled(13, 0.002), CFG)
+    assert faint["leader"] == "Jev" and faint["settled"] is None
+    assert faint["verdict"] == "not settled" and faint["luck"] > abs(faint["mean"])
+
+
+def test_the_settled_bar_is_stricter_than_the_luck_range() -> None:
+    """A lead just past the one-look range is still not settled: the card is
+    read every week, so the bar has to allow for many looks."""
+    p = paired(_skilled(13, 0.03), CFG)
+    assert p["luck"] < CFG.settled_bar * p["se"]
+
+
+def test_daily_moves_spread_a_call_over_the_days_it_was_held() -> None:
+    """Two calls entered on the same day but scored by moves land on 20 days,
+    not one; a row without moves falls back to its exit day."""
+    moves = [0.001] * 20
+    rows = [
+        {"day": "2026-11-05", "ticker": t, "jev": "Buy", "opus": "Hold", "excess": 0.02,
+         "moves": moves, "entry_day": "2026-11-06", "exit_day": "2026-12-04"}
+        for t in ("A", "B")
+    ]  # fmt: skip
+    p = paired(rows, CFG)
+    assert (p["pairs"], p["days"]) == (2, 20) and p["mean"] == pytest.approx(0.02)
+    bad = [r | {"moves": [0.5] * 20} for r in rows]  # do not add up to the excess
+    assert paired(bad, CFG)["days"] == 1
+
+
+def test_t95_matches_the_table_and_meets_the_normal() -> None:
+    assert t95(1) == pytest.approx(6.314)
+    assert t95(12) == pytest.approx(1.782)
+    assert 1.782 > t95(13) > 1.753
+    assert t95(10**6) == pytest.approx(1.645, abs=1e-3)
+    with pytest.raises(ValueError):
+        t95(0)
 
 
 def _null_trial(seed: int, weeks: int = 13, stocks: int = 20) -> list[dict[str, Any]]:
     """Two methods with no skill whose calls stick for weeks, as real calls do,
-    on stocks whose 20-session excess returns overlap from day to day."""
+    on stocks whose 20-session excess returns overlap from day to day, stored
+    with their daily moves as the ledger stores them."""
     rng = random.Random(seed)
     days = _sessions(weeks * 5 + 20, date(2026, 1, 5))
     names = list(CFG.weights)
@@ -311,18 +369,19 @@ def _null_trial(seed: int, weeks: int = 13, stocks: int = 20) -> list[dict[str, 
                 jev = rng.choice(names)
             if rng.random() < 0.05:
                 opus = rng.choice(names)
-            excess = sum(daily[i + 1 : i + 21])
+            moves = daily[i + 1 : i + 21]
             rows.append({"day": days[i].isoformat(), "ticker": f"T{s}", "jev": jev,
-                         "opus": opus, "excess": excess})  # fmt: skip
+                         "opus": opus, "excess": sum(moves), "moves": moves,
+                         "entry_day": days[i + 1].isoformat(),
+                         "exit_day": days[i + 20].isoformat()})  # fmt: skip
     return rows
 
 
 def test_sticky_calls_with_no_skill_rarely_get_a_verdict() -> None:
     """Resampling single weeks named a winner in about 40% of such trials;
-    the range is meant to do so about 10% of the time or less."""
-    cfg = replace(CFG, draws=200)
-    wins = sum(paired(_null_trial(seed), cfg)["verdict"].endswith("ahead") for seed in range(40))
-    assert wins <= 8
+    the settled bar is meant to do so about 10% of the time or less."""
+    wins = sum(paired(_null_trial(seed), CFG)["verdict"].endswith("ahead") for seed in range(40))
+    assert wins <= 4
 
 
 def test_only_calls_both_made_are_paired() -> None:
@@ -379,7 +438,7 @@ def test_the_scorecard_scores_both_methods_and_the_baselines(tmp_path: Path) -> 
 def test_the_words_put_the_verdict_first_and_name_the_open_calls(tmp_path: Path) -> None:
     card = _card(tmp_path, _record(), today=EXIT - timedelta(days=1))
     text = lines(card)
-    assert text[0] == "Verdict, Jev against Opus: too early to tell (0 of 13 weeks scored)."
+    assert text[0] == "Ahead so far: no recommendation both made has finished yet."
     assert (
         "1 call(s) still open; the next finish on 2026-12-04. Finished calls are scored in "
         "the next weekly card."
@@ -417,7 +476,7 @@ def test_weekly_runs_only_on_the_weeks_last_session(tmp_path: Path) -> None:
 
     assert weekly(tmp_path, date(2026, 11, 5), refuse) is None
     card = weekly(tmp_path, date(2026, 11, 6), refuse)
-    assert card is not None and card["lines"][0].startswith("Verdict")
+    assert card is not None and card["lines"][0].startswith("Ahead so far")
 
 
 def test_a_failing_scorecard_is_an_error_line_not_a_crash(tmp_path: Path) -> None:
@@ -453,10 +512,10 @@ def _friday(tmp_path: Path, score_prices: Any, outbox: Outbox) -> dict[str, Any]
 def test_fridays_email_leads_with_the_scorecard(tmp_path: Path) -> None:
     outbox = Outbox()
     record = _friday(tmp_path, _fetcher({}), outbox)
-    assert record["scorecard"]["lines"][0].startswith("Verdict, Jev against Opus: too early")
+    assert record["scorecard"]["lines"][0].startswith("Ahead so far: no recommendation")
     [email] = outbox.sent
     assert email.subject.startswith("Weekly scorecard + tenq daily, session 2026-11-06")
-    assert email.text.startswith("WEEKLY SCORECARD\nVerdict, Jev against Opus")
+    assert email.text.startswith("WEEKLY SCORECARD\nAhead so far")
     assert email.html.index("Weekly scorecard") < email.html.index("tenq daily calls")
 
 

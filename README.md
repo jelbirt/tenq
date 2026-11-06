@@ -96,11 +96,16 @@ nothing. Prices come from one fresh fetch when a call is due, never from the clo
 the daily record, and each finished score goes into a permanent ledger,
 `runs/daily/scores/<version>.json`. Changing any setting means a new version and a new ledger.
 
-On the last session of each week the daily email opens with a scorecard: the Jev against Opus
-verdict first ("too early to tell" until 13 weeks are scored, then only when the 90% range
-leaves no doubt), then each method next to simple baselines (always Hold, always Buy, buy last
-month's winners, and the same calls shuffled across stocks), the days the two disagreed, how
-many calls are still open and the week's cost. Only the full daily records count; check runs
+On the last session of each week the daily email opens with a scorecard. Its first line says
+which method is ahead so far and by how much, from the first finished pair on, even when the
+lead may be luck. The next line says how big a gap luck alone could give at this point (a 90%
+range), or that the lead is settled. A lead can settle only after 13 weeks are scored, and only
+when it is at least 2.4 standard errors wide: stricter than the one-look range, because the card
+is read every week and each look is another chance for luck to pass. The range adds up each
+call's daily moves by calendar day, so stocks moving together on the same day and calls held
+for weeks are each counted once. After that the card shows each method next to simple
+baselines (always Hold, always Buy, buy last month's winners, and the same calls shuffled
+across stocks), the days the two disagreed, how many calls are still open and the week's cost. Only the full daily records count; check runs
 never do. The scorecard never holds back the email: if it fails, the email says so and goes out.
 `uv run python -m tenq.scorecard` prints the current card without saving anything: only the
 daily workflow writes the ledger.
