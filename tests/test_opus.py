@@ -171,7 +171,7 @@ def test_a_failed_why_run_says_why() -> None:
 
 def test_prompts_are_versioned() -> None:
     assert opus.load_call_prompt().version == "call-v9"
-    assert opus.load_why_prompt().version == "why-v9"
+    assert opus.load_why_prompt().version == "why-v10"
 
 
 def test_both_prompts_send_claims_about_numbers_to_code() -> None:
@@ -179,3 +179,13 @@ def test_both_prompts_send_claims_about_numbers_to_code() -> None:
     for prompt in (opus.load_call_prompt(), opus.load_why_prompt()):
         assert "never put it in your own words" in prompt.text, prompt.version
         assert "reports a later quarter than the sheet's filing" in prompt.text
+
+
+def test_the_why_prompt_offers_words_code_accepts_for_counts_and_nothing() -> None:
+    from tenq.reasons import figure_in
+
+    text = " ".join(opus.load_why_prompt().text.split())
+    assert '"zero", "two", "five"' in text
+    for words in ("a pair", "a few", "several", "close to neutral"):
+        assert f'"{words}"' in text
+        assert figure_in(f"the rules saw {words} things") is None
