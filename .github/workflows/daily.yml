@@ -1,8 +1,12 @@
 name: daily
 # Both calls on every watchlist stock after the close, one email, and the
-# day's record committed to runs/daily/. Manual only until the first emailed
-# run has been checked; then a weekday schedule after the close is added here.
+# day's record committed to runs/daily/.
 on:
+  # weekdays 22:30 UTC: 5:30pm New York in winter, 6:30pm in summer, after the
+  # close has settled. On a holiday the latest session is one already
+  # emailed, so the run stops without sending.
+  schedule:
+    - cron: "30 22 * * 1-5"
   workflow_dispatch:
     inputs:
       tickers: {description: "A check on these tickers only (space separated); empty: the whole watchlist", required: false, default: ""}
@@ -20,6 +24,8 @@ jobs:
   daily:
     runs-on: ubuntu-latest
     timeout-minutes: 180 # 20 stocks: Jev, then two claude runs each
+    # a scheduled run has no inputs: tickers is empty (the whole watchlist)
+    # and email is not "false", so it emails
     steps:
       - uses: actions/checkout@v4
         with: {ref: main, persist-credentials: false}
@@ -63,6 +69,7 @@ jobs:
           uv run --locked python -m tenq.daily --stage claim --record "$RECORD" --claim "$CLAIM"
           scripts/commit-daily.sh
       - name: send the email and the traces
+        id: send
         if: ${{ steps.claim.outcome == 'success' }}
         env:
           RECORD: ${{ steps.calls.outputs.record }}
@@ -91,3 +98,15 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: scripts/commit-daily.sh
+      # A scheduled run that failed before its daily email went out tells the
+      # owner; GitHub's own failure emails depend on who last edited the
+      # schedule and their settings. Never sent once the daily email is out: the
+      # send step says so in its "emailed" output, whatever its exit code.
+      - name: failure notice
+        if: ${{ (failure() || cancelled()) && github.event_name == 'schedule' && steps.send.outputs.emailed != 'yes' }}
+        env:
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          SMTP_USER: ${{ secrets.SMTP_USER }}
+          SMTP_PASS: ${{ secrets.SMTP_PASS }}
+          RECIPIENT_EMAILS: ${{ secrets.RECIPIENT_EMAILS }}
+        run: uv run --locked python -m tenq.daily --stage notice --run-url "$RUN_URL"

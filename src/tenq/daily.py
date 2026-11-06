@@ -29,7 +29,11 @@ scored from. So:
 In the workflow the run is three steps (--stage calls, claim, send). The
 claim, which marks the email as being sent, is saved to main before the send
 step runs. If that save fails, nothing was sent and a rerun is safe; once it
-has worked, any later failure leaves a record that asks a person.
+has worked, any later failure leaves a record that asks a person. A
+scheduled run that fails before its email was sent sends a short failure
+notice instead (--stage notice). A run that finds no bar yet for the session
+the exchange's calendar expects fails, so a late price feed is never taken
+for a holiday.
 
 A run with --ticker, --no-email or --no-opus is a check: its record is
 runs/daily/<day>.check-<id>.json, it never stops or replaces the day's full
@@ -45,6 +49,7 @@ or when no settled session is found.
 from __future__ import annotations
 
 import argparse
+import html
 import json
 import logging
 import os
@@ -52,22 +57,24 @@ import time
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import Any
+
+import holidays
 
 from tenq import jev, opus
 from tenq.brief import Prompt
 from tenq.config import load_watchlist
 from tenq.daily_email import render
-from tenq.deliver import send
+from tenq.deliver import Email, send
 from tenq.filings import TICKER
 from tenq.jev import QuestionSet, Result
 from tenq.jev_check import Tally
 from tenq.llm import AgentRun, call_claude
 from tenq.opus import Claude
 from tenq.pack import Pack, gather
-from tenq.prices import BENCHMARK, Prices, YahooPrices, fetch
+from tenq.prices import BENCHMARK, MARKET_TZ, SESSION_SETTLED, Prices, YahooPrices, fetch
 from tenq.reasons import ReasonCheck, check_reasons
 from tenq.rules import Call, Rules, decide, load_rules
 from tenq.trace import send_daily_traces
@@ -80,7 +87,7 @@ DAILY_DIR = "daily"
 # leaves room for one claude run still going (up to 5 min) and Jev on the stocks left.
 OPUS_BUDGET_S = 140 * 60
 CLAUDE_FAILS = 2  # this many failed claude runs in a row: Claude is treated as down
-STAGES = ("all", "calls", "claim", "send")
+STAGES = ("all", "calls", "claim", "send", "notice")
 
 Gather = Callable[[str, datetime], Pack | None]
 Ask = Callable[..., Result]
@@ -146,6 +153,20 @@ def session(now: datetime, prices: Callable[[], Prices] | None = None) -> tuple[
     got = prices() if prices is not None else fetch([], YahooPrices(), now=now)
     bars = got.bars.get(BENCHMARK)
     return (bars[-1].day, bars[-1].close) if bars else None
+
+
+def expected_session(now: datetime) -> date:
+    """The latest NYSE session that should have settled by `now`: today from
+    16:30 New York on a trading day, else the trading day before. Weekends
+    and the exchange's holidays are not sessions."""
+    local = now.astimezone(MARKET_TZ)
+    day = local.date()
+    if local.time() < SESSION_SETTLED:
+        day -= timedelta(days=1)
+    closed = holidays.financial_holidays("NYSE", years=range(day.year - 1, day.year + 1))
+    while day.weekday() >= 5 or day in closed:
+        day -= timedelta(days=1)
+    return day
 
 
 def _checked(checked: ReasonCheck) -> dict[str, Any]:
@@ -403,7 +424,12 @@ def send_claimed(path: Path, token: str, mailer: Mailer, tracer: Tracer) -> int:
     if record is None or email.get("status") != "sending" or email.get("claim") != token:
         print(f"{path.name}: not claimed by this job, nothing sent")
         return 1
-    record = _trace(path, _mail(path, record, mailer), tracer)
+    record = _mail(path, record, mailer)
+    # the failure notice reads this, not the step's exit code: a sent email
+    # with no calls in it still exits 1, and must not be followed by a notice
+    sent = record["email"]["sent"]
+    _output(emailed="yes" if sent is True else "no" if sent is False else "maybe")
+    record = _trace(path, record, tracer)
     return _finish(record, email=True)
 
 
@@ -477,6 +503,26 @@ def run_day(
     return record
 
 
+def notice(run_url: str, mailer: Mailer = send) -> int:
+    """Email that a scheduled run failed and its daily email was not sent, or
+    may not have been.
+
+    Separate from the daily email and never instead of it: the person opens
+    the run and the record, then follows the README's daily section."""
+    if not run_url.startswith("https://github.com/"):
+        print("--run-url must be the run's GitHub address")
+        return 2
+    text = (
+        "The daily run failed, so its daily email was not sent, or may not "
+        f"have been.\n\nThe run: {run_url}\n\nWhat to do next is in the "
+        "README, under The daily calls."
+    )
+    body = html.escape(text).replace("\n\n", "</p><p>")
+    sent, status = mailer(Email("tenq daily run failed", text, f"<p>{body}</p>"))
+    print(f"failure notice: {status}")
+    return 0 if sent else 1
+
+
 def main(
     argv: list[str] | None = None,
     *,
@@ -495,12 +541,18 @@ def main(
         choices=STAGES,
         default="all",
         help="all: in one go; calls, claim, send: the workflow's steps, which save the "
-        "claim to main between claim and send",
+        "claim to main between claim and send; notice: email that a run failed",
     )
     ap.add_argument("--record", type=Path, help="claim, send: the record the calls stage wrote")
     ap.add_argument("--claim", help="claim, send: this job's token")
+    ap.add_argument("--run-url", help="notice: the failed run's address")
     args = ap.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
+    if args.stage == "notice":
+        if not args.run_url:
+            print("--stage notice needs --run-url")
+            return 2
+        return notice(args.run_url, mailer)
     if args.stage in ("claim", "send"):
         if args.record is None or not args.claim:
             print(f"--stage {args.stage} needs --record and --claim")
@@ -532,6 +584,15 @@ def main(
         print(f"no settled {BENCHMARK} session found: nothing run")
         return 1
     day, bench_close = found
+    expected = expected_session(ctx.now)
+    if day < expected:
+        # not a holiday: the session's bar is not posted yet. Failing here sends
+        # the failure notice, where stopping quietly would skip the day unseen.
+        print(
+            f"no {BENCHMARK} bar for the {expected} session yet (latest: {day}); nothing run. "
+            "A late price feed, or a closure the holidays package does not know yet."
+        )
+        return 1
     email = not args.no_email
     check = bool(args.ticker) or args.no_email or args.no_opus
     check_id = uuid.uuid4().hex[:8] if check else None
@@ -539,6 +600,7 @@ def main(
     if check_id is None and path.exists():
         done = _read(path)
         if done is not None and _emailed(done):
+            # a weekend or holiday: a missing bar on a trading day stopped above
             print(f"{day}: already emailed, nothing to do")
             _output(deliver="no")
             return 0

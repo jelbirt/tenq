@@ -359,6 +359,7 @@ def test_the_workflow_makes_the_calls_then_claims_then_sends(
 
     assert _stage(tmp_path, "send", "job-1", mailer=outbox) == 0
     assert len(outbox.sent) == 1 and _record(tmp_path)["email"]["sent"] is True
+    assert _outputs(out)["emailed"] == "yes"
     out.unlink()
     assert _run(tmp_path, "--stage", "calls", mailer=outbox) == 0
     assert _outputs(out) == {"deliver": "no"} and len(outbox.sent) == 1
@@ -715,3 +716,167 @@ def test_the_daily_module_reads_no_secret_into_the_record(
     _day_record(tmp_path)
     assert "sentinel-" not in record_path(tmp_path, DAY).read_text()
     assert daily.KIND == "daily"
+
+
+RUN_URL = "https://github.com/jelbirt/tenq/actions/runs/1"
+
+
+def test_the_failure_notice_links_the_run_and_touches_no_record(tmp_path: Path) -> None:
+    outbox = Outbox()
+    assert (
+        main(["--stage", "notice", "--run-url", RUN_URL, "--runs", str(tmp_path)], mailer=outbox)
+        == 0
+    )
+    (email,) = outbox.sent
+    assert email.subject == "tenq daily run failed"
+    assert RUN_URL in email.text and RUN_URL in email.html
+    assert "may not have been" in email.text
+    assert list(tmp_path.iterdir()) == []
+
+
+@pytest.mark.parametrize(
+    ("argv", "code"),
+    [
+        (["--stage", "notice"], 2),
+        (["--stage", "notice", "--run-url", "https://evil.example/x"], 2),
+    ],
+)
+def test_the_failure_notice_needs_the_runs_address(argv: list[str], code: int) -> None:
+    outbox = Outbox()
+    assert main(argv, mailer=outbox) == code
+    assert outbox.sent == []
+
+
+def test_a_failure_notice_that_cannot_be_sent_fails() -> None:
+    assert main(["--stage", "notice", "--run-url", RUN_URL], mailer=Outbox(ok=False)) == 1
+
+
+def test_the_workflow_runs_on_weekdays_and_notices_only_a_failed_scheduled_run() -> None:
+    import yaml
+
+    flow = yaml.safe_load(Path(".github/workflows/daily.yml").read_text())
+    on = flow[True]  # YAML 1.1 reads the key "on" as true
+    assert on["schedule"] == [{"cron": "30 22 * * 1-5"}]
+    assert "workflow_dispatch" in on
+    steps = {s.get("name"): s for s in flow["jobs"]["daily"]["steps"]}
+    assert steps["send the email and the traces"]["id"] == "send"
+    notice = steps["failure notice"]
+    assert notice["if"] == (
+        "${{ (failure() || cancelled()) && github.event_name == 'schedule' && "
+        "steps.send.outputs.emailed != 'yes' }}"
+    )
+    assert "--stage notice" in notice["run"]
+    assert set(notice["env"]) == {"RUN_URL", "SMTP_USER", "SMTP_PASS", "RECIPIENT_EMAILS"}
+
+
+@pytest.mark.parametrize(("ok", "emailed"), [(True, "yes"), (False, "no")])
+def test_the_send_step_says_whether_the_email_went_even_when_it_exits_1(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, ok: bool, emailed: str
+) -> None:
+    # every stock failed to get a call: the email still goes, the step exits 1,
+    # and only its "emailed" output keeps the failure notice from following it
+    out = tmp_path / "github_output"
+    monkeypatch.setenv("GITHUB_OUTPUT", str(out))
+    nobody = _ctx(Jev(down_after=0), Claude(limit_after=0))
+    assert _run(tmp_path, "--stage", "calls", ctx=nobody) == 0
+    assert _stage(tmp_path, "claim", "job-1") == 0
+    out.unlink()
+    assert _stage(tmp_path, "send", "job-1", mailer=Outbox(ok=ok)) == 1
+    assert _outputs(out) == {"emailed": emailed}
+
+
+def test_a_lost_mail_server_answer_says_maybe(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    out = tmp_path / "github_output"
+    monkeypatch.setenv("GITHUB_OUTPUT", str(out))
+    assert _run(tmp_path, "--stage", "calls") == 0
+    assert _stage(tmp_path, "claim", "job-1") == 0
+    out.unlink()
+    lost = lambda email: (None, "email may have gone out: TimeoutError while sending")  # noqa: E731
+    assert _stage(tmp_path, "send", "job-1", mailer=lost) == 1
+    assert _outputs(out) == {"emailed": "maybe"}
+
+
+def _at(y: int, m: int, d: int, hour: int, minute: int = 0) -> datetime:
+    return datetime(y, m, d, hour, minute, tzinfo=UTC)
+
+
+@pytest.mark.parametrize(
+    ("now", "expected"),
+    [
+        (_at(2026, 11, 4, 22, 30), date(2026, 11, 4)),  # Wednesday, after the settle
+        (_at(2026, 11, 4, 21, 0), date(2026, 11, 3)),  # 16:00 New York: not settled yet
+        (_at(2026, 11, 4, 21, 30), date(2026, 11, 4)),  # 16:30 New York: settled
+        (_at(2026, 11, 7, 22, 30), date(2026, 11, 6)),  # Saturday
+        (_at(2026, 11, 9, 14, 0), date(2026, 11, 6)),  # Monday morning
+        (_at(2026, 11, 26, 22, 30), date(2026, 11, 25)),  # Thanksgiving
+        (_at(2026, 11, 27, 22, 30), date(2026, 11, 27)),  # the early close after it is a session
+        (_at(2026, 1, 19, 22, 30), date(2026, 1, 16)),  # Martin Luther King Jr. Day
+        (_at(2026, 1, 2, 14, 0), date(2025, 12, 31)),  # across New Year's Day and the year
+        (_at(2026, 7, 6, 20, 15), date(2026, 7, 2)),  # 16:15 summer time; July 3 observed
+        (_at(2026, 7, 6, 20, 30), date(2026, 7, 6)),  # 16:30 summer time: settled
+        (_at(2026, 11, 5, 5, 30), date(2026, 11, 4)),  # a late run past New York midnight
+        (_at(2026, 4, 3, 22, 30), date(2026, 4, 2)),  # Good Friday: closed, not a federal holiday
+        (_at(2028, 1, 3, 14, 0), date(2027, 12, 31)),  # New Year's on a Saturday: Friday is open
+    ],
+)
+def test_the_expected_session_follows_the_exchange_calendar(now: datetime, expected: date) -> None:
+    assert daily.expected_session(now) == expected
+
+
+def test_a_trading_day_with_no_bar_yet_fails_and_runs_nothing(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    jev, claude, outbox = Jev(), Claude(), Outbox()
+    stale = lambda: Prices({BENCHMARK: (Bar(date(2026, 11, 3), 598.0, None),)}, ())  # noqa: E731
+    argv = ["--runs", str(tmp_path)]
+    assert main(argv, ctx=_ctx(jev, claude), prices=stale, mailer=outbox, tracer=_no_trace) == 1
+    assert (
+        "no QQQ bar for the 2026-11-04 session yet (latest: 2026-11-03)" in capsys.readouterr().out
+    )
+    assert jev.asked == [] and claude.calls == [] and outbox.sent == []
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_a_holiday_finds_the_last_session_emailed_and_sends_nothing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    eve = date(2026, 11, 25)
+    bars = lambda: Prices({BENCHMARK: (Bar(eve, 610.0, None),)}, ())  # noqa: E731
+    outbox = Outbox()
+    argv = ["--runs", str(tmp_path)]
+    day_before = replace(_ctx(), now=_at(2026, 11, 25, 22, 30))
+    assert main(argv, ctx=day_before, prices=bars, mailer=outbox, tracer=_no_trace) == 0
+    assert len(outbox.sent) == 1
+
+    out = tmp_path / "github_output"
+    monkeypatch.setenv("GITHUB_OUTPUT", str(out))
+    jev = Jev()
+    thanksgiving = replace(_ctx(jev), now=_at(2026, 11, 26, 22, 30))
+    assert main(argv, ctx=thanksgiving, prices=bars, mailer=outbox, tracer=_no_trace) == 0
+    assert _outputs(out) == {"deliver": "no"} and len(outbox.sent) == 1 and jev.asked == []
+
+
+def test_an_unemailed_day_is_not_resent_while_a_newer_session_is_missing(tmp_path: Path) -> None:
+    # the missing-session check comes before the resend: else a late bar would
+    # resend the old day, exit 0 and skip the new day unseen
+    old = date(2026, 11, 3)
+    bars = lambda: Prices({BENCHMARK: (Bar(old, 598.0, None),)}, ())  # noqa: E731
+    argv = ["--runs", str(tmp_path)]
+    that_evening = replace(_ctx(), now=_at(2026, 11, 3, 22, 30))
+    assert main(argv, ctx=that_evening, prices=bars, mailer=Outbox(ok=False), tracer=_no_trace) == 1
+    path = record_path(tmp_path, old)
+    before = path.read_text()
+    assert json.loads(before)["email"]["sent"] is False
+
+    outbox = Outbox()
+    assert main(argv, ctx=_ctx(), prices=bars, mailer=outbox, tracer=_no_trace) == 1
+    assert outbox.sent == [] and path.read_text() == before
+
+
+def test_a_check_run_on_a_late_feed_fails_too(tmp_path: Path) -> None:
+    stale = lambda: Prices({BENCHMARK: (Bar(date(2026, 11, 3), 598.0, None),)}, ())  # noqa: E731
+    argv = ["--runs", str(tmp_path), "--ticker", "CRWD"]
+    assert main(argv, ctx=_ctx(), prices=stale, mailer=Outbox(), tracer=_no_trace) == 1
+    assert list(tmp_path.iterdir()) == []

@@ -1,4 +1,4 @@
-<!-- prompt-version: why-v9 -->
+<!-- prompt-version: why-v10 -->
 Another system made a call on one stock from the facts sheet below. That
 system is Jev, a decision model that answered narrow questions about the
 sheet, and a fixed rules file that turned its answers into the call. You are
@@ -64,13 +64,14 @@ Rules, which code checks before anything is sent:
   Example reason: "{px:TICKER:ret_5d}, after a rival cut its outlook and
   software stocks sold off."
 - Never type a figure yourself. Your own words may hold no figure at all:
-  no digits, no "%" or "$", no numbers in words ("five", "doubled", "a
-  third", "millions", "percent", "mid-teens"), no ordinals from "third"
-  up, no "first quarter", "second half" or "first time", no month or
-  weekday names and no labels like Q4.
+  no digits, no "%" or "$", no numbers in words ("zero", "two", "five",
+  "doubled", "a third", "millions", "percent", "mid-teens"), no ordinals
+  from "third" up, no "first quarter", "second half" or "first time", no
+  month or weekday names and no labels like Q4.
   When a headline or excerpt needs a time or a size, say it in words
-  ("this week", "lately", "a large contract"). Any figure in your own words
-  drops the whole reason.
+  ("this week", "lately", "a large contract"). For how many, say "a pair",
+  "a few" or "several"; for a score the rules left at or near nothing, say
+  "close to neutral". Any figure in your own words drops the whole reason.
 - In "cites", list the ids of the headlines and 8-K excerpts a reason relies
   on. Never cite a number id: a number is shown as a placeholder, which
   counts as cited. Every id must be on the sheet. A reason with no
