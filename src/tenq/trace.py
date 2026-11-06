@@ -353,8 +353,9 @@ def emit_daily(stock: dict[str, Any], record: dict[str, Any], tracer: Tracer) ->
     opus_call = (stock.get("opus") or {}).get("call")
     common = {
         A.TRACE_NAME: "daily",
-        A.TRACE_SESSION_ID: f"daily-{record['day']}",
-        A.TRACE_TAGS: [ticker, "daily"],
+        A.TRACE_SESSION_ID: f"daily-{record['day']}"
+        + (f"-check-{record['check_id']}" if record.get("check_id") else ""),
+        A.TRACE_TAGS: [ticker, "daily", *(["check"] if record.get("check_id") else [])],
         A.VERSION: versions["rules"],
         f"{A.TRACE_METADATA}.run_id": record["run_id"],
         f"{A.TRACE_METADATA}.day": record["day"],
@@ -429,6 +430,8 @@ def emit_daily(stock: dict[str, Any], record: dict[str, Any], tracer: Tracer) ->
         elif name in agents and isinstance(agents[name][0], dict):
             agent, version = agents[name]
             attrs = _agent_attrs(dict(agent or {}), version)
+            if name == "opus why" and (stock.get("why") or {}).get("message"):
+                attrs[A.OBSERVATION_INPUT] = _json(stock["why"]["message"])
         span = start(name, step["start"], under, attrs, step.get("error"))
         end_at = step["end"]
         span.end(end_time=_ns(max(end_at, step["start"])))

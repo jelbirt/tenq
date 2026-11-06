@@ -96,12 +96,13 @@ def subject_for(record: dict[str, Any]) -> str:
     stocks = record["stocks"]
     both = [s for s in stocks if _agree(s)]
     agree = sum(1 for s in both if _agree(s) == "agree")
-    return f"tenq daily, session {record['day']}: the two calls agree on {agree} of {len(both)}"
+    what = "daily check" if record.get("check_id") else "daily"
+    return f"tenq {what}, session {record['day']}: the two calls agree on {agree} of {len(both)}"
 
 
 def _notes(stock: dict[str, Any]) -> list[str]:
     """What is missing from this stock's calls, in plain words."""
-    out = []
+    out = [f"Note: {stock['note']}."] if stock.get("note") else []
     if stock.get("error"):
         return [f"No calls today: {stock['error']}."]
     jev = stock.get("jev") or {}

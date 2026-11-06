@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import Any
@@ -217,10 +218,16 @@ def test_claude_at_its_limit_still_sends_jev_without_the_why(tmp_path: Path) -> 
     assert "Opus made no call" in outbox.sent[0].text
 
 
-def test_no_opus_runs_jev_alone(tmp_path: Path) -> None:
+def _checks(tmp_path: Path) -> list[dict[str, Any]]:
+    return [json.loads(p.read_text()) for p in (tmp_path / "daily").glob("*.check-*.json")]
+
+
+def test_no_opus_runs_jev_alone_as_a_check(tmp_path: Path) -> None:
     claude = Claude()
     assert _run(tmp_path, "--no-opus", ctx=_ctx(claude=claude)) == 0
-    assert claude.calls == [] and _record(tmp_path)["opus_on"] is False
+    [check] = _checks(tmp_path)
+    assert claude.calls == [] and check["opus_on"] is False
+    assert not record_path(tmp_path, DAY).exists()  # the day's own run is still to come
 
 
 def test_a_stock_with_no_facts_is_noted_and_the_rest_go_on(tmp_path: Path) -> None:
@@ -251,18 +258,162 @@ def test_no_call_at_all_fails_the_run(tmp_path: Path) -> None:
     assert _run(tmp_path, ctx=ctx) == 1
 
 
-def test_no_email_records_but_sends_nothing(tmp_path: Path) -> None:
+def test_no_email_is_a_check_that_sends_nothing_and_never_takes_the_day(tmp_path: Path) -> None:
     outbox = Outbox()
     assert _run(tmp_path, "--no-email", mailer=outbox) == 0
-    assert outbox.sent == [] and _record(tmp_path)["email"]["status"].startswith("email skipped")
+    [check] = _checks(tmp_path)
+    assert outbox.sent == [] and check["email"]["status"].startswith("email skipped")
+    assert check["check_id"] and not record_path(tmp_path, DAY).exists()
+    jev = Jev()
+    assert _run(tmp_path, ctx=_ctx(jev), mailer=outbox) == 0
+    assert len(jev.asked) == len(WATCH.tickers) and len(outbox.sent) == 1
+
+
+@pytest.mark.parametrize(
+    ("text", "said"),
+    [
+        ("{", "unreadable"),
+        (json.dumps({"day": "2026-11-04", "complete": False, "stocks": []}), "unfinished"),
+        (
+            json.dumps({"day": "2026-11-04", "complete": True, "email": {"status": "sending"}}),
+            "may have gone out",
+        ),
+    ],
+)
+def test_a_record_that_needs_a_person_is_never_run_or_sent_again(
+    tmp_path: Path, text: str, said: str, capsys: pytest.CaptureFixture[str]
+) -> None:
+    path = record_path(tmp_path, DAY)
+    path.parent.mkdir(parents=True)
+    path.write_text(text)
+    jev, claude, outbox = Jev(), Claude(), Outbox()
+    assert _run(tmp_path, ctx=_ctx(jev, claude), mailer=outbox) == 1
+    assert jev.asked == [] and claude.calls == [] and outbox.sent == []
+    assert said in capsys.readouterr().out and path.read_text() == text
+
+
+def test_the_record_is_saved_after_every_stock_and_left_whole(tmp_path: Path) -> None:
+    seen: list[int] = []
+    ctx = _ctx()
+    inner = ctx.gather
+
+    def gather(ticker: str, now: datetime) -> Pack | None:
+        path = record_path(tmp_path, DAY)
+        if path.exists():
+            rec = json.loads(path.read_text())  # always whole JSON
+            assert rec["complete"] is False
+            seen.append(len(rec["stocks"]))
+        return inner(ticker, now)
+
+    ctx.gather = gather
+    assert _run(tmp_path, ctx=ctx) == 0
+    assert seen == list(range(1, len(WATCH.tickers)))
+    assert _record(tmp_path)["complete"] is True
+    assert not list((tmp_path / "daily").glob(".*.tmp"))
+
+
+def test_a_resend_also_sends_a_trace_that_never_went_out(tmp_path: Path) -> None:
+    assert _run(tmp_path, mailer=Outbox(ok=False)) == 1
+    traced: list[str] = []
+
+    def tracer(record: dict[str, Any]) -> tuple[bool, str, dict[str, str]]:
+        traced.append(record["day"])
+        return True, "traces stored: 20 of 20", {}
+
+    assert _run(tmp_path, tracer=tracer) == 0
+    assert traced == ["2026-11-04"]
+    assert _record(tmp_path)["trace"]["stored"] is True
+    assert _run(tmp_path, tracer=tracer) == 0 and traced == ["2026-11-04"]
+
+
+class Failing(Claude):
+    """Every claude run from the given one on fails without hitting the limit."""
+
+    def __init__(self, fail_from: int) -> None:
+        super().__init__()
+        self.fail_from = fail_from
+
+    def __call__(self, message: str, **kw: Any) -> AgentRun:
+        run = super().__call__(message, **kw)
+        if len(self.calls) >= self.fail_from:
+            run = AgentRun(kw["model"])
+            run.fail(INFRA, "timed out after 300s")
+        return run
+
+
+def test_two_failed_claude_runs_in_a_row_stop_asking_claude(tmp_path: Path) -> None:
+    claude = Failing(fail_from=3)  # CRWD's call and why work, DDOG's two fail
+    assert _run(tmp_path, ctx=_ctx(claude=claude)) == 0
+    rec = _record(tmp_path)
+    assert len(claude.calls) == 4
+    assert "failed 2 times in a row" in rec["stocks"][2]["opus"]["error"]
+    assert "failed 2 times in a row" in rec["stocks"][2]["why"]["error"]
+    assert all(s["call"]["call"] == "Buy" for s in rec["stocks"])
+
+
+def test_one_failed_claude_run_is_not_a_breaker(tmp_path: Path) -> None:
+    class Once(Claude):
+        def __call__(self, message: str, **kw: Any) -> AgentRun:
+            run = super().__call__(message, **kw)
+            if len(self.calls) == 1:
+                run = AgentRun(kw["model"])
+                run.fail(INFRA, "exit 1")
+            return run
+
+    claude = Once()
+    assert _run(tmp_path, ctx=_ctx(claude=claude)) == 0
+    assert len(claude.calls) == 2 * len(WATCH.tickers)
+
+
+def test_opus_stops_when_the_runs_time_budget_is_spent(tmp_path: Path) -> None:
+    ticks = iter(range(10_000))
+    ctx = _ctx()
+    ctx.opus_budget_s = 2.5  # one tick per clock read: CRWD's two checks, then over
+    ctx.clock = lambda: float(next(ticks))
+    assert _run(tmp_path, ctx=ctx) == 0
+    rec = _record(tmp_path)
+    assert rec["stocks"][0]["opus"]["call"] == "Hold" and rec["stocks"][0]["why"]["kept"]
+    assert "time budget" in rec["stocks"][1]["opus"]["error"]
+    assert "time budget" in rec["stocks"][1]["why"]["error"]
+
+
+def test_the_why_message_is_recorded_and_a_lagging_price_is_noted(tmp_path: Path) -> None:
+    ctx = _ctx()
+    inner = ctx.gather
+
+    def gather(ticker: str, now: datetime) -> Pack | None:
+        pack = inner(ticker, now)
+        return replace(pack, day=date(2026, 11, 3)) if pack and ticker == "DDOG" else pack
+
+    ctx.gather = gather
+    outbox = Outbox()
+    assert _run(tmp_path, ctx=ctx, mailer=outbox) == 0
+    rec = _record(tmp_path)
+    assert "How the rules reached it" in rec["stocks"][0]["why"]["message"]
+    assert rec["made_at"] == NOW.isoformat()
+    assert rec["stocks"][1]["note"] == "its latest price is from 2026-11-03, not 2026-11-04"
+    assert "Note: its latest price is from 2026-11-03" in outbox.sent[0].text
 
 
 # the email
 
 
 def _day_record(tmp_path: Path) -> dict[str, Any]:
-    assert _run(tmp_path, "--no-email") == 0
+    assert _run(tmp_path) == 0
     return _record(tmp_path)
+
+
+def test_a_check_says_so_in_its_subject_and_its_traces(tmp_path: Path) -> None:
+    outbox = Outbox()
+    assert _run(tmp_path, "--ticker", "CRWD", mailer=outbox) == 0
+    assert outbox.sent[0].subject.startswith("tenq daily check, session 2026-11-04")
+    [check] = _checks(tmp_path)
+    tracing, exporter = _memory()
+    emit_daily(check["stocks"][0], check, tracing.tracer)
+    root = next(s for s in exporter.get_finished_spans() if s.name == "daily CRWD")
+    attrs = root.attributes or {}
+    assert attrs["session.id"] == f"daily-2026-11-04-check-{check['check_id']}"
+    assert "check" in list(attrs["langfuse.trace.tags"])  # type: ignore[arg-type]
 
 
 def test_the_email_shows_both_calls_and_escapes_untrusted_text(tmp_path: Path) -> None:

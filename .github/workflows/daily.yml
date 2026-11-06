@@ -48,6 +48,15 @@ jobs:
           for t in "${tickers[@]}"; do args+=(--ticker "$t"); done
           [[ "$EMAIL" == "false" ]] && args+=(--no-email)
           uv run --locked python -m tenq.daily "${args[@]}"
+      - name: keep the record
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: daily-${{ github.run_id }}
+          path: runs/daily/
+          if-no-files-found: ignore
+          include-hidden-files: false
+          retention-days: 90
       - name: commit the record
         if: ${{ always() }}
         env:
@@ -56,6 +65,11 @@ jobs:
           git config user.name tenq-bot
           git config user.email bot@users.noreply.github.com
           git remote set-url origin "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          if [ ! -d runs/daily ]; then
+            echo "no daily record"
+            exit 0
+          fi
+          rm -f runs/daily/.*.tmp # a write the job was stopped in: never committed
           git add runs/daily
           if git diff --cached --quiet; then
             echo "no new daily record"
