@@ -66,7 +66,9 @@ one that finds the email failed resends it from the record without asking the mo
 
 If a scheduled run fails before its email was sent, a short "tenq daily run failed" email links
 to the run. A weekend or market holiday (the NYSE calendar from the `holidays` package) sends nothing; a
-trading day whose closing price is not posted yet fails the run, so the notice goes out.
+trading day whose closing price is not posted yet fails the run, so the notice goes out. A
+surprise closure the package does not list yet sends one such notice; bumping `holidays` in the
+lock fixes it.
 
 When a run stops with "nothing run or sent", the day's record needs a person:
 - **its email may have gone out** (the job stopped while sending, or the mail server's answer

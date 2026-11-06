@@ -156,7 +156,7 @@ def session(now: datetime, prices: Callable[[], Prices] | None = None) -> tuple[
 
 
 def expected_session(now: datetime) -> date:
-    """The latest NYSE session that should have settled by `now`: today after
+    """The latest NYSE session that should have settled by `now`: today from
     16:30 New York on a trading day, else the trading day before. Weekends
     and the exchange's holidays are not sessions."""
     local = now.astimezone(MARKET_TZ)
@@ -588,7 +588,10 @@ def main(
     if day < expected:
         # not a holiday: the session's bar is not posted yet. Failing here sends
         # the failure notice, where stopping quietly would skip the day unseen.
-        print(f"no {BENCHMARK} bar for the {expected} session yet (latest: {day}); nothing run")
+        print(
+            f"no {BENCHMARK} bar for the {expected} session yet (latest: {day}); nothing run. "
+            "A late price feed, or a closure the holidays package does not know yet."
+        )
         return 1
     email = not args.no_email
     check = bool(args.ticker) or args.no_email or args.no_opus

@@ -816,6 +816,9 @@ def _at(y: int, m: int, d: int, hour: int, minute: int = 0) -> datetime:
         (_at(2026, 1, 2, 14, 0), date(2025, 12, 31)),  # across New Year's Day and the year
         (_at(2026, 7, 6, 20, 15), date(2026, 7, 2)),  # 16:15 summer time; July 3 observed
         (_at(2026, 7, 6, 20, 30), date(2026, 7, 6)),  # 16:30 summer time: settled
+        (_at(2026, 11, 5, 5, 30), date(2026, 11, 4)),  # a late run past New York midnight
+        (_at(2026, 4, 3, 22, 30), date(2026, 4, 2)),  # Good Friday: closed, not a federal holiday
+        (_at(2028, 1, 3, 14, 0), date(2027, 12, 31)),  # New Year's on a Saturday: Friday is open
     ],
 )
 def test_the_expected_session_follows_the_exchange_calendar(now: datetime, expected: date) -> None:
@@ -853,3 +856,27 @@ def test_a_holiday_finds_the_last_session_emailed_and_sends_nothing(
     thanksgiving = replace(_ctx(jev), now=_at(2026, 11, 26, 22, 30))
     assert main(argv, ctx=thanksgiving, prices=bars, mailer=outbox, tracer=_no_trace) == 0
     assert _outputs(out) == {"deliver": "no"} and len(outbox.sent) == 1 and jev.asked == []
+
+
+def test_an_unemailed_day_is_not_resent_while_a_newer_session_is_missing(tmp_path: Path) -> None:
+    # the missing-session check comes before the resend: else a late bar would
+    # resend the old day, exit 0 and skip the new day unseen
+    old = date(2026, 11, 3)
+    bars = lambda: Prices({BENCHMARK: (Bar(old, 598.0, None),)}, ())  # noqa: E731
+    argv = ["--runs", str(tmp_path)]
+    that_evening = replace(_ctx(), now=_at(2026, 11, 3, 22, 30))
+    assert main(argv, ctx=that_evening, prices=bars, mailer=Outbox(ok=False), tracer=_no_trace) == 1
+    path = record_path(tmp_path, old)
+    before = path.read_text()
+    assert json.loads(before)["email"]["sent"] is False
+
+    outbox = Outbox()
+    assert main(argv, ctx=_ctx(), prices=bars, mailer=outbox, tracer=_no_trace) == 1
+    assert outbox.sent == [] and path.read_text() == before
+
+
+def test_a_check_run_on_a_late_feed_fails_too(tmp_path: Path) -> None:
+    stale = lambda: Prices({BENCHMARK: (Bar(date(2026, 11, 3), 598.0, None),)}, ())  # noqa: E731
+    argv = ["--runs", str(tmp_path), "--ticker", "CRWD"]
+    assert main(argv, ctx=_ctx(), prices=stale, mailer=Outbox(), tracer=_no_trace) == 1
+    assert list(tmp_path.iterdir()) == []
