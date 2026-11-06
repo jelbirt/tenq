@@ -316,8 +316,11 @@ def _needs_a_person(record: dict[str, Any] | None) -> str | None:
         return "its record is unreadable"
     if record.get("complete") is not True:
         return "its record is unfinished (the job stopped mid-run)"
-    email = record.get("email") or {}
-    if email.get("sent", False) is None:  # claimed for sending, or the server's answer was lost
+    email = record.get("email")
+    if not isinstance(email, dict):
+        return "its email entry is unreadable"
+    sent = email.get("sent", False)
+    if sent is not True and sent is not False:  # claimed, the answer lost, or a hand edit
         return f"its email may have gone out ({email.get('status')})"
     return None
 
@@ -414,6 +417,7 @@ def claim(path: Path, token: str) -> int:
     if _emailed(record):
         print(f"{path.name}: already emailed; not claimed")
         return 1
+    render(record)  # a record that cannot be emailed fails here, before the claim reaches main
     _claim(path, record, token)
     print(f"{path.name}: claimed for this job's email")
     return 0

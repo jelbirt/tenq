@@ -169,6 +169,10 @@ def render(
     return Email(subject_for(meta, table), "\n".join(t) + "\n", "\n".join(h))
 
 
+# Definite refusals: the server answered no, so the message did not go out.
+REFUSED = (smtplib.SMTPRecipientsRefused, smtplib.SMTPSenderRefused, smtplib.SMTPDataError)
+
+
 def send(email: Email) -> tuple[bool | None, str]:
     """Send to RECIPIENT_EMAILS. Returns (sent, status); never raises. sent is
     None when the message was handed to the server and the answer was lost, so
@@ -180,6 +184,7 @@ def send(email: Email) -> tuple[bool | None, str]:
     if not user or not password or not recipients:
         return False, "email skipped: SMTP_USER / SMTP_PASS / RECIPIENT_EMAILS not all set"
     handed = False  # True once send_message starts: the server may have the message
+    accepted = False  # True once send_message returns: the server took it
     try:
         host = os.environ.get("SMTP_HOST") or "smtp.gmail.com"
         port = int(os.environ.get("SMTP_PORT") or "587")
@@ -194,15 +199,22 @@ def send(email: Email) -> tuple[bool | None, str]:
                 smtp.login(user, password)
                 handed = True
                 smtp.send_message(msg)
+                accepted = True
         else:
             with smtplib.SMTP(host, port, timeout=60) as smtp:
                 smtp.starttls()
                 smtp.login(user, password)
                 handed = True
                 smtp.send_message(msg)
+                accepted = True
+    except REFUSED as exc:  # the server said no: nothing went out
+        log.warning("email delivery failed: %s", type(exc).__name__)
+        return False, f"email delivery failed: {type(exc).__name__}"
     except Exception as exc:
         # the exception text is logged, never the credentials
         log.warning("email delivery failed: %s", type(exc).__name__)
+        if accepted:  # only the goodbye failed
+            return True, f"email sent to {len(recipients)} recipient(s)"
         if handed:
             return None, f"email may have gone out: {type(exc).__name__} while sending"
         return False, f"email delivery failed: {type(exc).__name__}"

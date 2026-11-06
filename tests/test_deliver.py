@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import smtplib
 from typing import Any, ClassVar
 
 import pytest
@@ -89,3 +90,27 @@ def test_an_error_once_the_server_has_the_message_says_it_may_have_gone_out(
 ) -> None:
     monkeypatch.setattr("tenq.deliver.smtplib.SMTP", LostAnswer)
     assert send(EMAIL) == (None, "email may have gone out: TimeoutError while sending")
+
+
+class Refused(FakeSMTP):
+    def send_message(self, msg: Any) -> None:
+        raise smtplib.SMTPRecipientsRefused({"a@example.com": (550, b"no such user")})
+
+
+class BadGoodbye(FakeSMTP):
+    def __exit__(self, *exc: object) -> None:
+        raise smtplib.SMTPServerDisconnected("gone during QUIT")
+
+
+def test_a_refusal_from_the_server_is_a_plain_failure(
+    smtp: type[FakeSMTP], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("tenq.deliver.smtplib.SMTP", Refused)
+    assert send(EMAIL) == (False, "email delivery failed: SMTPRecipientsRefused")
+
+
+def test_a_failed_goodbye_after_the_server_took_the_message_is_sent(
+    smtp: type[FakeSMTP], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("tenq.deliver.smtplib.SMTP", BadGoodbye)
+    assert send(EMAIL) == (True, "email sent to 2 recipient(s)") and len(smtp.sent) == 1

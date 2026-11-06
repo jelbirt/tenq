@@ -387,6 +387,82 @@ def test_an_email_that_may_have_gone_out_is_never_sent_again(tmp_path: Path) -> 
     assert _run(tmp_path, mailer=outbox) == 1 and outbox.sent == []
 
 
+def test_a_failed_send_is_claimed_again_and_resent_through_the_steps(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    out = tmp_path / "github_output"
+    monkeypatch.setenv("GITHUB_OUTPUT", str(out))
+    assert _run(tmp_path, "--stage", "calls") == 0
+    assert _stage(tmp_path, "claim", "job-1") == 0
+    assert _stage(tmp_path, "send", "job-1", mailer=Outbox(ok=False)) == 1
+    assert _record(tmp_path)["email"]["sent"] is False
+    out.unlink()
+    jev, outbox = Jev(), Outbox()
+    assert _run(tmp_path, "--stage", "calls", ctx=_ctx(jev)) == 0  # the rerun asks no one
+    assert jev.asked == [] and _outputs(out)["deliver"] == "yes"
+    assert _stage(tmp_path, "claim", "job-2") == 0
+    assert _stage(tmp_path, "send", "job-2", mailer=outbox) == 0
+    assert len(outbox.sent) == 1 and _record(tmp_path)["email"]["sent"] is True
+
+
+def test_the_claim_refuses_an_emailed_day_and_a_lost_send_needs_a_person(tmp_path: Path) -> None:
+    def lost(email: Email) -> tuple[bool | None, str]:
+        return None, "email may have gone out: TimeoutError while sending"
+
+    assert _run(tmp_path, "--stage", "calls") == 0
+    assert _stage(tmp_path, "claim", "job-1") == 0
+    assert _stage(tmp_path, "send", "job-1", mailer=lost) == 1
+    assert _record(tmp_path)["email"]["sent"] is None
+    assert _stage(tmp_path, "claim", "job-2") == 1
+
+    other = tmp_path / "other"
+    assert _run(other) == 0  # emailed in one go
+    assert _stage(other, "claim", "job-3") == 1
+
+
+@pytest.mark.parametrize("sent", ["true", 1, "yes"])
+def test_a_hand_edit_that_is_not_true_or_false_needs_a_person(tmp_path: Path, sent: Any) -> None:
+    assert _run(tmp_path, mailer=Outbox(ok=False)) == 1
+    path = record_path(tmp_path, DAY)
+    rec = json.loads(path.read_text())
+    rec["email"]["sent"] = sent
+    path.write_text(json.dumps(rec))
+    outbox = Outbox()
+    assert _run(tmp_path, mailer=outbox) == 1 and outbox.sent == []
+
+
+def test_a_record_that_cannot_be_emailed_is_never_claimed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    assert _run(tmp_path, "--stage", "calls") == 0
+
+    def broken(record: dict[str, Any]) -> Email:
+        raise KeyError("stocks")
+
+    monkeypatch.setattr(daily, "render", broken)
+    with pytest.raises(KeyError):
+        _stage(tmp_path, "claim", "job-1")
+    assert _record(tmp_path)["email"]["status"] == "email pending"
+
+
+def test_a_code_failure_reading_the_facts_is_noted_on_that_stock(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    real = daily._facts
+
+    def facts(out: dict[str, Any], pack: Pack, ticker: str, *a: Any) -> None:
+        if ticker == "DDOG":
+            raise ValueError("secret-bearing message")
+        real(out, pack, ticker, *a)
+
+    monkeypatch.setattr(daily, "_facts", facts)
+    assert _run(tmp_path) == 0
+    by = {s["ticker"]: s for s in _record(tmp_path)["stocks"]}
+    assert by["DDOG"]["error"] == "the facts pack could not be read (ValueError)"
+    assert "call" not in by["DDOG"] and "secret" not in json.dumps(by)
+    assert by["CRWD"]["call"]["call"] == "Buy"
+
+
 class Raising(Claude):
     """A code failure while Opus is asked about one stock."""
 
