@@ -1,4 +1,4 @@
-"""The simple baselines replayed over past prices: the bar Jev and Opus must clear.
+"""The simple baselines replayed over past prices: how they have done, and how much they swing.
 
 Jev and Opus cannot be replayed (the news they read is gone), but the baselines
 need prices only. For every past session and every watchlist stock this makes
@@ -12,8 +12,12 @@ The baselines:
 - last month's winners: Buy when the stock beat QQQ over the 20 sessions
   before, Hold otherwise (the scorecard's momentum baseline).
 
-One bias to keep in mind: the watchlist was picked in 2026, so its stocks are
-ones that did well enough to be watched. That flatters always Buy in the past.
+This is background, not the bar a live method is held to: that is still the
+baselines on the same days, on the scorecard, since the baselines swing a lot
+from year to year. Its luck range is for years of calls; a few months of live
+calls have a much wider one. And the watchlist was picked in 2026, so its
+stocks are ones that did well enough to be watched: that flatters every rule
+that mostly buys, always Buy most.
 
 `uv run python -m tenq.replay` downloads the prices (no keys needed) and prints
 the table; `--json PATH` also writes the numbers. Nothing in runs/ is touched.
@@ -32,16 +36,16 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 from tenq.config import load_watchlist
-from tenq.prices import BENCHMARK, Bar, Prices, YahooPrices, fetch
+from tenq.prices import BENCHMARK, Bar, Prices, YahooPrices, aligned, fetch
 from tenq.scorecard import (
     Made,
     ScoreConfig,
     day_totals,
     load_config,
     outcome,
+    standard_error,
     t95,
 )
-from tenq.scorecard import _standard_error as standard_error
 
 log = logging.getLogger(__name__)
 
@@ -59,16 +63,16 @@ def _made_at(day: date) -> datetime:
     return datetime.combine(day, MADE_AT, MARKET_TZ).astimezone(UTC)
 
 
-def momentum(closes: dict[date, float], bench: Sequence[Bar], i: int) -> float | None:
-    """The stock's return less QQQ's over the LOOKBACK sessions to QQQ's bar i,
-    or None when the stock has no close on either end."""
-    if i < LOOKBACK:
+def momentum(pairs: Sequence[tuple[Bar, Bar]], j: int) -> float | None:
+    """The stock's return less QQQ's over the LOOKBACK days both traded, up to and
+    including pair j: the live sheet's px excess_20d (prices.price_facts), as known
+    at that close. None with fewer than LOOKBACK days behind it."""
+    if j < LOOKBACK:
         return None
-    then, now = bench[i - LOOKBACK], bench[i]
-    a, b = closes.get(then.day), closes.get(now.day)
-    if a is None or b is None or a <= 0:
+    (s0, q0), (s1, q1) = pairs[j - LOOKBACK], pairs[j]
+    if s0.close <= 0 or q0.close <= 0:
         return None
-    return (b / a - 1) - (now.close / then.close - 1)
+    return (s1.close / s0.close - 1) - (q1.close / q0.close - 1)
 
 
 def rows_from(prices: Prices, tickers: Sequence[str], cfg: ScoreConfig) -> list[dict[str, Any]]:
@@ -80,10 +84,8 @@ def rows_from(prices: Prices, tickers: Sequence[str], cfg: ScoreConfig) -> list[
         bars = prices.bars.get(t)
         if not bars:
             continue
-        closes = {b.day: b.close for b in bars}
-        for i, q in enumerate(bench):
-            if q.day not in closes:
-                continue  # not listed yet, or no bar that day
+        pairs = aligned(bars, bench)  # only days both traded: not listed yet, or a gap
+        for j, (_, q) in enumerate(pairs):
             made = Made(
                 day=q.day,
                 made_at=_made_at(q.day),
@@ -92,7 +94,7 @@ def rows_from(prices: Prices, tickers: Sequence[str], cfg: ScoreConfig) -> list[
                 jev_score=None,
                 opus=None,
                 opus_confidence=None,
-                momentum=momentum(closes, bench, i),
+                momentum=momentum(pairs, j),
                 volatility=None,
                 versions={},
             )
@@ -186,8 +188,11 @@ def lines(result: dict[str, Any]) -> list[str]:
     for key, label in BASELINES.items():
         out.append(row(label, a[key]))
     for y, by in result["by_year"].items():
+        span_y = by["always_buy"]
         out.append("")
-        out.append(f"{y}:")
+        out.append(
+            f"{y} ({span_y.get('first')} to {span_y.get('last')}, {span_y['calls']} stock-days):"
+        )
         for key, label in BASELINES.items():
             if key != "always_hold":
                 out.append(row(f"  {label}", by[key]))
@@ -196,8 +201,11 @@ def lines(result: dict[str, Any]) -> list[str]:
         "Per call is the mean score a recommendation earned (Buy counts the stock's lead over "
         "QQQ from the next open to the close 20 sessions later; Hold counts 0). Luck +/- is the "
         "90% range around it from luck alone: a mean inside +/- that of 0 could be chance.",
-        "The watchlist was chosen in 2026, so these stocks did well enough to be watched: "
-        "always Buy is flattered in the past.",
+        "This is background, not the bar: a live method is judged against the baselines on the "
+        "same days, on the scorecard. The luck range here is for years of calls; a few months "
+        "of live calls have a much wider one.",
+        "The watchlist was chosen in 2026, so these stocks did well enough to be watched: that "
+        "flatters every rule that mostly buys, always Buy most.",
     ]
     if result["notes"]:
         out.append("Price notes: " + "; ".join(result["notes"]))

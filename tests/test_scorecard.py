@@ -15,7 +15,6 @@ from tenq.daily_email import render
 from tenq.prices import BENCHMARK, Bar, Prices
 from tenq.scorecard import (
     _lead_lines,
-    _standard_error,
     calls_from,
     daily_records,
     day_totals,
@@ -31,6 +30,7 @@ from tenq.scorecard import (
     read_ledger,
     scorecard,
     spearman,
+    standard_error,
     t95,
     update,
     weekly,
@@ -391,12 +391,12 @@ def test_the_standard_error_matches_a_hand_worked_case() -> None:
     4/3 for a short sample, square root, over 4 pairs. Two days of carry-over
     add the two-day term, 2, at weight 1/3 and the one-day term at 2/3."""
     totals = [1.0, 3.0, 2.0, 6.0]
-    assert _standard_error(totals, 4, 1) == pytest.approx((11 * 4 / 3) ** 0.5 / 4)
-    assert _standard_error(totals, 4, 0) == pytest.approx((14 * 4 / 3) ** 0.5 / 4)
-    assert _standard_error(totals, 4, 2) == pytest.approx(
+    assert standard_error(totals, 4, 1) == pytest.approx((11 * 4 / 3) ** 0.5 / 4)
+    assert standard_error(totals, 4, 0) == pytest.approx((14 * 4 / 3) ** 0.5 / 4)
+    assert standard_error(totals, 4, 2) == pytest.approx(
         ((14 + 2 * (2 / 3) * -3 + 2 * (1 / 3) * 2) * 4 / 3) ** 0.5 / 4
     )
-    assert _standard_error([1.0], 4, 1) is None
+    assert standard_error([1.0], 4, 1) is None
 
 
 def test_calls_that_all_agree_claim_no_range_and_never_settle() -> None:
