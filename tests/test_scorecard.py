@@ -15,6 +15,7 @@ from tenq.daily_email import render
 from tenq.prices import BENCHMARK, Bar, Prices
 from tenq.scorecard import (
     _lead_lines,
+    _standard_error,
     calls_from,
     daily_records,
     day_totals,
@@ -39,7 +40,7 @@ CFG = load_config()
 KNOWN_SCORES = {
     "score-v1": "6f1a5031248f812ac0841e2e329e3cd20fd66842f7898d3d061d83053090009a",
     # v2: the luck range from daily moves, and a settled bar for weekly reading
-    "score-v2": "59eba966d9808100e3acbcca5af418c1d1ec46cf463d4e4272fd6ef9546cd4d4",
+    "score-v2": "bfd22fe3774cf9e1ea163b244f31a87ab12274ca5fb95810b5f3f8859e3bfd24",
 }
 MADE = datetime(2026, 11, 6, 11, 55, tzinfo=UTC)  # Friday 06:55 New York, before the open
 ENTRY = date(2026, 11, 6)
@@ -290,9 +291,9 @@ def _weeks(n: int, jev: str, opus: str, excess: float) -> list[dict[str, Any]]:
     return _rows(*[((start + timedelta(weeks=w)).isoformat(), jev, opus, excess) for w in range(n)])
 
 
-def test_the_verdict_waits_for_enough_weeks_whatever_the_numbers() -> None:
+def test_a_lead_waits_for_enough_weeks_whatever_the_numbers() -> None:
     p = paired(_weeks(12, "Buy", "Hold", 0.05), CFG)
-    assert p["verdict"] == "too early to tell (12 of 13 weeks scored)"
+    assert p["leader"] == "Jev" and p["settled"] is None and p["weeks"] == 12
     assert p["mean"] == pytest.approx(0.05)
 
 
@@ -325,15 +326,17 @@ def _skilled(weeks: int, gap: float, seed: int = 7) -> list[dict[str, Any]]:
 
 def test_the_leader_shows_from_the_first_pair_and_settles_only_when_clear() -> None:
     early = paired(_skilled(3, 0.03), CFG)
-    assert early["leader"] == "Jev" and early["settled"] is None
-    assert early["verdict"] == "too early to tell (3 of 13 weeks scored)"
+    assert early["leader"] == "Jev" and early["settled"] is None and early["weeks"] == 3
     clear = paired(_skilled(13, 0.03), CFG)
-    assert clear["settled"] == "Jev" and clear["verdict"] == "Jev ahead"
-    flipped = [r | {"jev": "Hold", "opus": "Buy"} for r in _skilled(13, 0.03)]
-    assert paired(flipped, CFG)["verdict"] == "Opus ahead"
+    assert clear["settled"] == "Jev"
+    assert clear["luck"] == pytest.approx(t95(clear["days"] - 1) * clear["se"])
+    assert clear["bar"] == pytest.approx(CFG.settled_bar * clear["se"])
+    flipped = paired([r | {"jev": "Hold", "opus": "Buy"} for r in _skilled(13, 0.03)], CFG)
+    assert (flipped["leader"], flipped["settled"]) == ("Opus", "Opus")
+    assert flipped["mean"] == pytest.approx(-clear["mean"])
     faint = paired(_skilled(13, 0.0005), CFG)
     assert faint["leader"] == "Jev" and faint["settled"] is None
-    assert faint["verdict"] == "not settled" and faint["luck"] > abs(faint["mean"])
+    assert faint["luck"] > abs(faint["mean"])
 
 
 def test_a_lead_past_the_luck_range_but_short_of_the_bar_is_not_settled() -> None:
@@ -347,17 +350,59 @@ def test_a_lead_past_the_luck_range_but_short_of_the_bar_is_not_settled() -> Non
             break
     assert between is not None
     p = paired(_skilled(13, between), CFG)
-    assert p["settled"] is None and p["verdict"] == "not settled"
+    assert p["settled"] is None
     assert paired(_skilled(13, between), replace(CFG, settled_bar=1.0))["settled"] == "Jev"
     text = _lead_lines(p, 13)
-    assert text[1].startswith("Not settled: luck alone could give a gap from -")
-    assert text[2].startswith("The gap is outside that range, but since the card is read")
+    assert text[1] == (
+        f"Not settled: 9 times in 10, luck alone gives a gap between -{p['luck'] * 100:.2f}% "
+        f"and +{p['luck'] * 100:.2f}% at this point."
+    )
+    assert text[2] == (
+        "The gap is outside that range, but since the card is read every week a lead "
+        f"settles only at {p['bar'] * 100:.2f}%."
+    )
+
+
+def test_an_early_lead_that_clears_the_bar_is_told_it_waits_for_the_weeks() -> None:
+    p = paired(_skilled(5, 0.03), CFG)
+    assert p["settled"] is None and abs(p["mean"]) >= p["bar"]
+    text = _lead_lines(p, 13)
+    assert text[1].startswith("Not settled (too early: 5 of 13 weeks scored): 9 times in 10,")
+    assert text[2] == (
+        f"The gap already clears the settle bar of {p['bar'] * 100:.2f}%; a lead can settle "
+        "only once 13 weeks are scored."
+    )
+
+
+def test_a_gap_that_rounds_to_zero_has_no_leader() -> None:
+    rows = _skilled(13, 0.0)
+    base = paired(rows, CFG)["mean"]
+    tiny = [r | {"excess": r["excess"] - base + 0.00004} for r in rows]
+    p = paired([r | {"moves": None} for r in tiny], CFG)
+    assert 0 < p["mean"] < 0.00005 and p["leader"] is None and p["differ"] == len(rows)
+    text = _lead_lines(p, 13)
+    assert text[0].startswith("Ahead so far: neither, level (under 0.01% apart) over ")
+    assert text[1].startswith("Not settled: 9 times in 10, luck alone gives a gap between")
+
+
+def test_the_standard_error_matches_a_hand_worked_case() -> None:
+    """Day totals 1, 3, 2, 6 over 4 pairs: deviations -2, 0, -1, 3 give a
+    spread of 14 and a one-day carry-over of -3 at weight 1/2, so 11; times
+    4/3 for a short sample, square root, over 4 pairs. Two days of carry-over
+    add the two-day term, 2, at weight 1/3 and the one-day term at 2/3."""
+    totals = [1.0, 3.0, 2.0, 6.0]
+    assert _standard_error(totals, 4, 1) == pytest.approx((11 * 4 / 3) ** 0.5 / 4)
+    assert _standard_error(totals, 4, 0) == pytest.approx((14 * 4 / 3) ** 0.5 / 4)
+    assert _standard_error(totals, 4, 2) == pytest.approx(
+        ((14 + 2 * (2 / 3) * -3 + 2 * (1 / 3) * 2) * 4 / 3) ** 0.5 / 4
+    )
+    assert _standard_error([1.0], 4, 1) is None
 
 
 def test_calls_that_all_agree_claim_no_range_and_never_settle() -> None:
     rows = [r | {"opus": "Buy"} for r in _skilled(13, 0.03)]
     p = paired(rows, CFG)
-    assert (p["leader"], p["luck"], p["settled"], p["verdict"]) == (None, None, None, "not settled")
+    assert (p["leader"], p["luck"], p["settled"], p["differ"]) == (None, None, None, 0)
     assert _lead_lines(p, 13)[:2] == [
         f"Ahead so far: neither, level over {p['pairs']} pair(s) in 13 week(s).",
         "Not settled: the two have not disagreed on a finished call yet.",
@@ -456,11 +501,20 @@ def _null_trial(seed: int, weeks: int = 13, stocks: int = 20) -> list[dict[str, 
     return rows
 
 
-def test_sticky_calls_with_no_skill_rarely_get_a_verdict() -> None:
+def test_sticky_calls_with_no_skill_rarely_settle() -> None:
     """Resampling single weeks named a winner in about 40% of such trials;
     the settled bar is meant to do so about 10% of the time or less."""
-    wins = sum(paired(_null_trial(seed), CFG)["verdict"].endswith("ahead") for seed in range(40))
+    wins = sum(bool(paired(_null_trial(seed), CFG)["settled"]) for seed in range(40))
     assert wins <= 3
+
+
+def test_the_luck_range_has_the_right_size_when_neither_method_has_skill() -> None:
+    """Over many no-skill trials the gap divided by its standard error should
+    spread like a standard normal: about 1. A formula that over- or under-states
+    luck by 15% or more fails here."""
+    ratios = [p["mean"] / p["se"] for p in (paired(_null_trial(s), CFG) for s in range(100))]
+    spread = (sum(r * r for r in ratios) / len(ratios)) ** 0.5
+    assert 0.85 <= spread <= 1.15
 
 
 def test_only_calls_both_made_are_paired() -> None:
@@ -514,7 +568,7 @@ def test_the_scorecard_scores_both_methods_and_the_baselines(tmp_path: Path) -> 
     assert card["paired"]["mean"] == pytest.approx(0.16)
 
 
-def test_the_words_put_the_verdict_first_and_name_the_open_calls(tmp_path: Path) -> None:
+def test_the_words_put_the_leader_first_and_name_the_open_calls(tmp_path: Path) -> None:
     card = _card(tmp_path, _record(), today=EXIT - timedelta(days=1))
     text = lines(card)
     assert text[0] == "Ahead so far: no recommendation both made has finished yet."
@@ -528,7 +582,7 @@ def test_the_words_put_the_verdict_first_and_name_the_open_calls(tmp_path: Path)
 
 def test_unscored_calls_are_one_line_per_stock(tmp_path: Path) -> None:
     card = {
-        "paired": {"verdict": "too early to tell (0 of 13 weeks scored)", "pairs": 0},
+        "paired": {"pairs": 0},
         "open": 0, "scored": 0,
         "unscored": [
             {"day": d, "ticker": "XYZ", "reason": "no price downloaded"}

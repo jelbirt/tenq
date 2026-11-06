@@ -22,7 +22,7 @@ weights:
   Short: -1.0
 
 # 3. The Sell weights the scorecard also shows each method's score under, so
-#    the choice of 0.5 can be watched. Shown only, never used for the verdict.
+#    the choice of 0.5 can be watched. Shown only, never used for who leads or settles.
 sell_weights_shown: [0.25, 0.5, 1.0]
 
 # 4. Jev against Opus, on the stocks and days both made a call. Every week

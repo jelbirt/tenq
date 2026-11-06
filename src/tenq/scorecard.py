@@ -596,7 +596,8 @@ def _standard_error(by_day: Sequence[float], pairs: int, carry: int) -> float | 
 def paired(rows: Sequence[dict[str, Any]], cfg: ScoreConfig) -> dict[str, Any]:
     """Jev less Opus on the calls both made: the gap so far, who leads, the
     gap luck alone could give (a 90% range around zero) and, once enough weeks
-    are scored, whether the lead is settled."""
+    are scored, whether the lead is settled. A gap that rounds to 0.00% on the
+    card has no leader."""
     pairs = [
         (cfg.weights[r["jev"]] - cfg.weights[r["opus"]], r)
         for r in rows
@@ -606,26 +607,22 @@ def paired(rows: Sequence[dict[str, Any]], cfg: ScoreConfig) -> dict[str, Any]:
     mean = _mean([dw * r["excess"] for dw, r in pairs])
     by_day = _by_day(pairs)
     se = _standard_error(by_day, len(pairs), cfg.carry_days)
+    level = round(abs(mean or 0.0) * 100, 2) == 0
     out: dict[str, Any] = {
         "pairs": len(pairs),
+        "differ": sum(1 for dw, _ in pairs if dw),
         "weeks": weeks,
         "days": len(by_day),
         "mean": mean,
         "se": se,
         "luck": None if not se else t95(len(by_day) - 1) * se,
         "bar": None if not se else cfg.settled_bar * se,
-        "leader": None if not mean else ("Jev" if mean > 0 else "Opus"),
+        "leader": None if level else ("Jev" if (mean or 0.0) > 0 else "Opus"),
         "settled": None,
     }
     enough = weeks >= cfg.weeks_first_verdict
-    if mean and se and enough and abs(mean) >= cfg.settled_bar * se:
+    if out["leader"] and se and enough and abs(mean or 0.0) >= cfg.settled_bar * se:
         out["settled"] = out["leader"]
-    if weeks < cfg.weeks_first_verdict:
-        out["verdict"] = f"too early to tell ({weeks} of {cfg.weeks_first_verdict} weeks scored)"
-    elif out["settled"]:
-        out["verdict"] = f"{out['settled']} ahead"
-    else:
-        out["verdict"] = "not settled"
     return out
 
 
@@ -734,8 +731,13 @@ def _lead_lines(p: dict[str, Any], first: int) -> list[str]:
     """Who is ahead so far (always shown, luck or not), then how settled it is."""
     if not p["pairs"]:
         return ["Ahead so far: no recommendation both made has finished yet."]
-    gap = abs(p["mean"] or 0.0) * 100
-    lead = f"{p['leader']}, by {gap:.2f}% a recommendation" if p["leader"] else "neither, level"
+    gap = abs(p["mean"] or 0.0)
+    if p["leader"]:
+        lead = f"{p['leader']}, by {gap * 100:.2f}% a recommendation"
+    elif p.get("differ"):
+        lead = "neither, level (under 0.01% apart)"
+    else:
+        lead = "neither, level"
     out = [f"Ahead so far: {lead} over {p['pairs']} pair(s) in {p['weeks']} week(s)."]
     if p["settled"]:
         out.append(
@@ -744,27 +746,33 @@ def _lead_lines(p: dict[str, Any], first: int) -> list[str]:
         )
         return out
     early = f" (too early: {p['weeks']} of {first} weeks scored)" if p["weeks"] < first else ""
-    if not p["leader"]:
+    if not p.get("differ"):
         out.append("Not settled: the two have not disagreed on a finished call yet.")
     elif p["luck"] is None:
         out.append(f"Not settled{early}: too few days scored to size luck yet.")
     else:
         luck = p["luck"] * 100
         out.append(
-            f"Not settled{early}: luck alone could give a gap from -{luck:.2f}% to "
-            f"+{luck:.2f}% at this point."
+            f"Not settled{early}: 9 times in 10, luck alone gives a gap between "
+            f"-{luck:.2f}% and +{luck:.2f}% at this point."
         )
         bar = p.get("bar")
-        if bar and abs(p["mean"]) > p["luck"]:
+        if p["leader"] and bar and early and gap >= bar:
+            out.append(
+                f"The gap already clears the settle bar of {bar * 100:.2f}%; a lead can "
+                f"settle only once {first} weeks are scored."
+            )
+        elif p["leader"] and bar and gap > p["luck"]:
+            wait = f", and only once {first} weeks are scored" if early else ""
             out.append(
                 f"The gap is outside that range, but since the card is read every week "
-                f"a lead settles only at {bar * 100:.2f}% (and after {first} weeks)."
+                f"a lead settles only at {bar * 100:.2f}%{wait}."
             )
     return out
 
 
 def lines(card: dict[str, Any]) -> list[str]:
-    """The scorecard in plain words; the verdict comes first."""
+    """The scorecard in plain words; who leads comes first."""
     p = card["paired"]
     out = _lead_lines(p, card.get("weeks_first_verdict") or 13)
     if card["open"]:
