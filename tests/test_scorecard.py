@@ -14,8 +14,10 @@ from tenq.daily import main as daily_main
 from tenq.daily_email import render
 from tenq.prices import BENCHMARK, Bar, Prices
 from tenq.scorecard import (
+    _lead_lines,
     calls_from,
     daily_records,
+    day_totals,
     last_session_of_week,
     lines,
     load_config,
@@ -294,18 +296,30 @@ def test_the_verdict_waits_for_enough_weeks_whatever_the_numbers() -> None:
     assert p["mean"] == pytest.approx(0.05)
 
 
-def _skilled(weeks: int, gap: float) -> list[dict[str, Any]]:
-    """Twenty stocks a week where Jev's Buy beats Opus's Hold by about `gap`
-    a call, with noise, so the luck range has something to measure."""
-    rng = random.Random(7)
-    start = date(2026, 11, 2)
+def _held(day: date) -> list[str]:
+    """The 20 sessions a call made on `day` is held, from the next one on."""
+    return [d.isoformat() for d in _sessions(20, next_session(day))]
+
+
+def _skilled(weeks: int, gap: float, seed: int = 7) -> list[dict[str, Any]]:
+    """Twenty stocks, one call each a week, where Jev's Buy beats Opus's Hold
+    by about `gap` a call, stored with daily moves as the ledger stores them;
+    the stocks share a market move each day, half up and half down."""
+    rng = random.Random(seed)
+    days = _sessions(weeks * 5 + 21, date(2026, 1, 5))
+    market = {d: rng.gauss(0, 0.01) for d in days}
     rows = []
     for w in range(weeks):
+        made = days[w * 5]
+        held = _held(made)
         for t in range(20):
-            excess = gap + rng.gauss(0, 0.05)
-            d = (start + timedelta(weeks=w)).isoformat()
-            rows.append({"day": d, "ticker": f"T{t}", "jev": "Buy", "opus": "Hold",
-                         "excess": excess})  # fmt: skip
+            lean = 1 if t % 2 else -1
+            moves = [gap / 20 + lean * market[date.fromisoformat(d)] + rng.gauss(0, 0.01)
+                     for d in held]  # fmt: skip
+            rows.append({"day": made.isoformat(), "ticker": f"T{t}", "jev": "Buy",
+                         "opus": "Hold", "excess": sum(moves), "moves": moves,
+                         "move_days": held, "entry_day": held[0],
+                         "exit_day": held[-1]})  # fmt: skip
     return rows
 
 
@@ -317,31 +331,92 @@ def test_the_leader_shows_from_the_first_pair_and_settles_only_when_clear() -> N
     assert clear["settled"] == "Jev" and clear["verdict"] == "Jev ahead"
     flipped = [r | {"jev": "Hold", "opus": "Buy"} for r in _skilled(13, 0.03)]
     assert paired(flipped, CFG)["verdict"] == "Opus ahead"
-    faint = paired(_skilled(13, 0.002), CFG)
+    faint = paired(_skilled(13, 0.0005), CFG)
     assert faint["leader"] == "Jev" and faint["settled"] is None
     assert faint["verdict"] == "not settled" and faint["luck"] > abs(faint["mean"])
 
 
-def test_the_settled_bar_is_stricter_than_the_luck_range() -> None:
-    """A lead just past the one-look range is still not settled: the card is
-    read every week, so the bar has to allow for many looks."""
-    p = paired(_skilled(13, 0.03), CFG)
-    assert p["luck"] < CFG.settled_bar * p["se"]
+def test_a_lead_past_the_luck_range_but_short_of_the_bar_is_not_settled() -> None:
+    """The card is read every week, so a lead outside the one-look range is
+    still not settled until it clears the stricter bar, and the card says so."""
+    between = None
+    for step in range(1, 400):
+        p = paired(_skilled(13, step / 10000), CFG)
+        if p["luck"] < abs(p["mean"]) < p["bar"]:
+            between = step / 10000
+            break
+    assert between is not None
+    p = paired(_skilled(13, between), CFG)
+    assert p["settled"] is None and p["verdict"] == "not settled"
+    assert paired(_skilled(13, between), replace(CFG, settled_bar=1.0))["settled"] == "Jev"
+    text = _lead_lines(p, 13)
+    assert text[1].startswith("Not settled: luck alone could give a gap from -")
+    assert text[2].startswith("The gap is outside that range, but since the card is read")
 
 
-def test_daily_moves_spread_a_call_over_the_days_it_was_held() -> None:
-    """Two calls entered on the same day but scored by moves land on 20 days,
-    not one; a row without moves falls back to its exit day."""
-    moves = [0.001] * 20
+def test_calls_that_all_agree_claim_no_range_and_never_settle() -> None:
+    rows = [r | {"opus": "Buy"} for r in _skilled(13, 0.03)]
+    p = paired(rows, CFG)
+    assert (p["leader"], p["luck"], p["settled"], p["verdict"]) == (None, None, None, "not settled")
+    assert _lead_lines(p, 13)[:2] == [
+        f"Ahead so far: neither, level over {p['pairs']} pair(s) in 13 week(s).",
+        "Not settled: the two have not disagreed on a finished call yet.",
+    ]
+
+
+def test_daily_moves_land_on_the_sessions_they_were_measured_on() -> None:
+    """Two calls made on the same day land on their 20 sessions, skipping
+    Thanksgiving and ending on the exit day; a row whose moves do not match
+    its days or its excess falls back to its exit day."""
+    held = _held(date(2026, 11, 5))
     rows = [
         {"day": "2026-11-05", "ticker": t, "jev": "Buy", "opus": "Hold", "excess": 0.02,
-         "moves": moves, "entry_day": "2026-11-06", "exit_day": "2026-12-04"}
+         "moves": [0.001] * 20, "move_days": held, "entry_day": held[0],
+         "exit_day": held[-1]}
         for t in ("A", "B")
     ]  # fmt: skip
+    totals = day_totals([(1.0, r) for r in rows])
+    assert [d.isoformat() for d in totals] == held
+    assert held[-1] == "2026-12-04" and "2026-11-26" not in held
     p = paired(rows, CFG)
     assert (p["pairs"], p["days"]) == (2, 20) and p["mean"] == pytest.approx(0.02)
-    bad = [r | {"moves": [0.5] * 20} for r in rows]  # do not add up to the excess
-    assert paired(bad, CFG)["days"] == 1
+    for bad in ({"moves": [0.5] * 20}, {"move_days": held[:19]}, {"move_days": None}):
+        assert list(day_totals([(1.0, r | bad) for r in rows])) == [date(2026, 12, 4)]
+
+
+def _climbing(days: list[date], start: float, step: float) -> list[Bar]:
+    return [Bar(d, start + step * (i + 1), None, start) for i, d in enumerate(days)]
+
+
+def test_moves_add_up_to_the_excess_through_a_missing_stock_bar() -> None:
+    """A day the stock has no bar moves only by QQQ; the next bar carries the
+    stock's change, and the moves still add up to the excess exactly."""
+    [made] = calls_from(_record())
+    days = _sessions(20)
+    stock = _climbing(days, 100.0, 1.0)
+    del stock[5]
+    bench = _climbing(days, 200.0, 0.5)
+    out = outcome(made, {"CRWD": tuple(stock), BENCHMARK: tuple(bench)}, CFG)
+    assert out.status == "scored" and out.moves is not None
+    assert out.moves[5] == pytest.approx(-0.5 / 200)
+    assert out.moves[6] == pytest.approx(2.0 / 100 - 0.5 / 200)
+    assert sum(out.moves) == pytest.approx(out.excess, abs=1e-12)
+    assert out.move_days == tuple(days)
+
+
+def test_moves_follow_qqqs_bars_when_one_is_missing() -> None:
+    """If QQQ's download skips a session the call is held one session longer,
+    and each move stays on the bar it was measured on."""
+    [made] = calls_from(_record())
+    days = _sessions(21)
+    bench = _climbing(days, 200.0, 0.5)
+    del bench[5]
+    stock = _climbing(days, 100.0, 1.0)
+    out = outcome(made, {"CRWD": tuple(stock), BENCHMARK: tuple(bench)}, CFG)
+    assert out.status == "scored" and out.move_days is not None
+    assert out.move_days == tuple(b.day for b in bench[:20])
+    assert out.move_days[-1] == out.exit_day == days[20]
+    assert sum(out.moves or ()) == pytest.approx(out.excess, abs=1e-12)
 
 
 def test_t95_matches_the_table_and_meets_the_normal() -> None:
@@ -355,14 +430,17 @@ def test_t95_matches_the_table_and_meets_the_normal() -> None:
 
 def _null_trial(seed: int, weeks: int = 13, stocks: int = 20) -> list[dict[str, Any]]:
     """Two methods with no skill whose calls stick for weeks, as real calls do,
-    on stocks whose 20-session excess returns overlap from day to day, stored
-    with their daily moves as the ledger stores them."""
+    on stocks whose 20-session excess returns overlap from day to day and that
+    share a market move each day, stored with their daily moves as the ledger
+    stores them."""
     rng = random.Random(seed)
     days = _sessions(weeks * 5 + 20, date(2026, 1, 5))
     names = list(CFG.weights)
     rows = []
+    market = [rng.gauss(0, 0.015) for _ in days]
     for s in range(stocks):
-        daily = [rng.gauss(0, 0.02) for _ in days]
+        lean = 1 if s % 2 else -1
+        daily = [rng.gauss(0, 0.02) + lean * m for m in market]
         jev, opus = rng.choice(names), rng.choice(names)
         for i in range(weeks * 5):
             if rng.random() < 0.05:
@@ -372,6 +450,7 @@ def _null_trial(seed: int, weeks: int = 13, stocks: int = 20) -> list[dict[str, 
             moves = daily[i + 1 : i + 21]
             rows.append({"day": days[i].isoformat(), "ticker": f"T{s}", "jev": jev,
                          "opus": opus, "excess": sum(moves), "moves": moves,
+                         "move_days": [d.isoformat() for d in days[i + 1 : i + 21]],
                          "entry_day": days[i + 1].isoformat(),
                          "exit_day": days[i + 20].isoformat()})  # fmt: skip
     return rows
@@ -381,7 +460,7 @@ def test_sticky_calls_with_no_skill_rarely_get_a_verdict() -> None:
     """Resampling single weeks named a winner in about 40% of such trials;
     the settled bar is meant to do so about 10% of the time or less."""
     wins = sum(paired(_null_trial(seed), CFG)["verdict"].endswith("ahead") for seed in range(40))
-    assert wins <= 4
+    assert wins <= 3
 
 
 def test_only_calls_both_made_are_paired() -> None:
