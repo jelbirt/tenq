@@ -3,7 +3,7 @@
 # scorecard can tell rule sets apart (a test pins this file's hash for each
 # version). src/tenq/rules.py applies it, and checks every label below against
 # prompts/jev.yaml.
-version: rules-v5
+version: rules-v7
 
 # 1. News: Jev's direction answer as an expected value from -1 (bad for the
 #    business) to +1 (good), times the probability the recent news is
@@ -21,17 +21,22 @@ evidence:
   opinion: 0.4
   none: 0.0
 
-# 2. Guidance: an expected value from -1 to +1.
+# 2. Guidance: an expected value from -1 to +1. Kept guidance is the outlook
+#    investors already had, so it counts for nothing either way.
 guidance:
   raised: 1.0
   lowered: -1.0
-  kept: 0.2
+  kept: 0.0
   issued: 0.0
   mixed: 0.0
   none: 0.0
 
-# 3. Fundamentals: the 0 to 4 trend level read as -1 to +1. Left out (weight
-#    and all) when the pack has no 10-Q/10-K numbers.
+# 3. Fundamentals, read in code, not asked of Jev: +1 when revenue growth
+#    from a year ago sped up by 2 points or more against the prior quarter's,
+#    -1 when it slowed by that much, 0 when steady. When revenue's is steady
+#    or missing, total deferred revenue's decides the same way. The 2 points
+#    is metrics.STEADY_GROWTH, the reading the sheet itself shows. Left out
+#    (weight and all) when the pack has neither line.
 # 4. Risk: the probability of a recent risk event, counted against the stock,
 #    less the bad news the news part already scored (direction times
 #    materiality times evidence times the news part's certainty), so one

@@ -2,7 +2,9 @@
 
 config/rules.yaml holds every setting and reads top to bottom: a news part
 (direction times materiality times evidence strength), guidance, the filing
-trend and recent risk, each from -1 to +1 and weighted. A choice's doubt is
+trend and recent risk, each from -1 to +1 and weighted. Jev answers only about
+text; the filing trend is read here, in code, from the sheet's own growth
+readings (`metrics.growth_reading`), so no model compares figures. A choice's doubt is
 counted once, in its expected value under Jev's averaged probabilities; a
 yes/no or a score is also scaled by 1 less its spread across rounds; and every
 part is scaled by the share of its planned rounds that came back, so an unsure
@@ -20,7 +22,7 @@ the included parts could reach that way; for Hold, how close the score sits to
 the weighted certainty that came in, each part also scaled by how decisive its
 answers were (how far from a coin flip, and for a choice how many rounds picked
 its winner). A Jev that knew nothing, flat answers every round, is a Hold with
-no confidence, not full confidence.
+no confidence beyond what code's own reading of the filing trend supplies.
 
 A Jev result with no answers is no call (Opus's call goes out alone); a
 missing answer, one of the wrong type, or an unreadable one (a NaN, a wrong
@@ -45,6 +47,7 @@ import yaml
 
 from tenq.config import REPO_ROOT
 from tenq.jev import Answer, QuestionSet, Result
+from tenq.metrics import growth_reading
 from tenq.pack import Pack
 from tenq.prices import SESSIONS_PER_YEAR, WINDOWS
 
@@ -62,7 +65,6 @@ QUESTION_TYPES = {
     "direction": "choice",
     "source": "choice",
     "guidance": "choice",
-    "fundamentals": "score",
     "risk": "noul",
 }
 
@@ -402,24 +404,7 @@ def _parts(pack: Pack, result: Result, rules: Rules, questions: QuestionSet) -> 
             )
         )
 
-    if not any(n.id.startswith("fin:") for n in pack.numbers):
-        out.append(Part("fundamentals", 0.0, 0.0, 0.0, "no 10-Q/10-K numbers"))
-    elif "fundamentals" not in a:
-        out.append(_missing("fundamentals", w["fundamentals"], ["fundamentals"]))
-    else:
-        f = a["fundamentals"]
-        top = len(by_key["fundamentals"].labels()) - 1
-        level = min(float(top), max(0.0, float(f.value)))
-        out.append(
-            Part(
-                "fundamentals",
-                2.0 * level / top - 1.0,
-                w["fundamentals"],
-                sure(f),
-                f"trend level {level:.1f} of {top}",
-                firm(f),
-            )
-        )
+    out.append(trend(pack, w["fundamentals"]))
 
     if "risk" not in a:
         out.append(_missing("risk", w["risk"], ["risk"]))
@@ -439,6 +424,34 @@ def _parts(pack: Pack, result: Result, rules: Rules, questions: QuestionSet) -> 
             )
         )
     return out
+
+
+TREND_LINES = (("revenue", "revenue"), ("deferred_revenue", "total deferred revenue"))
+TREND_VALUE = {"faster": 1.0, "steady": 0.0, "slower": -1.0}
+
+
+def trend(pack: Pack, weight: float) -> Part:
+    """The filing part, read in code: revenue growth's reading, or total
+    deferred revenue's when revenue's is steady or missing.
+
+    Improving (+1) when growth from a year ago sped up past `STEADY_GROWTH`,
+    worsening (-1) when it slowed past it, otherwise steady (0). Left out,
+    weight and all, when the pack has neither line. Code's reading is a fact
+    of the filing, so it is certain and decisive.
+    """
+    said: list[str] = []
+    word = None
+    for metric, name in TREND_LINES:
+        n = pack.number(f"fin:{pack.ticker}:{metric}:growth_change")
+        if n is None or not _finite(n.value):
+            continue
+        word = growth_reading(n.value)
+        said.append(f"{name} growth {word}")
+        if word != "steady":
+            break
+    if word is None:
+        return Part("fundamentals", 0.0, 0.0, 0.0, "no growth lines to compare")
+    return Part("fundamentals", TREND_VALUE[word], weight, 1.0, "; ".join(said) + " (code)")
 
 
 def reaction(pack: Pack, raw: float, rules: Rules) -> tuple[float, str | None]:

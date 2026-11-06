@@ -7,8 +7,9 @@ import pytest
 from tenq.brief import Claim, load_prompt
 from tenq.checker import Checked, check, check_claim, metrics_view, visible_docs
 from tenq.filings import FilingStore
-from tenq.metrics import MetricsTable, metrics_for
+from tenq.metrics import MetricsTable, growth_reading, metrics_for
 from tenq.opus import load_call_prompt, load_why_prompt
+from tenq.pack import _shown
 from tenq.reasons import MAX_REASON_CHARS, fill, phrase, placeholders, table_facts
 
 LATEST = "CRWD-0001535527-26-000031"
@@ -110,6 +111,10 @@ def test_a_flow_is_in_the_quarter_not_at_its_end(table: MetricsTable, metric: st
             "fin:CRWD:cash:prior_quarter",
             "CRWD's cash and cash equivalents were $4.553 billion"
             " at the end of the quarter ended 2026-04-30",
+        ),
+        (
+            "fin:CRWD:revenue:prior_yoy_pct",
+            "CRWD's revenue for the quarter ended 2026-04-30 rose 25.57% from a year earlier",
         ),
     ],
 )
@@ -279,3 +284,77 @@ def test_the_brief_prompts_example_is_what_code_writes(table: MetricsTable) -> N
     assert words is not None
     text = " ".join(load_prompt().text.split())
     assert f'"{words.replace("CRWD", "ACME")}, driven by' in text
+
+
+def test_growth_change_reads_as_steady_faster_slower_or_the_same(store: FilingStore) -> None:
+    facts = table_facts(metrics_for(store, "CRWD"))
+    assert phrase("fin:CRWD:revenue:growth_change", facts) == (
+        "CRWD's revenue growth from a year earlier was steady for the quarter ended "
+        "2026-07-31 against the quarter ended 2026-04-30 (0.26 points faster, under 2 points "
+        "either way)"
+    )
+    assert phrase("fin:CRWD:gross_profit:growth_change", facts) == (
+        "CRWD's gross profit growth from a year earlier was steady for the quarter ended "
+        "2026-07-31 against the quarter ended 2026-04-30 (0.44 points slower, under 2 points "
+        "either way)"
+    )
+    assert phrase("fin:CRWD:deferred_revenue:growth_change", facts) == (
+        "CRWD's total deferred revenue growth from a year earlier was steady at the end of the "
+        "quarter ended 2026-07-31 against the end of the quarter ended 2026-04-30 (1.06 points "
+        "faster, under 2 points either way)"
+    )
+    # past the line, code writes the size and the direction, the sheet's own reading
+    capex = facts.numbers["fin:CRWD:capex:growth_change"]
+    assert capex.value is not None and capex.value > 0.02
+    assert phrase(capex.id, facts) == (
+        "CRWD's capital expenditures growth from a year earlier was 294.10 points faster for "
+        "the quarter ended 2026-07-31 than for the quarter ended 2026-04-30"
+    )
+    fcf = facts.numbers["fin:CRWD:free_cash_flow:growth_change"]
+    assert fcf.value is not None and fcf.value < -0.02
+    assert "points slower for the quarter ended 2026-07-31 than for" in str(phrase(fcf.id, facts))
+    same = replace(facts.numbers["fin:CRWD:revenue:growth_change"], value=0.00001)
+    flat = replace(facts, numbers={**facts.numbers, same.id: same})
+    assert phrase(same.id, flat) == (
+        "CRWD's revenue growth from a year earlier was the same for the quarter ended "
+        "2026-07-31 as for the quarter ended 2026-04-30"
+    )
+    undated = replace(facts, prior_period=None)
+    assert phrase("fin:CRWD:revenue:growth_change", undated) == (
+        "CRWD's revenue growth from a year earlier was steady for the quarter ended "
+        "2026-07-31 against the prior quarter (0.26 points faster, under 2 points either way)"
+    )
+    cash = replace(facts.numbers["fin:CRWD:cash:growth_change"], value=0.0)
+    still = replace(facts, numbers={**facts.numbers, cash.id: cash})
+    assert phrase(cash.id, still) == (
+        "CRWD's cash and cash equivalents growth from a year earlier was the same at the end "
+        "of the quarter ended 2026-07-31 as at the end of the quarter ended 2026-04-30"
+    )
+
+
+@pytest.mark.parametrize(
+    ("value", "steady", "pace"),
+    [
+        (0.0199, True, "1.99 points faster"),
+        (0.02, False, "2.00 points faster"),
+        (-0.0199, True, "1.99 points slower"),
+        (-0.02, False, "2.00 points slower"),
+    ],
+)
+def test_the_growth_wording_turns_at_exactly_two_points(
+    store: FilingStore, value: float, steady: bool, pace: str
+) -> None:
+    facts = table_facts(metrics_for(store, "CRWD"))
+    edge = replace(facts.numbers["fin:CRWD:revenue:growth_change"], value=value)
+    at = replace(facts, numbers={**facts.numbers, edge.id: edge})
+    said = str(phrase(edge.id, at))
+    assert pace in said and ("was steady" in said) is steady
+    # the sheet's bracket and the rules read the same value the same way
+    word = "steady" if steady else pace.rsplit(" ", 1)[1]
+    assert f"({word}" in _shown(edge) and growth_reading(value) == word
+    balance = replace(facts.numbers["fin:CRWD:cash:growth_change"], value=0.01)
+    undated = replace(facts, prior_period=None, numbers={**facts.numbers, balance.id: balance})
+    assert str(phrase(balance.id, undated)).startswith(
+        "CRWD's cash and cash equivalents growth from a year earlier was steady at the end of "
+        "the quarter ended 2026-07-31 against the end of the prior quarter (1.00 points faster"
+    )

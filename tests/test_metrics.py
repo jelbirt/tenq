@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 
 from tenq.filings import Fact, FilingMeta, FilingStore
-from tenq.metrics import build_table, metrics_for
+from tenq.metrics import MetricRow, Value, build_table, growth_reading, metrics_for
 
 REV = "us-gaap:RevenueFromContractWithCustomerExcludingAssessedTax"
 OCF = "us-gaap:NetCashProvidedByUsedInOperatingActivities"
@@ -29,6 +29,31 @@ def test_latest_10q_tagged_and_derived_values(store: FilingStore) -> None:
     assert t.number("free_cash_flow", "current") == pytest.approx(
         t.number("operating_cash_flow", "current") - t.number("capex", "current")  # type: ignore[operator]
     )
+
+
+def test_the_prior_quarters_growth_is_measured_from_a_year_before_it(
+    store: FilingStore,
+) -> None:
+    t = metrics_for(store, "CRWD")
+    assert t.prior_year_ago_period == "2025-04-30"
+    assert t.number("revenue", "prior_yoy_pct") == pytest.approx(1_385_629_000 / 1_103_434_000 - 1)
+    assert t.to_dict()["prior_year_ago_period"] == "2025-04-30"
+    assert t.number("gross_margin", "prior_yoy_pct") is None  # a margin moves in points
+
+
+def test_prior_growth_needs_both_of_its_quarters() -> None:
+    facts = [
+        _flow(REV, "2026-04-01", "2026-06-30", 12.0),
+        _flow(REV, "2026-01-01", "2026-03-31", 11.0),
+        _flow(REV, "2025-01-01", "2025-03-31", 10.0),
+    ]
+    t = build_table([(_meta("a-26-2", "2026-06-30"), facts)])
+    assert (t.prior_period, t.prior_year_ago_period) == ("2026-03-31", "2025-03-31")
+    assert t.number("revenue", "prior_yoy_pct") == pytest.approx(0.1)
+    assert t.number("revenue", "yoy_pct") is None  # no year-ago quarter for the latest one
+    alone = build_table([(_meta("a-26-2", "2026-06-30"), facts[:2])])
+    assert alone.prior_year_ago_period is None
+    assert alone.number("revenue", "prior_yoy_pct") is None
 
 
 def test_10k_quarter_is_full_year_less_nine_months(store: FilingStore) -> None:
@@ -178,3 +203,78 @@ def test_to_dict_is_json_ready(store: FilingStore) -> None:
 
     d = metrics_for(store, "CRWD").to_dict()
     assert json.loads(json.dumps(d))["metrics"]["revenue"]["current"] == 1_470_897_000
+
+
+def test_the_sixth_filing_cannot_change_the_older_columns() -> None:
+    """The sixth filing holds an old quarter as first reported. Pooled with the
+    rest, its value disagrees with a later recast, marks that quarter restated,
+    and blanks the year-ago flow derived from it. It is read only for the
+    quarter a year before the prior quarter."""
+    ocf = "us-gaap:NetCashProvidedByUsedInOperatingActivities"
+    filings = [
+        (
+            _meta("a6", "2026-06-30"),
+            [_flow(ocf, "2026-01-01", "2026-06-30", 300.0),
+             _flow(ocf, "2025-01-01", "2025-06-30", 250.0)],
+        ),
+        (
+            _meta("a5", "2026-03-31"),
+            [_flow(ocf, "2026-01-01", "2026-03-31", 140.0),
+             _flow(ocf, "2025-01-01", "2025-03-31", 100.0)],
+        ),
+        (_meta("a4", "2025-12-31", "10-K"), []),
+        (_meta("a3", "2025-09-30"), []),
+        (_meta("a2", "2025-06-30"), [_flow(ocf, "2025-01-01", "2025-06-30", 250.0)]),
+        (_meta("a1", "2025-03-31"), [_flow(ocf, "2025-01-01", "2025-03-31", 90.0)]),
+    ]  # fmt: skip
+    five = build_table(filings[:5]).rows["operating_cash_flow"]
+    six = build_table(filings).rows["operating_cash_flow"]
+    for field in ("current", "prior_quarter", "year_ago", "yoy_pct", "qoq_pct"):
+        assert six.number(field) == five.number(field), field
+    assert six.number("year_ago") == 150.0
+
+
+def test_growth_change_is_this_quarters_growth_less_the_prior_quarters(
+    store: FilingStore,
+) -> None:
+    row = metrics_for(store, "CRWD").rows["revenue"]
+    now, before = row.yoy_pct, row.prior_yoy_pct
+    assert now is not None and before is not None
+    # from the rates as the sheet shows them, so the shown figures subtract to it
+    change = row.growth_change
+    assert change is not None and change == pytest.approx(round(now, 4) - round(before, 4))
+    assert round(change * 100, 2) == pytest.approx(round(now * 100, 2) - round(before * 100, 2))
+    assert metrics_for(store, "CRWD").rows["gross_margin"].growth_change is None
+
+
+def test_growth_change_needs_both_growth_rates() -> None:
+    newest = (_meta("a2", "2026-06-30"), [_flow(REV, "2026-04-01", "2026-06-30", 120.0)])
+    older = (_meta("a1", "2025-06-30"), [_flow(REV, "2025-04-01", "2025-06-30", 100.0)])
+    row = build_table([newest, older]).rows["revenue"]
+    assert row.yoy_pct == pytest.approx(0.2)
+    assert row.prior_yoy_pct is None and row.growth_change is None
+
+
+def _rates(now: float, prior: float) -> MetricRow:
+    def v(x: float) -> Value:
+        return Value(x, (), "tagged")
+
+    return MetricRow("revenue", "Revenue", "usd", v(now), v(prior), v(100.0), v(100.0))
+
+
+@pytest.mark.parametrize(
+    ("now", "prior", "reading"),
+    [
+        (130.0, 128.0, "faster"),  # 30% against 28%: exactly 2 points, from subtraction
+        (110.375, 108.375, "faster"),  # prints 10.38% and 8.38%: 2.00 points as shown
+        (128.0, 130.0, "slower"),
+        (129.99, 128.0, "steady"),  # 1.99 points
+        (128.0, 129.99, "steady"),
+        (101.0, 101.0, "steady"),
+    ],
+)
+def test_the_growth_reading_matches_the_shown_figure(
+    now: float, prior: float, reading: str
+) -> None:
+    change = _rates(now, prior).growth_change
+    assert change is not None and growth_reading(change) == reading

@@ -32,7 +32,22 @@ from tenq.filings import Fact, FilingMeta, FilingStore
 QUARTER_DAYS = range(80, 101)  # a fiscal quarter, allowing 13/14-week quarters
 YEAR_DAYS = range(357, 379)  # a fiscal year, allowing 52/53-week years
 PERIOD_TOLERANCE = 4  # report date vs fact end date in a 52/53-week calendar
-POOL_DEPTH = 5  # the filing and four before it: the year-ago balance sheet is 4 back
+POOL_DEPTH = 6  # the filing and five before it: a year before the prior quarter is 5 back
+# The current, prior and year-ago columns read only the newest five, so the sixth
+# filing (needed only for prior_year_ago) cannot change them: its own copy of an
+# old quarter can differ from a later recast and mark a year-to-date total restated.
+BASE_DEPTH = 5
+
+
+def growth_reading(change: float) -> Literal["faster", "slower", "steady"]:
+    """Code's reading of a growth_change: steady under `STEADY_GROWTH` either way.
+
+    Compared at the precision the sheet shows (two decimals of a point), so the
+    bracket always matches the printed figure and float error never decides it.
+    """
+    if round(abs(change) * 100, 2) < round(STEADY_GROWTH * 100, 2):
+        return "steady"
+    return "faster" if change > 0 else "slower"
 
 
 @dataclass(frozen=True)
@@ -99,7 +114,20 @@ DERIVED: tuple[tuple[str, str, Literal["usd", "ratio"]], ...] = (
 )
 
 PERIOD_FIELDS = ("current", "prior_quarter", "year_ago")
-CHANGE_FIELDS = ("qoq_change", "qoq_pct", "yoy_change", "yoy_pct")
+# prior_yoy_pct is the prior quarter's own change from a year before it, and
+# growth_change is yoy_pct less prior_yoy_pct, in points: code does the
+# subtraction, so no reader has to.
+# The sheet shows code's reading of each one and the rules score the filing
+# from it, so the two can never disagree and no model does the subtraction.
+STEADY_GROWTH = 0.02  # a growth_change under 2 points either way reads as steady
+CHANGE_FIELDS = (
+    "qoq_change",
+    "qoq_pct",
+    "yoy_change",
+    "yoy_pct",
+    "prior_yoy_pct",
+    "growth_change",
+)
 FIELDS = PERIOD_FIELDS + CHANGE_FIELDS
 
 
@@ -130,16 +158,20 @@ class MetricRow:
     current: Value | None = None
     prior_quarter: Value | None = None
     year_ago: Value | None = None
+    prior_year_ago: Value | None = None  # the quarter a year before prior_quarter
 
     def _change(self, other: Value | None, pct: bool) -> float | None:
-        if self.current is None or other is None:
+        return self._between(self.current, other, pct)
+
+    def _between(self, now: Value | None, other: Value | None, pct: bool) -> float | None:
+        if now is None or other is None:
             return None
-        diff = self.current.amount - other.amount
+        diff = now.amount - other.amount
         if not pct:
             return diff
         if self.unit == "ratio":
             return None  # a margin's change is in points, not percent
-        if other.amount <= 0 or self.current.amount < 0:
+        if other.amount <= 0 or now.amount < 0:
             return None  # from zero, from a loss, or into a loss: no meaningful %
         return diff / other.amount
 
@@ -158,6 +190,19 @@ class MetricRow:
     @property
     def yoy_pct(self) -> float | None:
         return self._change(self.year_ago, pct=True)
+
+    @property
+    def prior_yoy_pct(self) -> float | None:
+        return self._between(self.prior_quarter, self.prior_year_ago, pct=True)
+
+    @property
+    def growth_change(self) -> float | None:
+        now, before = self.yoy_pct, self.prior_yoy_pct
+        if now is None or before is None:
+            return None
+        # from the rates exactly as the sheet prints them (two decimals of a percent),
+        # so the printed rates always subtract to the printed change
+        return round(round(now * 100, 2) - round(before * 100, 2), 2) / 100
 
     def number(self, field_name: str) -> float | None:
         if field_name in PERIOD_FIELDS:
@@ -178,6 +223,7 @@ class MetricsTable:
     period: str
     prior_period: str | None
     year_ago_period: str | None
+    prior_year_ago_period: str | None = None
     rows: dict[str, MetricRow] = field(default_factory=dict)
 
     def number(self, metric: str, field_name: str) -> float | None:
@@ -194,6 +240,7 @@ class MetricsTable:
             "period": self.period,
             "prior_period": self.prior_period,
             "year_ago_period": self.year_ago_period,
+            "prior_year_ago_period": self.prior_year_ago_period,
             "metrics": {
                 name: {"label": row.label, "unit": row.unit, **{f: row.number(f) for f in FIELDS}}
                 for name, row in self.rows.items()
@@ -299,7 +346,8 @@ def _combine(name: str, a: Value | None, b: Value | None, op: str) -> Value | No
 def build_table(filings: Sequence[tuple[FilingMeta, list[Fact]]]) -> MetricsTable:
     """Metrics for filings[0], using the rest (newest first) for comparatives."""
     meta = filings[0][0]
-    pool = _Pool(filings)
+    pool = _Pool(filings[:BASE_DEPTH])
+    deep = _Pool(filings)
     concepts = {c for m in BASE_METRICS for c in m.concepts}
     ends = pool.ends(concepts)
     # the report date can sit a few days off the facts' own end date
@@ -317,13 +365,33 @@ def build_table(filings: Sequence[tuple[FilingMeta, list[Fact]]]) -> MetricsTabl
     if prior is None:
         prior = back(_snap(_d(period) - timedelta(days=91), ends), QUARTER_DAYS)
     year_ago = back(_snap(_d(period) - timedelta(days=364), ends), YEAR_DAYS)
+    # a year before the prior quarter: the prior filing's own year-ago comparatives
+    prior_year_ago = None
+    if prior is not None:
+        found = _snap(_d(prior) - timedelta(days=364), deep.ends(concepts))
+        if found is not None and (_d(prior) - _d(found)).days in YEAR_DAYS:
+            prior_year_ago = found
     table = MetricsTable(
-        meta.ticker, meta.company, meta.form, meta.accession, period, prior, year_ago
+        meta.ticker,
+        meta.company,
+        meta.form,
+        meta.accession,
+        period,
+        prior,
+        year_ago,
+        prior_year_ago,
     )
 
     by_end: dict[str, dict[str, Value | None]] = {}
-    for end_name, end in (("current", period), ("prior_quarter", prior), ("year_ago", year_ago)):
-        vals: dict[str, Value | None] = {m.name: _base_value(pool, m, end) for m in BASE_METRICS}
+    ends_by_name = (
+        ("current", period),
+        ("prior_quarter", prior),
+        ("year_ago", year_ago),
+        ("prior_year_ago", prior_year_ago),
+    )
+    for end_name, end in ends_by_name:
+        source = deep if end_name == "prior_year_ago" else pool
+        vals: dict[str, Value | None] = {m.name: _base_value(source, m, end) for m in BASE_METRICS}
         vals["free_cash_flow"] = _combine(
             "operating cash flow - capex", vals["operating_cash_flow"], vals["capex"], "-"
         )
@@ -349,6 +417,7 @@ def build_table(filings: Sequence[tuple[FilingMeta, list[Fact]]]) -> MetricsTabl
         row.current = by_end["current"][name]
         row.prior_quarter = by_end["prior_quarter"][name]
         row.year_ago = by_end["year_ago"][name]
+        row.prior_year_ago = by_end["prior_year_ago"][name]
         table.rows[name] = row
     return table
 
