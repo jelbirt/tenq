@@ -715,3 +715,54 @@ def test_the_daily_module_reads_no_secret_into_the_record(
     _day_record(tmp_path)
     assert "sentinel-" not in record_path(tmp_path, DAY).read_text()
     assert daily.KIND == "daily"
+
+
+RUN_URL = "https://github.com/jelbirt/tenq/actions/runs/1"
+
+
+def test_the_failure_notice_links_the_run_and_touches_no_record(tmp_path: Path) -> None:
+    outbox = Outbox()
+    assert (
+        main(["--stage", "notice", "--run-url", RUN_URL, "--runs", str(tmp_path)], mailer=outbox)
+        == 0
+    )
+    (email,) = outbox.sent
+    assert email.subject == "tenq daily run failed"
+    assert RUN_URL in email.text and RUN_URL in email.html
+    assert "may not have been" in email.text
+    assert list(tmp_path.iterdir()) == []
+
+
+@pytest.mark.parametrize(
+    ("argv", "code"),
+    [
+        (["--stage", "notice"], 2),
+        (["--stage", "notice", "--run-url", "https://evil.example/x"], 2),
+    ],
+)
+def test_the_failure_notice_needs_the_runs_address(argv: list[str], code: int) -> None:
+    outbox = Outbox()
+    assert main(argv, mailer=outbox) == code
+    assert outbox.sent == []
+
+
+def test_a_failure_notice_that_cannot_be_sent_fails() -> None:
+    assert main(["--stage", "notice", "--run-url", RUN_URL], mailer=Outbox(ok=False)) == 1
+
+
+def test_the_workflow_runs_on_weekdays_and_notices_only_a_failed_scheduled_run() -> None:
+    import yaml
+
+    flow = yaml.safe_load(Path(".github/workflows/daily.yml").read_text())
+    on = flow[True]  # YAML 1.1 reads the key "on" as true
+    assert on["schedule"] == [{"cron": "30 22 * * 1-5"}]
+    assert "workflow_dispatch" in on
+    steps = {s.get("name"): s for s in flow["jobs"]["daily"]["steps"]}
+    assert steps["send the email and the traces"]["id"] == "send"
+    notice = steps["failure notice"]
+    cond = notice["if"]
+    assert "failure()" in cond and "cancelled()" in cond
+    assert "github.event_name == 'schedule'" in cond
+    assert "steps.send.outcome != 'success'" in cond
+    assert "--stage notice" in notice["run"]
+    assert "CLAUDE_CODE_OAUTH_TOKEN" not in notice["env"]

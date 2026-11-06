@@ -46,7 +46,8 @@ A GitHub Actions workflow ([brief.yml](.github/workflows/brief.yml)) runs daily:
 
 ## The daily calls
 
-A second workflow ([daily.yml](.github/workflows/daily.yml), [daily.py](src/tenq/daily.py)) makes
+A second workflow ([daily.yml](.github/workflows/daily.yml), [daily.py](src/tenq/daily.py)) runs
+on weekdays at 22:30 UTC (5:30pm New York in winter, 6:30pm in summer) and makes
 two calls (Buy, Hold, Sell or Short) on every watchlist stock after the close, from the same
 facts sheet ([pack.py](src/tenq/pack.py)): Jev answers text-only questions and fixed rules
 ([rules.py](src/tenq/rules.py), [config/rules.yaml](config/rules.yaml)) turn the answers into a
@@ -62,6 +63,9 @@ The email never goes out twice. The workflow makes the calls, then marks the rec
 as being sent and pushes that to main, and only then sends. If the push fails, nothing was
 sent and the job can simply be rerun. A rerun that finds the day already emailed does nothing;
 one that finds the email failed resends it from the record without asking the models again.
+
+If a scheduled run fails before its email was sent, a short "tenq daily run failed" email links
+to the run. A holiday sends nothing: the latest session is one already emailed.
 
 When a run stops with "nothing run or sent", the day's record needs a person:
 - **its email may have gone out** (the job stopped while sending, or the mail server's answer
