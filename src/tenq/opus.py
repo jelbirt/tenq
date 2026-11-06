@@ -46,6 +46,8 @@ class OpusCall:
     confidence: float | None = None
     reasons: list[Reason] = field(default_factory=list)
     error: str | None = None  # why there is no call
+    lean: float | None = None  # -1 to +1: how strongly it expects to beat (+) or lag (-) QQQ
+    lean_error: str | None = None  # why a lean it gave was not kept
 
 
 @dataclass
@@ -107,6 +109,29 @@ def _confidence(raw: Any) -> float | None:
     return v if math.isfinite(v) and 0.0 <= v <= 1.0 else None
 
 
+# The sign a lean must have for each call; a Hold may lean a little either way.
+LEAN_SIGN: dict[CallName, int] = {"Buy": 1, "Hold": 0, "Sell": -1, "Short": -1}
+
+
+def _lean(raw: Any, call: CallName) -> tuple[float | None, str | None]:
+    """The lean if it is a number from -1 to +1 that points the way the call
+    does; otherwise no lean, and why. The call stands either way."""
+    if raw is None:
+        return None, "no lean given"
+    if isinstance(raw, bool) or not isinstance(raw, int | float):
+        return None, "the lean is not a number"
+    try:
+        v = float(raw)
+    except OverflowError:
+        return None, "the lean is not -1 to +1"
+    if not (math.isfinite(v) and -1.0 <= v <= 1.0):
+        return None, "the lean is not -1 to +1"
+    sign = LEAN_SIGN[call]
+    if (sign > 0 and v <= 0) or (sign < 0 and v >= 0):
+        return None, f"the lean {v:+.2f} points the other way from {call}"
+    return v, None
+
+
 def parse_call(text: str | None) -> OpusCall:
     if not text:
         return OpusCall(error="no answer")
@@ -116,7 +141,14 @@ def parse_call(text: str | None) -> OpusCall:
     name = _call_name(obj.get("call"))
     if name is None:
         return OpusCall(error="the call is not Buy, Hold, Sell or Short")
-    return OpusCall(name, _confidence(obj.get("confidence")), parse_reasons(obj.get("reasons")))
+    lean, lean_error = _lean(obj.get("lean"), name)
+    return OpusCall(
+        name,
+        _confidence(obj.get("confidence")),
+        parse_reasons(obj.get("reasons")),
+        lean=lean,
+        lean_error=lean_error,
+    )
 
 
 def parse_why(text: str | None) -> Why:

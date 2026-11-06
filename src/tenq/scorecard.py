@@ -197,6 +197,7 @@ class Made:
     jev_score: float | None  # the rules' score behind Jev's call
     opus: str | None
     opus_confidence: float | None
+    opus_lean: float | None  # -1 to +1 from call-v11 on; None before
     momentum: float | None  # the stock's excess return over QQQ in the 20 sessions before
     volatility: float | None  # its annualised volatility over those sessions
     versions: dict[str, str]
@@ -208,6 +209,12 @@ def _number(pack: Any, wanted: str) -> float | None:
             v = n.get("value")
             return float(v) if isinstance(v, int | float) and math.isfinite(v) else None
     return None
+
+
+def _finite(raw: Any) -> float | None:
+    if isinstance(raw, bool) or not isinstance(raw, int | float):
+        return None
+    return float(raw) if math.isfinite(raw) else None
 
 
 def _call(raw: Any) -> str | None:
@@ -235,6 +242,7 @@ def calls_from(record: dict[str, Any]) -> list[Made]:
                 jev_score=call.get("score") if jev else None,
                 opus=own,
                 opus_confidence=opus.get("confidence") if own else None,
+                opus_lean=_finite(opus.get("lean")) if own else None,
                 momentum=_number(s.get("pack"), f"px:{t}:excess_20d"),
                 volatility=_number(s.get("pack"), f"px:{t}:vol_20d"),
                 versions=versions,
@@ -454,12 +462,14 @@ def spearman(xs: Sequence[float], ys: Sequence[float]) -> float | None:
     return statistics.correlation(_ranks(xs), _ranks(ys))
 
 
-def _signed(row: dict[str, Any], method: str, cfg: ScoreConfig) -> float | None:
-    """How strongly a method leaned, for ranking: Jev's rules score, or Opus's
-    call weight times its confidence."""
+def _signed(row: dict[str, Any], method: str, cfg: ScoreConfig, lean: bool) -> float | None:
+    """How strongly a method leaned, for ranking: Jev's rules score; Opus's own
+    lean when `lean`, otherwise its call weight times its confidence."""
     if method == "jev":
         v = row.get("jev_score")
         return float(v) if isinstance(v, int | float) else None
+    if lean:
+        return _finite(row.get("opus_lean"))
     call, conf = row.get("opus"), row.get("opus_confidence")
     if call is None or not isinstance(conf, int | float):
         return None
@@ -468,14 +478,19 @@ def _signed(row: dict[str, Any], method: str, cfg: ScoreConfig) -> float | None:
 
 def rank_ic(rows: Sequence[dict[str, Any]], method: str, cfg: ScoreConfig) -> float | None:
     """Mean over days of the rank correlation between how a method leaned and
-    the excess return that followed: does it order the stocks well?"""
-    by_day: dict[str, list[tuple[float, float]]] = {}
+    the excess return that followed: does it order the stocks well? Opus is
+    ranked by its lean on a day where every call it made has one, and by call
+    weight times confidence otherwise, so one day never mixes the two."""
+    days: dict[str, list[dict[str, Any]]] = {}
     for r in rows:
-        v = _signed(r, method, cfg)
-        if v is not None:
-            by_day.setdefault(r["day"], []).append((v, r["excess"]))
+        days.setdefault(r["day"], []).append(r)
     ics = []
-    for pairs in by_day.values():
+    for day_rows in days.values():
+        made = [r for r in day_rows if r.get("opus")]
+        lean = bool(made) and all(_finite(r.get("opus_lean")) is not None for r in made)
+        pairs = [
+            (v, r["excess"]) for r in day_rows if (v := _signed(r, method, cfg, lean)) is not None
+        ]
         if len(pairs) >= MIN_RANKED:
             ic = spearman([a for a, _ in pairs], [b for _, b in pairs])
             if ic is not None:

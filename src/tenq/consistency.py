@@ -116,6 +116,7 @@ def opus_runs(
             {
                 "call": own.call,
                 "confidence": own.confidence,
+                "lean": own.lean,
                 "error": own.error,
                 "agent": run.to_dict(),
             }
