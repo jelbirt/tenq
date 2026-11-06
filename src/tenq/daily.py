@@ -31,7 +31,9 @@ claim, which marks the email as being sent, is saved to main before the send
 step runs. If that save fails, nothing was sent and a rerun is safe; once it
 has worked, any later failure leaves a record that asks a person. A
 scheduled run that fails before its email was sent sends a short failure
-notice instead (--stage notice).
+notice instead (--stage notice). A run that finds no bar yet for the session
+the exchange's calendar expects fails, so a late price feed is never taken
+for a holiday.
 
 A run with --ticker, --no-email or --no-opus is a check: its record is
 runs/daily/<day>.check-<id>.json, it never stops or replaces the day's full
@@ -55,9 +57,11 @@ import time
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import Any
+
+import holidays
 
 from tenq import jev, opus
 from tenq.brief import Prompt
@@ -70,7 +74,7 @@ from tenq.jev_check import Tally
 from tenq.llm import AgentRun, call_claude
 from tenq.opus import Claude
 from tenq.pack import Pack, gather
-from tenq.prices import BENCHMARK, MARKET_TZ, Prices, YahooPrices, fetch
+from tenq.prices import BENCHMARK, MARKET_TZ, SESSION_SETTLED, Prices, YahooPrices, fetch
 from tenq.reasons import ReasonCheck, check_reasons
 from tenq.rules import Call, Rules, decide, load_rules
 from tenq.trace import send_daily_traces
@@ -149,6 +153,20 @@ def session(now: datetime, prices: Callable[[], Prices] | None = None) -> tuple[
     got = prices() if prices is not None else fetch([], YahooPrices(), now=now)
     bars = got.bars.get(BENCHMARK)
     return (bars[-1].day, bars[-1].close) if bars else None
+
+
+def expected_session(now: datetime) -> date:
+    """The latest NYSE session that should have settled by `now`: today after
+    16:30 New York on a trading day, else the trading day before. Weekends
+    and the exchange's holidays are not sessions."""
+    local = now.astimezone(MARKET_TZ)
+    day = local.date()
+    if local.time() < SESSION_SETTLED:
+        day -= timedelta(days=1)
+    closed = holidays.financial_holidays("NYSE", years=range(day.year - 1, day.year + 1))
+    while day.weekday() >= 5 or day in closed:
+        day -= timedelta(days=1)
+    return day
 
 
 def _checked(checked: ReasonCheck) -> dict[str, Any]:
@@ -566,6 +584,12 @@ def main(
         print(f"no settled {BENCHMARK} session found: nothing run")
         return 1
     day, bench_close = found
+    expected = expected_session(ctx.now)
+    if day < expected:
+        # not a holiday: the session's bar is not posted yet. Failing here sends
+        # the failure notice, where stopping quietly would skip the day unseen.
+        print(f"no {BENCHMARK} bar for the {expected} session yet (latest: {day}); nothing run")
+        return 1
     email = not args.no_email
     check = bool(args.ticker) or args.no_email or args.no_opus
     check_id = uuid.uuid4().hex[:8] if check else None
@@ -573,10 +597,8 @@ def main(
     if check_id is None and path.exists():
         done = _read(path)
         if done is not None and _emailed(done):
-            # a holiday, or a trading day whose bar is not posted yet: the log
-            # shows which, until the run knows the market calendar
-            today = ctx.now.astimezone(MARKET_TZ).date()
-            print(f"{day}: already emailed, nothing to do (today in New York: {today})")
+            # a weekend or holiday: a missing bar on a trading day stopped above
+            print(f"{day}: already emailed, nothing to do")
             _output(deliver="no")
             return 0
         why = _needs_a_person(done)

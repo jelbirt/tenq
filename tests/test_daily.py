@@ -796,3 +796,60 @@ def test_a_lost_mail_server_answer_says_maybe(
     lost = lambda email: (None, "email may have gone out: TimeoutError while sending")  # noqa: E731
     assert _stage(tmp_path, "send", "job-1", mailer=lost) == 1
     assert _outputs(out) == {"emailed": "maybe"}
+
+
+def _at(y: int, m: int, d: int, hour: int, minute: int = 0) -> datetime:
+    return datetime(y, m, d, hour, minute, tzinfo=UTC)
+
+
+@pytest.mark.parametrize(
+    ("now", "expected"),
+    [
+        (_at(2026, 11, 4, 22, 30), date(2026, 11, 4)),  # Wednesday, after the settle
+        (_at(2026, 11, 4, 21, 0), date(2026, 11, 3)),  # 16:00 New York: not settled yet
+        (_at(2026, 11, 4, 21, 30), date(2026, 11, 4)),  # 16:30 New York: settled
+        (_at(2026, 11, 7, 22, 30), date(2026, 11, 6)),  # Saturday
+        (_at(2026, 11, 9, 14, 0), date(2026, 11, 6)),  # Monday morning
+        (_at(2026, 11, 26, 22, 30), date(2026, 11, 25)),  # Thanksgiving
+        (_at(2026, 11, 27, 22, 30), date(2026, 11, 27)),  # the early close after it is a session
+        (_at(2026, 1, 19, 22, 30), date(2026, 1, 16)),  # Martin Luther King Jr. Day
+        (_at(2026, 1, 2, 14, 0), date(2025, 12, 31)),  # across New Year's Day and the year
+        (_at(2026, 7, 6, 20, 15), date(2026, 7, 2)),  # 16:15 summer time; July 3 observed
+        (_at(2026, 7, 6, 20, 30), date(2026, 7, 6)),  # 16:30 summer time: settled
+    ],
+)
+def test_the_expected_session_follows_the_exchange_calendar(now: datetime, expected: date) -> None:
+    assert daily.expected_session(now) == expected
+
+
+def test_a_trading_day_with_no_bar_yet_fails_and_runs_nothing(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    jev, claude, outbox = Jev(), Claude(), Outbox()
+    stale = lambda: Prices({BENCHMARK: (Bar(date(2026, 11, 3), 598.0, None),)}, ())  # noqa: E731
+    argv = ["--runs", str(tmp_path)]
+    assert main(argv, ctx=_ctx(jev, claude), prices=stale, mailer=outbox, tracer=_no_trace) == 1
+    assert (
+        "no QQQ bar for the 2026-11-04 session yet (latest: 2026-11-03)" in capsys.readouterr().out
+    )
+    assert jev.asked == [] and claude.calls == [] and outbox.sent == []
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_a_holiday_finds_the_last_session_emailed_and_sends_nothing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    eve = date(2026, 11, 25)
+    bars = lambda: Prices({BENCHMARK: (Bar(eve, 610.0, None),)}, ())  # noqa: E731
+    outbox = Outbox()
+    argv = ["--runs", str(tmp_path)]
+    day_before = replace(_ctx(), now=_at(2026, 11, 25, 22, 30))
+    assert main(argv, ctx=day_before, prices=bars, mailer=outbox, tracer=_no_trace) == 0
+    assert len(outbox.sent) == 1
+
+    out = tmp_path / "github_output"
+    monkeypatch.setenv("GITHUB_OUTPUT", str(out))
+    jev = Jev()
+    thanksgiving = replace(_ctx(jev), now=_at(2026, 11, 26, 22, 30))
+    assert main(argv, ctx=thanksgiving, prices=bars, mailer=outbox, tracer=_no_trace) == 0
+    assert _outputs(out) == {"deliver": "no"} and len(outbox.sent) == 1 and jev.asked == []
