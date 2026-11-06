@@ -168,7 +168,7 @@ def _record(
         "complete": True,
         "day": day,
         "made_at": made_at.isoformat(),
-        "versions": {"call_prompt": "call-v10"},
+        "versions": {"call_prompt": "call-v11"},
         "jev_cost": 0.03,
         "stocks": list(stocks) or [_stock()],
     } | kw
@@ -536,6 +536,43 @@ def test_rank_ic_needs_five_stocks_a_day() -> None:
     assert rank_ic(rows[:4], "jev", CFG) is None
 
 
+def _opus_rows(leans: list[float | None]) -> list[dict[str, Any]]:
+    """Five Opus Holds at 40% (no spread by call times confidence), with leans
+    that order the stocks the way their excess returns do."""
+    return [
+        {"day": "2026-11-05", "opus": "Hold", "opus_confidence": 0.4, "opus_lean": v, "excess": i}
+        for i, v in enumerate(leans)
+    ]
+
+
+def test_opus_is_ranked_by_its_lean_when_every_call_that_day_has_one() -> None:
+    assert rank_ic(_opus_rows([-0.4, -0.2, 0.0, 0.1, 0.3]), "opus", CFG) == pytest.approx(1.0)
+
+
+def _mixed_day(day: str, missing: bool) -> list[dict[str, Any]]:
+    """Six Opus Buys whose confidence orders the stocks against their excess
+    returns while their leans order them with it."""
+    rows = [
+        {"day": day, "opus": "Buy", "opus_confidence": 0.9 - i / 10, "opus_lean": 0.1 + i / 10}
+        | {"excess": i}
+        for i in range(6)
+    ]
+    if missing:
+        rows[2]["opus_lean"] = None
+    return rows
+
+
+def test_one_missing_lean_ranks_the_whole_day_by_call_and_confidence() -> None:
+    assert rank_ic(_mixed_day("2026-11-05", False), "opus", CFG) == pytest.approx(1.0)
+    # one lean missing: all six are ranked by weight times confidence, none dropped
+    assert rank_ic(_mixed_day("2026-11-05", True), "opus", CFG) == pytest.approx(-1.0)
+
+
+def test_each_day_picks_its_own_ranking_and_the_days_are_averaged() -> None:
+    rows = _mixed_day("2026-11-05", False) + _mixed_day("2026-11-06", True)
+    assert rank_ic(rows, "opus", CFG) == pytest.approx(0.0)
+
+
 def _card(tmp_path: Path, *records: dict[str, Any], today: date = EXIT) -> dict[str, Any]:
     for r in records:
         _save(tmp_path, r)
@@ -688,3 +725,12 @@ def test_a_test_that_reaches_yahoo_fails_even_through_the_catch_all() -> None:
 
     with pytest.raises(NoNetwork):
         fetch(["CRWD"], YahooPrices(), period="1mo")
+
+
+def test_opus_lean_is_read_from_the_record_and_old_records_have_none() -> None:
+    stock = _stock()
+    stock["opus"]["lean"] = -0.25
+    [made] = calls_from(_record("2026-11-05", MADE, stock))
+    assert made.opus_lean == pytest.approx(-0.25)
+    [old] = calls_from(_record())
+    assert old.opus_lean is None

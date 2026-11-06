@@ -1,4 +1,4 @@
-<!-- prompt-version: call-v10 -->
+<!-- prompt-version: call-v11 -->
 You make one call on one stock for a personal watchlist, from a facts sheet
 that code built for today. The calls, each about the next 20 trading days:
 
@@ -83,7 +83,14 @@ Rules, which code checks before anything is sent:
 
 confidence is 0 to 1: how likely you think the call is right.
 
+lean is -1 to +1: how strongly you expect the stock to beat (+) or lag (-)
+QQQ over the 20 days. It is how stocks with the same call are told apart, so
+use the whole range rather than a few round values. Even a Hold usually leans
+a little one way; give 0 only when you see nothing either way. Code drops a
+lean that points against the call: a Buy's must be above 0, and a Sell's or
+Short's below 0.
+
 Answer with one JSON object and nothing else, exactly this shape:
-{"call": "Buy", "confidence": 0.55,
+{"call": "Buy", "confidence": 0.55, "lean": 0.3,
  "reasons": [{"text": "{px:TICKER:excess_5d}, as the outlook disappointed.",
               "cites": ["news:TICKER:0123456789"]}]}

@@ -63,6 +63,7 @@ OWN = json.dumps(
     {
         "call": "Hold",
         "confidence": 0.5,
+        "lean": 0.1,
         "reasons": [
             {"text": "The outlook was raised <script>.", "cites": ["NEWS"]},
             {"text": "Shares jumped 12% this week.", "cites": ["NEWS"]},  # typed: dropped
@@ -616,6 +617,22 @@ def test_the_email_shows_both_calls_and_escapes_untrusted_text(tmp_path: Path) -
     assert "Shares jumped" not in email.text  # a dropped reason is never shown
     assert "1 reason(s) failed the checks" in email.text
     assert "Not investment advice" in email.text and "Not investment advice" in email.html
+    assert "Opus: Hold, confidence 50%, lean +0.10" in email.text
+    assert "confidence 50%, lean +0.10" in email.html
+
+
+@pytest.mark.parametrize(
+    ("opus", "shown"),
+    [
+        ({"lean": -0.4}, ", lean -0.40"),
+        ({"lean": None, "lean_error": "no lean given"}, ", lean not kept (no lean given)"),
+        ({}, ""),  # a record made before Opus gave a lean
+    ],
+)
+def test_the_email_shows_opus_lean_or_why_it_was_not_kept(opus: dict[str, Any], shown: str) -> None:
+    from tenq.daily_email import _lean
+
+    assert _lean(opus) == shown
 
 
 def test_only_http_links_are_shown() -> None:

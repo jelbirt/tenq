@@ -208,7 +208,7 @@ def test_with_opus_both_calls_run_and_each_reason_is_checked(
     out = "\n".join(lines)
     assert ok
     assert fake.systems == [opus.load_call_prompt().text, opus.load_why_prompt().text]
-    assert "Opus: Hold (confidence 35%)" in out
+    assert "Opus: Hold (confidence 35%, lean: no lean given)" in out
     assert f"Opus reason kept: Results beat. ['{NEWS_ID}']" in out
     assert "Opus reason dropped (a figure typed in its own words ('4'))" in out
     assert "why reason kept: The news was good." in out

@@ -111,7 +111,8 @@ def opus_lines(pack: Pack, call: Call | None, claude: Claude) -> tuple[list[str]
         lines = [f"  Opus: no call ({own.error})"]
     else:
         conf = "unreadable" if own.confidence is None else f"{own.confidence:.0%}"
-        lines = [f"  Opus: {own.call} (confidence {conf})"]
+        lean = f"lean {own.lean:+.2f}" if own.lean is not None else f"lean: {own.lean_error}"
+        lines = [f"  Opus: {own.call} (confidence {conf}, {lean})"]
         lines += reason_lines("Opus", check_reasons(own.reasons, pack))
     if call is not None:
         _, why = opus.explain_call(pack, call, opus.load_why_prompt(), claude=claude)
