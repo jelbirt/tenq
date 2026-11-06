@@ -144,6 +144,30 @@ class Pack:
         out.update(h.id for h in self.news)
         return out
 
+    @classmethod
+    def from_dict(cls, d: dict[str, Any]) -> Pack:
+        """The pack again from `to_dict`'s output, as a daily record stores it."""
+        return cls(
+            ticker=d["ticker"],
+            company=d["company"],
+            day=date.fromisoformat(d["day"]),
+            as_of=datetime.fromisoformat(d["as_of"]),
+            numbers=[Number(**n) for n in d["numbers"]],
+            filing=None if d["filing"] is None else Filing(**d["filing"]),
+            reports=[
+                Report(
+                    doc=r["doc"],
+                    filed=r["filed"],
+                    items=tuple(r["items"]),
+                    excerpts=tuple(Excerpt(**e) for e in r["excerpts"]),
+                    url=r.get("url", ""),
+                )
+                for r in d["reports"]
+            ],
+            news=[Headline(**h) for h in d["news"]],
+            notes=list(d["notes"]),
+        )
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "ticker": self.ticker,

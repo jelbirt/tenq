@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 from dataclasses import replace
 from datetime import UTC, date, datetime
@@ -566,7 +567,9 @@ def test_opus_stops_when_the_runs_time_budget_is_spent(tmp_path: Path) -> None:
     assert "time budget" in rec["stocks"][1]["why"]["error"]
 
 
-def test_the_why_message_is_recorded_and_a_lagging_price_is_noted(tmp_path: Path) -> None:
+def test_the_why_message_is_recorded_and_a_lagging_price_is_noted(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     ctx = _ctx()
     inner = ctx.gather
 
@@ -576,10 +579,27 @@ def test_the_why_message_is_recorded_and_a_lagging_price_is_noted(tmp_path: Path
 
     ctx.gather = gather
     outbox = Outbox()
+    monkeypatch.setenv("GITHUB_SHA", "abc123")
     assert _run(tmp_path, ctx=ctx, mailer=outbox) == 0
     rec = _record(tmp_path)
     assert "How the rules reached it" in rec["stocks"][0]["why"]["message"]
     assert rec["made_at"] == NOW.isoformat()
+    # the facts sheet is not stored twice; the hash pins the message Opus was shown
+    assert isinstance(ctx.claude, Claude)
+    shown = next(m for m in ctx.claude.calls if "How the rules reached it" in m)
+    ticker = next(t for t in WATCH.tickers if _news(t) in shown)
+    why = next(s for s in rec["stocks"] if s["ticker"] == ticker)["why"]
+    head, sheet = shown.split(opus.SHEET_HEADER, 1)
+    assert why["message"].startswith(head + opus.SHEET_HEADER)
+    assert sheet.strip() not in why["message"] and len(why["message"]) < len(head) + 200
+    assert why["message_sha256"] == hashlib.sha256(shown.encode("utf-8")).hexdigest()
+    assert "\n " not in record_path(tmp_path, DAY).read_text()  # written compact
+    assert rec["versions"]["code"] == "abc123"
+    # nothing is lost: the record's pack renders the message again, hash and all
+    stock = next(s for s in rec["stocks"] if s["ticker"] == ticker)
+    again = opus.rebuild_why_message(why["message"], stock["pack"])
+    assert again == shown
+    assert hashlib.sha256(again.encode("utf-8")).hexdigest() == why["message_sha256"]
     assert rec["stocks"][1]["note"] == "its latest price is from 2026-11-03, not 2026-11-04"
     assert "Note: its latest price is from 2026-11-03" in outbox.sent[0].text
 
@@ -880,3 +900,28 @@ def test_a_check_run_on_a_late_feed_fails_too(tmp_path: Path) -> None:
     argv = ["--runs", str(tmp_path), "--ticker", "CRWD"]
     assert main(argv, ctx=_ctx(), prices=stale, mailer=Outbox(), tracer=_no_trace) == 1
     assert list(tmp_path.iterdir()) == []
+
+
+def test_a_pack_comes_back_from_its_dict() -> None:
+    pack = _pack("CRWD", NOW)
+    assert pack is not None
+    again = Pack.from_dict(json.loads(json.dumps(pack.to_dict())))
+    assert again == pack and again.render() == pack.render()
+
+
+def test_the_why_trace_shows_the_whole_message_opus_was_sent(tmp_path: Path) -> None:
+    rec = _day_record(tmp_path)
+    stock = next(s for s in rec["stocks"] if (s.get("why") or {}).get("message"))
+    tracing, exporter = _memory()
+    emit_daily(stock, rec, tracing.tracer)
+    span = next(s for s in exporter.get_finished_spans() if s.name == "opus why")
+    shown = str((span.attributes or {})["langfuse.observation.input"])
+    assert shown.startswith(stock["why"]["message"].split(opus.SHEET_HEADER, 1)[0])
+    assert hashlib.sha256(shown.encode("utf-8")).hexdigest() == stock["why"]["message_sha256"]
+    # a pack the code cannot read still traces, with the stored head
+    broken = {**stock, "pack": {}}
+    emit_daily(broken, rec, tracing.tracer)
+    spans = [s for s in exporter.get_finished_spans() if s.name == "opus why"]
+    assert (
+        str((spans[-1].attributes or {})["langfuse.observation.input"]) == (stock["why"]["message"])
+    )
