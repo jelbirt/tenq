@@ -76,6 +76,16 @@ When a run stops with "nothing run or sent", the day's record needs a person:
   on main; if not, set `"sent": false`. Then dispatch again.
 - **unfinished or unreadable**: it was never emailed. Delete it from main and dispatch again.
 
+**How steady each method is.** The consistency workflow (manual only) gathers each stock's facts
+once, then asks Jev and Opus for their calls several times (3 by default) on those same facts.
+A method whose call changes on identical facts owes part of its future score to luck, so this
+is the earliest read on either method, and worth repeating after any prompt, question or rules
+change. It prints, per method, on how many stocks the call stayed the same and how far Jev's
+score or Opus's confidence moved, and commits the record to `runs/consistency/`. Nothing is
+emailed, and the scorecard never reads these calls. A full run is about 60 Claude runs, so
+with Opus on it is refused on weekday evenings (20:00 to 02:00 UTC), when the daily run needs
+the same subscription.
+
 ## Guardrails
 
 - The model never sees a shell, files or the web: `--tools ""`, `--strict-mcp-config`, an

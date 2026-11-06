@@ -1,0 +1,57 @@
+name: consistency
+# Manual only: Jev's and Opus's calls asked several times on the same facts
+# per stock, to see how steady each method is. Worth a run after any prompt,
+# question or rules change. Nothing is emailed; the record is committed to
+# runs/consistency/ and the summary is printed at the end of the log.
+# With Opus on it is refused on weekday evenings (20:00 to 02:00 UTC): the
+# daily run needs the same Claude subscription then.
+on:
+  workflow_dispatch:
+    inputs:
+      tickers: {description: "These tickers only (space separated); empty: the whole watchlist", required: false, default: ""}
+      repeats: {description: "Runs per method on each stock (2 to 5)", required: false, default: "3"}
+      opus: {description: "Also ask Opus (each repeat is a claude run)", type: boolean, default: true}
+
+permissions:
+  contents: write # commits runs/consistency/
+
+concurrency:
+  group: consistency
+  cancel-in-progress: false
+
+jobs:
+  consistency:
+    runs-on: ubuntu-latest
+    timeout-minutes: 150 # 20 stocks x 3: Jev, and up to 60 claude runs
+    steps:
+      - uses: actions/checkout@v4
+        with: {ref: main, persist-credentials: false}
+      - uses: astral-sh/setup-uv@v6
+        with: {python-version: "3.12", enable-cache: true}
+      - run: uv sync --locked
+      - name: install claude
+        if: inputs.opus
+        run: npm install -g @anthropic-ai/claude-code@2.1.300
+      - name: ask both methods
+        id: ask
+        timeout-minutes: 140
+        env:
+          # dispatch input is untrusted text: passed as env, never spliced into the script
+          TICKERS: ${{ inputs.tickers }}
+          REPEATS: ${{ inputs.repeats }}
+          OPUS: ${{ inputs.opus }}
+          EDGAR_IDENTITY: ${{ secrets.EDGAR_IDENTITY }}
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ inputs.opus && secrets.CLAUDE_CODE_OAUTH_TOKEN || '' }}
+          PYTHONUNBUFFERED: "1"
+        run: |
+          args=(--repeats "$REPEATS")
+          read -ra tickers <<< "$TICKERS"
+          for t in "${tickers[@]}"; do args+=(--ticker "$t"); done
+          [[ "$OPUS" == "true" ]] || args+=(--no-opus)
+          uv run --locked python -m tenq.consistency "${args[@]}"
+      - name: commit the record
+        if: ${{ always() && steps.ask.outcome != 'skipped' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: scripts/commit-daily.sh runs/consistency
