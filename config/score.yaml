@@ -26,16 +26,23 @@ weights:
 sell_weights_shown: [0.25, 0.5, 1.0]
 
 # 4. The verdict. The difference between the two methods is measured on the
-#    stocks and days both made a call. Its range is a block bootstrap by week
-#    (calls made in the same week move together, so weeks are resampled, not
-#    calls). Until weeks_first_verdict weeks are scored the verdict is "too
-#    early to tell" whatever the numbers say; after that, a method is ahead
-#    only when the whole range is on its side of zero.
+#    stocks and days both made a call. Its range comes from resampling, and
+#    calls are not separate pieces of evidence: a stock's call repeats for
+#    weeks and each is held 20 sessions, and stocks in the same week move
+#    together. So each draw picks stocks, and runs of weeks as long as a call
+#    is held, and keeps every call in them. Until weeks_first_verdict weeks
+#    are scored the verdict is "too early to tell" whatever the numbers say;
+#    after that, a method is ahead only when the whole range is on its side
+#    of zero.
 weeks_first_verdict: 13
 range: 0.90
 draws: 2000
 seed: 20261106
 
-# 5. A stock whose price stops (delisted, renamed) while QQQ's goes on is
-#    marked unscored once QQQ is this many sessions past the planned exit.
+# 5. A stock whose prices have a gap on its entry or exit day (or no opening
+#    price) while QQQ's go on is marked unscored once QQQ is no_price_after
+#    sessions past the exit. A stock with no prices downloaded at all waits
+#    much longer, no_download_after sessions, since one failed download looks
+#    the same as a delisting.
 no_price_after: 5
+no_download_after: 60

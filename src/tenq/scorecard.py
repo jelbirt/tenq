@@ -15,9 +15,10 @@ and never scored again: a later price revision or config change cannot rewrite
 the past (a new config version starts a new ledger).
 
 The scorecard compares the two methods on the calls both made, with a range
-from a block bootstrap by week, and says "too early to tell" until enough weeks
-are scored. Beside them: what holding, buying everything, buying last month's
-winners and a shuffled version of each method's own calls would have scored.
+from a bootstrap that resamples stocks and runs of weeks together, and says
+"too early to tell" until enough weeks are scored. Beside them: what holding,
+buying everything, buying last month's winners and a shuffled version of each
+method's own calls would have scored.
 
 Only full daily records count: `YYYY-MM-DD.json`, kind daily, no check id,
 complete. Check runs and consistency runs are never scored.
@@ -26,6 +27,7 @@ complete. Check runs and consistency runs are never scored.
 from __future__ import annotations
 
 import argparse
+import functools
 import hashlib
 import json
 import logging
@@ -65,6 +67,7 @@ TOP_LEVEL = {
     "draws",
     "seed",
     "no_price_after",
+    "no_download_after",
 }
 
 PriceFetch = Callable[[list[str], str], Prices]
@@ -82,6 +85,7 @@ class ScoreConfig:
     draws: int
     seed: int
     no_price_after: int
+    no_download_after: int
 
 
 def _int(raw: Any, name: str, least: int) -> int:
@@ -129,12 +133,14 @@ def load_config(path: Path = DEFAULT_CONFIG) -> ScoreConfig:
         draws=_int(raw["draws"], "draws", 100),
         seed=_int(raw["seed"], "seed", 0),
         no_price_after=_int(raw["no_price_after"], "no_price_after", 1),
+        no_download_after=_int(raw["no_download_after"], "no_download_after", 1),
     )
 
 
 # --- the market calendar ---------------------------------------------------
 
 
+@functools.lru_cache(maxsize=16)
 def _closed(year: int) -> Any:
     return holidays.financial_holidays("NYSE", years=range(year - 1, year + 2))
 
@@ -279,15 +285,20 @@ def outcome(made: Made, bars: dict[str, tuple[Bar, ...]], cfg: ScoreConfig) -> O
     if last >= len(bench):
         return Outcome("open", "not 20 sessions yet", entry_day, None, None)
     exit_day = bench[last].day
-    mine = {b.day: b for b in bars.get(made.ticker) or ()}
-    s_in, s_out = mine.get(entry_day), mine.get(exit_day)
-    if s_in is None or s_out is None:
-        if len(bench) - 1 >= last + cfg.no_price_after:
-            return Outcome("unscored", "no price", entry_day, exit_day, None)
+    past = len(bench) - 1 - last  # sessions QQQ has gone on past the exit
+    got = bars.get(made.ticker) or ()
+    if not got:  # nothing downloaded: a passing glitch looks the same as a delisting
+        if past >= cfg.no_download_after:
+            return Outcome("unscored", "no price downloaded", entry_day, exit_day, None)
         return Outcome("open", "waiting for the stock's price", entry_day, exit_day, None)
+    mine = {b.day: b for b in got}
+    s_in, s_out = mine.get(entry_day), mine.get(exit_day)
     q_in, q_out = bench[first], bench[last]
-    if s_in.open is None or q_in.open is None:
-        return Outcome("unscored", "no open price", entry_day, exit_day, None)
+    if s_in is None or s_out is None or s_in.open is None or q_in.open is None:
+        if past >= cfg.no_price_after:
+            reason = "no price" if s_in is None or s_out is None else "no open price"
+            return Outcome("unscored", reason, entry_day, exit_day, None)
+        return Outcome("open", "waiting for the stock's price", entry_day, exit_day, None)
     excess = (s_out.close / s_in.open - 1) - (q_out.close / q_in.open - 1)
     return Outcome("scored", "", entry_day, exit_day, excess)
 
@@ -479,6 +490,35 @@ def method_numbers(rows: Sequence[dict[str, Any]], method: str, cfg: ScoreConfig
     }
 
 
+def _draw_means(
+    cells: dict[tuple[str, str], list[float]], weeks: list[str], cfg: ScoreConfig
+) -> list[float]:
+    """The sorted means of `cfg.draws` resamples. A stock's calls repeat for
+    weeks and each is held 20 sessions, so one stock's weeks are not separate
+    pieces of evidence: each draw picks stocks with replacement, and runs of
+    weeks as long as a call is held (circular blocks), and takes every pair in
+    the picked stock-weeks. Sorted inputs keep a seeded result tied to the data."""
+    rng = random.Random(cfg.seed)
+    stocks = sorted({t for t, _ in cells})
+    block = math.ceil(cfg.sessions / 5)
+    means = []
+    for _ in range(cfg.draws):
+        picked_stocks = [rng.choice(stocks) for _ in stocks]
+        picked_weeks: list[str] = []
+        while len(picked_weeks) < len(weeks):
+            at = rng.randrange(len(weeks))
+            picked_weeks += [weeks[(at + k) % len(weeks)] for k in range(block)]
+        total, n = 0.0, 0
+        for t in picked_stocks:
+            for w in picked_weeks[: len(weeks)]:
+                c = cells.get((t, w), ())
+                total += sum(c)
+                n += len(c)
+        if n:
+            means.append(total / n)
+    return sorted(means)
+
+
 def _week(day: str) -> str:
     y, w, _ = date.fromisoformat(day).isocalendar()
     return f"{y}-W{w:02d}"
@@ -486,26 +526,22 @@ def _week(day: str) -> str:
 
 def paired(rows: Sequence[dict[str, Any]], cfg: ScoreConfig) -> dict[str, Any]:
     """Jev less Opus on the stocks and days both made a call, with a range from
-    resampling whole weeks (calls in the same week move together)."""
-    weeks: dict[str, list[float]] = {}
+    resampling stocks and runs of weeks together (see `_draw_means`)."""
+    cells: dict[tuple[str, str], list[float]] = {}
     for r in rows:
         if r.get("jev") and r.get("opus"):
             d = cfg.weights[r["jev"]] * r["excess"] - cfg.weights[r["opus"]] * r["excess"]
-            weeks.setdefault(_week(r["day"]), []).append(d)
-    diffs = [d for ds in weeks.values() for d in ds]
+            cells.setdefault((r["ticker"], _week(r["day"])), []).append(d)
+    diffs = [d for ds in cells.values() for d in ds]
+    weeks = sorted({w for _, w in cells})
     out: dict[str, Any] = {"pairs": len(diffs), "weeks": len(weeks), "mean": _mean(diffs)}
     out["low"] = out["high"] = None
     if len(weeks) >= 2:
-        rng = random.Random(cfg.seed)
-        blocks = list(weeks.values())
-        means = []
-        for _ in range(cfg.draws):
-            picked = [d for _ in blocks for d in rng.choice(blocks)]
-            means.append(statistics.fmean(picked))
-        means.sort()
-        tail = (1 - cfg.range) / 2
-        out["low"] = means[int(tail * (len(means) - 1))]
-        out["high"] = means[int((1 - tail) * (len(means) - 1))]
+        means = _draw_means(cells, weeks, cfg)
+        if means:
+            tail = (1 - cfg.range) / 2
+            out["low"] = means[int(tail * (len(means) - 1))]
+            out["high"] = means[int((1 - tail) * (len(means) - 1))]
     if len(weeks) < cfg.weeks_first_verdict:
         out["verdict"] = (
             f"too early to tell ({len(weeks)} of {cfg.weeks_first_verdict} weeks scored)"
@@ -591,7 +627,10 @@ def scorecard(
         ],
         "newly_scored": new,
         "open": len(opened),
-        "next_due": min((r["exit_day"] for r in opened), default=None),
+        "next_due": min(
+            (r["exit_day"] for r in opened if r["exit_day"] > str(today)), default=None
+        ),
+        "waiting": sum(1 for r in opened if r["exit_day"] <= str(today)),
         "methods": {m: method_numbers(scored, m, cfg) for m in METHODS},
         "paired": paired(scored, cfg),
         "disagreements": disagreements(scored, cfg),
@@ -629,9 +668,12 @@ def lines(card: dict[str, Any]) -> list[str]:
             f"{_pct(p['mean'])} a call more than Opus{rng}."
         )
     if card["open"]:
+        due = f"; the next finish on {card['next_due']}" if card["next_due"] else ""
+        wait = card.get("waiting") or 0
+        held = f"; {wait} finished but waiting for a price" if wait else ""
         out.append(
-            f"{card['open']} call(s) still open; the next are scored after the close on "
-            f"{card['next_due']}."
+            f"{card['open']} call(s) still open{due}{held}. Finished calls are scored "
+            "in the next weekly card."
         )
     if not card["scored"]:
         out.append("No call has finished its 20 sessions yet.")
@@ -663,8 +705,12 @@ def lines(card: dict[str, Any]) -> list[str]:
         if len(card["call_prompts"]) > 1:
             mix = ", ".join(f"{v} {n}" for v, n in sorted(card["call_prompts"].items()))
             out.append(f"Opus prompts among the scored calls: {mix}.")
+    groups: dict[tuple[str, str], list[str]] = {}
     for u in card["unscored"]:
-        out.append(f"Not scored: {u['ticker']} from {u['day']} ({u['reason']}).")
+        groups.setdefault((u["ticker"], u["reason"]), []).append(u["day"])
+    for (ticker, reason), days in sorted(groups.items()):
+        span = days[0] if len(days) == 1 else f"{min(days)} to {max(days)}"
+        out.append(f"Not scored: {ticker}, {len(days)} call(s) from {span} ({reason}).")
     w = card["this_week"]
     out.append(
         f"This week's cost: Jev ${w['jev_usd']:.2f} over {w['days']} day(s); Opus "
@@ -690,11 +736,10 @@ def weekly(runs: Path, day: date, prices: PriceFetch = yahoo) -> dict[str, Any] 
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description="Print the scorecard of the daily calls")
     ap.add_argument("--runs", type=Path, default=REPO_ROOT / "runs")
-    ap.add_argument("--save", action="store_true", help="add finished calls to the ledger")
     args = ap.parse_args(argv)
     logging.basicConfig(level=logging.WARNING, format="%(levelname)s %(name)s: %(message)s")
     today = datetime.now(UTC).astimezone(MARKET_TZ).date()
-    card = scorecard(args.runs, today, save=args.save)
+    card = scorecard(args.runs, today, save=False)  # only the daily workflow writes the ledger
     for line in lines(card):
         print(line)
     return 0

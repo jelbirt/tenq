@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import random
 from dataclasses import replace
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
@@ -33,7 +34,7 @@ from tenq.scorecard import (
 
 CFG = load_config()
 KNOWN_SCORES = {
-    "score-v1": "2d1879cb5c1b613801681753bf688a870c5062bb4acac43f4f25223e85b90365",
+    "score-v1": "6f1a5031248f812ac0841e2e329e3cd20fd66842f7898d3d061d83053090009a",
 }
 MADE = datetime(2026, 11, 6, 11, 55, tzinfo=UTC)  # Friday 06:55 New York, before the open
 ENTRY = date(2026, 11, 6)
@@ -188,8 +189,21 @@ def test_a_stock_with_no_price_is_waited_for_then_left_unscored() -> None:
 
 def test_a_missing_open_is_not_replaced_by_an_earlier_price() -> None:
     [made] = calls_from(_record())
-    out = outcome(made, _prices(stock_open=None), CFG)
+    assert outcome(made, _prices(stock_open=None), CFG).status == "open"  # may come in later
+    out = outcome(made, _prices(20, 25, stock_open=None), CFG)
     assert (out.status, out.reason) == ("unscored", "no open price")
+
+
+def test_a_stock_with_nothing_downloaded_waits_far_longer_than_a_gap() -> None:
+    """One failed download looks the same as a delisting, so it is not final."""
+    [made] = calls_from(_record())
+    gone = _prices(20, 20 + CFG.no_download_after - 1)
+    del gone["CRWD"]
+    assert outcome(made, gone, CFG).status == "open"
+    gone = _prices(20, 20 + CFG.no_download_after)
+    del gone["CRWD"]
+    out = outcome(made, gone, CFG)
+    assert (out.status, out.reason) == ("unscored", "no price downloaded")
 
 
 def test_only_full_finished_daily_records_are_read(tmp_path: Path) -> None:
@@ -282,6 +296,35 @@ def test_a_method_is_ahead_only_when_the_whole_range_is_on_its_side() -> None:
     assert paired(mixed, CFG) == p  # the same seed, the same range
 
 
+def _null_trial(seed: int, weeks: int = 13, stocks: int = 20) -> list[dict[str, Any]]:
+    """Two methods with no skill whose calls stick for weeks, as real calls do,
+    on stocks whose 20-session excess returns overlap from day to day."""
+    rng = random.Random(seed)
+    days = _sessions(weeks * 5 + 20, date(2026, 1, 5))
+    names = list(CFG.weights)
+    rows = []
+    for s in range(stocks):
+        daily = [rng.gauss(0, 0.02) for _ in days]
+        jev, opus = rng.choice(names), rng.choice(names)
+        for i in range(weeks * 5):
+            if rng.random() < 0.05:
+                jev = rng.choice(names)
+            if rng.random() < 0.05:
+                opus = rng.choice(names)
+            excess = sum(daily[i + 1 : i + 21])
+            rows.append({"day": days[i].isoformat(), "ticker": f"T{s}", "jev": jev,
+                         "opus": opus, "excess": excess})  # fmt: skip
+    return rows
+
+
+def test_sticky_calls_with_no_skill_rarely_get_a_verdict() -> None:
+    """Resampling single weeks named a winner in about 40% of such trials;
+    the range is meant to do so about 10% of the time or less."""
+    cfg = replace(CFG, draws=200)
+    wins = sum(paired(_null_trial(seed), cfg)["verdict"].endswith("ahead") for seed in range(40))
+    assert wins <= 8
+
+
 def test_only_calls_both_made_are_paired() -> None:
     p = paired(_rows(("2026-11-05", "Buy", None, 0.1), ("2026-11-05", "Buy", "Sell", 0.1)), CFG)
     assert p["pairs"] == 1 and p["mean"] == pytest.approx(0.1 - (-0.05))
@@ -337,9 +380,35 @@ def test_the_words_put_the_verdict_first_and_name_the_open_calls(tmp_path: Path)
     card = _card(tmp_path, _record(), today=EXIT - timedelta(days=1))
     text = lines(card)
     assert text[0] == "Verdict, Jev against Opus: too early to tell (0 of 13 weeks scored)."
-    assert "1 call(s) still open; the next are scored after the close on 2026-12-04." in text
+    assert (
+        "1 call(s) still open; the next finish on 2026-12-04. Finished calls are scored in "
+        "the next weekly card."
+    ) in text
     assert "No call has finished its 20 sessions yet." in text
     assert text[-1].startswith("This week's cost: Jev $0.00 over 0 day(s)")
+
+
+def test_unscored_calls_are_one_line_per_stock(tmp_path: Path) -> None:
+    card = {
+        "paired": {"verdict": "too early to tell (0 of 13 weeks scored)", "pairs": 0},
+        "open": 0, "scored": 0,
+        "unscored": [
+            {"day": d, "ticker": "XYZ", "reason": "no price downloaded"}
+            for d in ("2026-11-05", "2026-11-06", "2026-11-09")
+        ] + [{"day": "2026-11-05", "ticker": "ABC", "reason": "no open price"}],
+        "this_week": {"jev_usd": 0.0, "days": 0, "opus_runs": 0, "opus_calls": 0, "opus_whys": 0},
+    }  # fmt: skip
+    text = lines(card)
+    assert "Not scored: ABC, 1 call(s) from 2026-11-05 (no open price)." in text
+    assert "Not scored: XYZ, 3 call(s) from 2026-11-05 to 2026-11-09 (no price downloaded)." in text
+
+
+def test_a_finished_call_waiting_for_a_price_is_not_shown_as_due(tmp_path: Path) -> None:
+    _save(tmp_path, _record())
+    bars = _prices(15, 22)  # the exit has passed, the stock's price has a gap
+    card = scorecard(tmp_path, EXIT + timedelta(days=4), prices=_fetcher(bars), save=False)
+    assert card["next_due"] is None and card["waiting"] == 1
+    assert "1 call(s) still open; 1 finished but waiting for a price." in lines(card)[1]
 
 
 def test_weekly_runs_only_on_the_weeks_last_session(tmp_path: Path) -> None:
@@ -418,3 +487,12 @@ def test_a_midweek_email_has_no_scorecard(tmp_path: Path) -> None:
         }
     )
     assert not email.subject.startswith("Weekly") and "WEEKLY" not in email.text
+
+
+def test_a_test_that_reaches_yahoo_fails_even_through_the_catch_all() -> None:
+    from conftest import NoNetwork
+
+    from tenq.prices import YahooPrices, fetch
+
+    with pytest.raises(NoNetwork):
+        fetch(["CRWD"], YahooPrices(), period="1mo")

@@ -92,7 +92,8 @@ leaves no doubt), then each method next to simple baselines (always Hold, always
 month's winners, and the same calls shuffled across stocks), the days the two disagreed, how
 many calls are still open and the week's cost. Only the full daily records count; check runs
 never do. The scorecard never holds back the email: if it fails, the email says so and goes out.
-`uv run python -m tenq.scorecard` prints the current card.
+`uv run python -m tenq.scorecard` prints the current card without saving anything: only the
+daily workflow writes the ledger.
 
 ## Guardrails
 

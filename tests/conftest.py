@@ -23,12 +23,16 @@ def no_real_claude(
     monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ['PATH']}")
 
 
+class NoNetwork(BaseException):
+    """Not an Exception, so the price fetcher's catch-all cannot swallow it."""
+
+
 @pytest.fixture(autouse=True)
 def no_real_prices(monkeypatch: pytest.MonkeyPatch) -> None:
     """A test that reaches Yahoo by mistake fails instead of downloading prices."""
 
     def refuse(self: object, *args: object, **kw: object) -> None:
-        raise AssertionError("tests must not download prices")
+        raise NoNetwork("tests must not download prices")
 
     monkeypatch.setattr("tenq.prices.YahooPrices.history", refuse)
 
