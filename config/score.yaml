@@ -2,7 +2,7 @@
 # comment, bumps the version (a test pins this file's hash for each version),
 # and the version is written on every scored call, so a change can never
 # quietly rescore the past. src/tenq/scorecard.py applies it.
-version: score-v1
+version: score-v2
 
 # 1. How long a call is held, in trading sessions. A call is entered at the
 #    open of the first session that starts after the call was made (made_at in
@@ -22,22 +22,25 @@ weights:
   Short: -1.0
 
 # 3. The Sell weights the scorecard also shows each method's score under, so
-#    the choice of 0.5 can be watched. Shown only, never used for the verdict.
+#    the choice of 0.5 can be watched. Shown only, never used for who leads or settles.
 sell_weights_shown: [0.25, 0.5, 1.0]
 
-# 4. The verdict. The difference between the two methods is measured on the
-#    stocks and days both made a call. Its range comes from resampling, and
-#    calls are not separate pieces of evidence: a stock's call repeats for
-#    weeks and each is held 20 sessions, and stocks in the same week move
-#    together. So each draw picks stocks, and runs of weeks as long as a call
-#    is held, and keeps every call in them. Until weeks_first_verdict weeks
-#    are scored the verdict is "too early to tell" whatever the numbers say;
-#    after that, a method is ahead only when the whole range is on its side
-#    of zero.
+# 4. Jev against Opus, on the stocks and days both made a call. Every week
+#    the card says who is ahead so far, however small the gap, and how big a
+#    gap luck alone could give at this point (a 90% range around zero). That
+#    range adds up every paired call's daily moves by calendar day, so the 20
+#    sessions each call is held, calls that stick for weeks and stocks moving
+#    together are each counted once; carry_days adds a short correction for
+#    any carry-over from one day to the next.
+#    The lead is "settled" only once weeks_first_verdict weeks are scored and
+#    the gap is at least settled_bar standard errors. One 90% check would use
+#    1.645, but the card is read every week, and every reading is another
+#    chance for luck to look like a winner: with 1.645 a method with no edge
+#    would be called the winner at some point in about a third of years.
+#    2.4 keeps that to about 1 in 10 over weeks 13 to 100.
 weeks_first_verdict: 13
-range: 0.90
-draws: 2000
-seed: 20261106
+settled_bar: 2.4
+carry_days: 2
 
 # 5. A stock whose prices have a gap on its entry or exit day (or no opening
 #    price) while QQQ's go on is marked unscored once QQQ is no_price_after

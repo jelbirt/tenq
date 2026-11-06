@@ -14,8 +14,11 @@ from tenq.daily import main as daily_main
 from tenq.daily_email import render
 from tenq.prices import BENCHMARK, Bar, Prices
 from tenq.scorecard import (
+    _lead_lines,
+    _standard_error,
     calls_from,
     daily_records,
+    day_totals,
     last_session_of_week,
     lines,
     load_config,
@@ -28,6 +31,7 @@ from tenq.scorecard import (
     read_ledger,
     scorecard,
     spearman,
+    t95,
     update,
     weekly,
 )
@@ -35,6 +39,8 @@ from tenq.scorecard import (
 CFG = load_config()
 KNOWN_SCORES = {
     "score-v1": "6f1a5031248f812ac0841e2e329e3cd20fd66842f7898d3d061d83053090009a",
+    # v2: the luck range from daily moves, and a settled bar for weekly reading
+    "score-v2": "bfd22fe3774cf9e1ea163b244f31a87ab12274ca5fb95810b5f3f8859e3bfd24",
 }
 MADE = datetime(2026, 11, 6, 11, 55, tzinfo=UTC)  # Friday 06:55 New York, before the open
 ENTRY = date(2026, 11, 6)
@@ -53,7 +59,14 @@ def test_the_score_settings_are_pinned_to_their_version() -> None:
     [
         ("version: v\n", "exactly"),
         (Path("config/score.yaml").read_text().replace("Sell: -0.5", "Sell: 0.5"), "weights"),
-        (Path("config/score.yaml").read_text().replace("range: 0.90", "range: 1.5"), "range"),
+        (
+            Path("config/score.yaml").read_text().replace("settled_bar: 2.4", "settled_bar: 0.5"),
+            "settled_bar",
+        ),
+        (
+            Path("config/score.yaml").read_text().replace("carry_days: 2", "carry_days: -1"),
+            "carry_days",
+        ),
     ],
 )
 def test_bad_score_settings_are_refused(tmp_path: Path, bad: str, says: str) -> None:
@@ -236,7 +249,8 @@ def test_a_finished_call_is_written_once_and_never_rescored(tmp_path: Path) -> N
     done, opened, new = update(tmp_path, CFG, EXIT, _fetcher(_prices(), asked))
     assert new == 1 and opened == [] and asked == [(["CRWD"], "6mo")]
     [row] = done
-    assert row["excess"] == pytest.approx(0.08) and row["score_version"] == "score-v1"
+    assert row["excess"] == pytest.approx(0.08) and row["score_version"] == CFG.version
+    assert sum(row["moves"]) == pytest.approx(row["excess"]) and len(row["moves"]) == 20
     worse = {**_prices(), "CRWD": _bars(_sessions(20), 100.0, 101.0, 50.0)}
     done, _, new = update(tmp_path, CFG, EXIT, _fetcher(worse, asked))
     assert new == 0 and done[0]["excess"] == pytest.approx(0.08)
@@ -277,52 +291,230 @@ def _weeks(n: int, jev: str, opus: str, excess: float) -> list[dict[str, Any]]:
     return _rows(*[((start + timedelta(weeks=w)).isoformat(), jev, opus, excess) for w in range(n)])
 
 
-def test_the_verdict_waits_for_enough_weeks_whatever_the_numbers() -> None:
+def test_a_lead_waits_for_enough_weeks_whatever_the_numbers() -> None:
     p = paired(_weeks(12, "Buy", "Hold", 0.05), CFG)
-    assert p["verdict"] == "too early to tell (12 of 13 weeks scored)"
+    assert p["leader"] == "Jev" and p["settled"] is None and p["weeks"] == 12
     assert p["mean"] == pytest.approx(0.05)
 
 
-def test_a_method_is_ahead_only_when_the_whole_range_is_on_its_side() -> None:
-    assert paired(_weeks(13, "Buy", "Hold", 0.05), CFG)["verdict"] == "Jev ahead"
-    assert paired(_weeks(13, "Hold", "Buy", 0.05), CFG)["verdict"] == "Opus ahead"
-    mixed = _weeks(7, "Buy", "Hold", 0.05) + _weeks(7, "Buy", "Hold", -0.05)
-    mixed = [
-        r | {"day": (date(2026, 11, 2) + timedelta(weeks=i)).isoformat()}
-        for i, r in enumerate(mixed)
+def _held(day: date) -> list[str]:
+    """The 20 sessions a call made on `day` is held, from the next one on."""
+    return [d.isoformat() for d in _sessions(20, next_session(day))]
+
+
+def _skilled(weeks: int, gap: float, seed: int = 7) -> list[dict[str, Any]]:
+    """Twenty stocks, one call each a week, where Jev's Buy beats Opus's Hold
+    by about `gap` a call, stored with daily moves as the ledger stores them;
+    the stocks share a market move each day, half up and half down."""
+    rng = random.Random(seed)
+    days = _sessions(weeks * 5 + 21, date(2026, 1, 5))
+    market = {d: rng.gauss(0, 0.01) for d in days}
+    rows = []
+    for w in range(weeks):
+        made = days[w * 5]
+        held = _held(made)
+        for t in range(20):
+            lean = 1 if t % 2 else -1
+            moves = [gap / 20 + lean * market[date.fromisoformat(d)] + rng.gauss(0, 0.01)
+                     for d in held]  # fmt: skip
+            rows.append({"day": made.isoformat(), "ticker": f"T{t}", "jev": "Buy",
+                         "opus": "Hold", "excess": sum(moves), "moves": moves,
+                         "move_days": held, "entry_day": held[0],
+                         "exit_day": held[-1]})  # fmt: skip
+    return rows
+
+
+def test_the_leader_shows_from_the_first_pair_and_settles_only_when_clear() -> None:
+    early = paired(_skilled(3, 0.03), CFG)
+    assert early["leader"] == "Jev" and early["settled"] is None and early["weeks"] == 3
+    clear = paired(_skilled(13, 0.03), CFG)
+    assert clear["settled"] == "Jev"
+    assert clear["luck"] == pytest.approx(t95(clear["days"] - 1) * clear["se"])
+    assert clear["bar"] == pytest.approx(CFG.settled_bar * clear["se"])
+    flipped = paired([r | {"jev": "Hold", "opus": "Buy"} for r in _skilled(13, 0.03)], CFG)
+    assert (flipped["leader"], flipped["settled"]) == ("Opus", "Opus")
+    assert flipped["mean"] == pytest.approx(-clear["mean"])
+    faint = paired(_skilled(13, 0.0005), CFG)
+    assert faint["leader"] == "Jev" and faint["settled"] is None
+    assert faint["luck"] > abs(faint["mean"])
+
+
+def test_a_lead_past_the_luck_range_but_short_of_the_bar_is_not_settled() -> None:
+    """The card is read every week, so a lead outside the one-look range is
+    still not settled until it clears the stricter bar, and the card says so."""
+    between = None
+    for step in range(1, 400):
+        p = paired(_skilled(13, step / 10000), CFG)
+        if p["luck"] < abs(p["mean"]) < p["bar"]:
+            between = step / 10000
+            break
+    assert between is not None
+    p = paired(_skilled(13, between), CFG)
+    assert p["settled"] is None
+    assert paired(_skilled(13, between), replace(CFG, settled_bar=1.0))["settled"] == "Jev"
+    text = _lead_lines(p, 13)
+    assert text[1] == (
+        f"Not settled: 9 times in 10, luck alone gives a gap between -{p['luck'] * 100:.2f}% "
+        f"and +{p['luck'] * 100:.2f}% at this point."
+    )
+    assert text[2] == (
+        "The gap is outside that range, but since the card is read every week a lead "
+        f"settles only at {p['bar'] * 100:.2f}%."
+    )
+
+
+def test_an_early_lead_that_clears_the_bar_is_told_it_waits_for_the_weeks() -> None:
+    p = paired(_skilled(5, 0.03), CFG)
+    assert p["settled"] is None and abs(p["mean"]) >= p["bar"]
+    text = _lead_lines(p, 13)
+    assert text[1].startswith("Not settled (too early: 5 of 13 weeks scored): 9 times in 10,")
+    assert text[2] == (
+        f"The gap already clears the settle bar of {p['bar'] * 100:.2f}%; a lead can settle "
+        "only once 13 weeks are scored."
+    )
+
+
+def test_a_gap_that_rounds_to_zero_has_no_leader() -> None:
+    rows = _skilled(13, 0.0)
+    base = paired(rows, CFG)["mean"]
+    tiny = [r | {"excess": r["excess"] - base + 0.00004} for r in rows]
+    p = paired([r | {"moves": None} for r in tiny], CFG)
+    assert 0 < p["mean"] < 0.00005 and p["leader"] is None and p["differ"] == len(rows)
+    text = _lead_lines(p, 13)
+    assert text[0].startswith("Ahead so far: neither, level (under 0.01% apart) over ")
+    assert text[1].startswith("Not settled: 9 times in 10, luck alone gives a gap between")
+
+
+def test_the_standard_error_matches_a_hand_worked_case() -> None:
+    """Day totals 1, 3, 2, 6 over 4 pairs: deviations -2, 0, -1, 3 give a
+    spread of 14 and a one-day carry-over of -3 at weight 1/2, so 11; times
+    4/3 for a short sample, square root, over 4 pairs. Two days of carry-over
+    add the two-day term, 2, at weight 1/3 and the one-day term at 2/3."""
+    totals = [1.0, 3.0, 2.0, 6.0]
+    assert _standard_error(totals, 4, 1) == pytest.approx((11 * 4 / 3) ** 0.5 / 4)
+    assert _standard_error(totals, 4, 0) == pytest.approx((14 * 4 / 3) ** 0.5 / 4)
+    assert _standard_error(totals, 4, 2) == pytest.approx(
+        ((14 + 2 * (2 / 3) * -3 + 2 * (1 / 3) * 2) * 4 / 3) ** 0.5 / 4
+    )
+    assert _standard_error([1.0], 4, 1) is None
+
+
+def test_calls_that_all_agree_claim_no_range_and_never_settle() -> None:
+    rows = [r | {"opus": "Buy"} for r in _skilled(13, 0.03)]
+    p = paired(rows, CFG)
+    assert (p["leader"], p["luck"], p["settled"], p["differ"]) == (None, None, None, 0)
+    assert _lead_lines(p, 13)[:2] == [
+        f"Ahead so far: neither, level over {p['pairs']} pair(s) in 13 week(s).",
+        "Not settled: the two have not disagreed on a finished call yet.",
     ]
-    p = paired(mixed, CFG)
-    assert p["verdict"] == "no clear difference yet" and p["low"] < 0 < p["high"]
-    assert paired(mixed, CFG) == p  # the same seed, the same range
+
+
+def test_daily_moves_land_on_the_sessions_they_were_measured_on() -> None:
+    """Two calls made on the same day land on their 20 sessions, skipping
+    Thanksgiving and ending on the exit day; a row whose moves do not match
+    its days or its excess falls back to its exit day."""
+    held = _held(date(2026, 11, 5))
+    rows = [
+        {"day": "2026-11-05", "ticker": t, "jev": "Buy", "opus": "Hold", "excess": 0.02,
+         "moves": [0.001] * 20, "move_days": held, "entry_day": held[0],
+         "exit_day": held[-1]}
+        for t in ("A", "B")
+    ]  # fmt: skip
+    totals = day_totals([(1.0, r) for r in rows])
+    assert [d.isoformat() for d in totals] == held
+    assert held[-1] == "2026-12-04" and "2026-11-26" not in held
+    p = paired(rows, CFG)
+    assert (p["pairs"], p["days"]) == (2, 20) and p["mean"] == pytest.approx(0.02)
+    for bad in ({"moves": [0.5] * 20}, {"move_days": held[:19]}, {"move_days": None}):
+        assert list(day_totals([(1.0, r | bad) for r in rows])) == [date(2026, 12, 4)]
+
+
+def _climbing(days: list[date], start: float, step: float) -> list[Bar]:
+    return [Bar(d, start + step * (i + 1), None, start) for i, d in enumerate(days)]
+
+
+def test_moves_add_up_to_the_excess_through_a_missing_stock_bar() -> None:
+    """A day the stock has no bar moves only by QQQ; the next bar carries the
+    stock's change, and the moves still add up to the excess exactly."""
+    [made] = calls_from(_record())
+    days = _sessions(20)
+    stock = _climbing(days, 100.0, 1.0)
+    del stock[5]
+    bench = _climbing(days, 200.0, 0.5)
+    out = outcome(made, {"CRWD": tuple(stock), BENCHMARK: tuple(bench)}, CFG)
+    assert out.status == "scored" and out.moves is not None
+    assert out.moves[5] == pytest.approx(-0.5 / 200)
+    assert out.moves[6] == pytest.approx(2.0 / 100 - 0.5 / 200)
+    assert sum(out.moves) == pytest.approx(out.excess, abs=1e-12)
+    assert out.move_days == tuple(days)
+
+
+def test_moves_follow_qqqs_bars_when_one_is_missing() -> None:
+    """If QQQ's download skips a session the call is held one session longer,
+    and each move stays on the bar it was measured on."""
+    [made] = calls_from(_record())
+    days = _sessions(21)
+    bench = _climbing(days, 200.0, 0.5)
+    del bench[5]
+    stock = _climbing(days, 100.0, 1.0)
+    out = outcome(made, {"CRWD": tuple(stock), BENCHMARK: tuple(bench)}, CFG)
+    assert out.status == "scored" and out.move_days is not None
+    assert out.move_days == tuple(b.day for b in bench[:20])
+    assert out.move_days[-1] == out.exit_day == days[20]
+    assert sum(out.moves or ()) == pytest.approx(out.excess, abs=1e-12)
+
+
+def test_t95_matches_the_table_and_meets_the_normal() -> None:
+    assert t95(1) == pytest.approx(6.314)
+    assert t95(12) == pytest.approx(1.782)
+    assert 1.782 > t95(13) > 1.753
+    assert t95(10**6) == pytest.approx(1.645, abs=1e-3)
+    with pytest.raises(ValueError):
+        t95(0)
 
 
 def _null_trial(seed: int, weeks: int = 13, stocks: int = 20) -> list[dict[str, Any]]:
     """Two methods with no skill whose calls stick for weeks, as real calls do,
-    on stocks whose 20-session excess returns overlap from day to day."""
+    on stocks whose 20-session excess returns overlap from day to day and that
+    share a market move each day, stored with their daily moves as the ledger
+    stores them."""
     rng = random.Random(seed)
     days = _sessions(weeks * 5 + 20, date(2026, 1, 5))
     names = list(CFG.weights)
     rows = []
+    market = [rng.gauss(0, 0.015) for _ in days]
     for s in range(stocks):
-        daily = [rng.gauss(0, 0.02) for _ in days]
+        lean = 1 if s % 2 else -1
+        daily = [rng.gauss(0, 0.02) + lean * m for m in market]
         jev, opus = rng.choice(names), rng.choice(names)
         for i in range(weeks * 5):
             if rng.random() < 0.05:
                 jev = rng.choice(names)
             if rng.random() < 0.05:
                 opus = rng.choice(names)
-            excess = sum(daily[i + 1 : i + 21])
+            moves = daily[i + 1 : i + 21]
             rows.append({"day": days[i].isoformat(), "ticker": f"T{s}", "jev": jev,
-                         "opus": opus, "excess": excess})  # fmt: skip
+                         "opus": opus, "excess": sum(moves), "moves": moves,
+                         "move_days": [d.isoformat() for d in days[i + 1 : i + 21]],
+                         "entry_day": days[i + 1].isoformat(),
+                         "exit_day": days[i + 20].isoformat()})  # fmt: skip
     return rows
 
 
-def test_sticky_calls_with_no_skill_rarely_get_a_verdict() -> None:
+def test_sticky_calls_with_no_skill_rarely_settle() -> None:
     """Resampling single weeks named a winner in about 40% of such trials;
-    the range is meant to do so about 10% of the time or less."""
-    cfg = replace(CFG, draws=200)
-    wins = sum(paired(_null_trial(seed), cfg)["verdict"].endswith("ahead") for seed in range(40))
-    assert wins <= 8
+    the settled bar is meant to do so about 10% of the time or less."""
+    wins = sum(bool(paired(_null_trial(seed), CFG)["settled"]) for seed in range(40))
+    assert wins <= 3
+
+
+def test_the_luck_range_has_the_right_size_when_neither_method_has_skill() -> None:
+    """Over many no-skill trials the gap divided by its standard error should
+    spread like a standard normal: about 1. A formula that over- or under-states
+    luck by 15% or more fails here."""
+    ratios = [p["mean"] / p["se"] for p in (paired(_null_trial(s), CFG) for s in range(100))]
+    spread = (sum(r * r for r in ratios) / len(ratios)) ** 0.5
+    assert 0.85 <= spread <= 1.15
 
 
 def test_only_calls_both_made_are_paired() -> None:
@@ -376,10 +568,10 @@ def test_the_scorecard_scores_both_methods_and_the_baselines(tmp_path: Path) -> 
     assert card["paired"]["mean"] == pytest.approx(0.16)
 
 
-def test_the_words_put_the_verdict_first_and_name_the_open_calls(tmp_path: Path) -> None:
+def test_the_words_put_the_leader_first_and_name_the_open_calls(tmp_path: Path) -> None:
     card = _card(tmp_path, _record(), today=EXIT - timedelta(days=1))
     text = lines(card)
-    assert text[0] == "Verdict, Jev against Opus: too early to tell (0 of 13 weeks scored)."
+    assert text[0] == "Ahead so far: no recommendation both made has finished yet."
     assert (
         "1 call(s) still open; the next finish on 2026-12-04. Finished calls are scored in "
         "the next weekly card."
@@ -390,7 +582,7 @@ def test_the_words_put_the_verdict_first_and_name_the_open_calls(tmp_path: Path)
 
 def test_unscored_calls_are_one_line_per_stock(tmp_path: Path) -> None:
     card = {
-        "paired": {"verdict": "too early to tell (0 of 13 weeks scored)", "pairs": 0},
+        "paired": {"pairs": 0},
         "open": 0, "scored": 0,
         "unscored": [
             {"day": d, "ticker": "XYZ", "reason": "no price downloaded"}
@@ -417,7 +609,7 @@ def test_weekly_runs_only_on_the_weeks_last_session(tmp_path: Path) -> None:
 
     assert weekly(tmp_path, date(2026, 11, 5), refuse) is None
     card = weekly(tmp_path, date(2026, 11, 6), refuse)
-    assert card is not None and card["lines"][0].startswith("Verdict")
+    assert card is not None and card["lines"][0].startswith("Ahead so far")
 
 
 def test_a_failing_scorecard_is_an_error_line_not_a_crash(tmp_path: Path) -> None:
@@ -453,10 +645,10 @@ def _friday(tmp_path: Path, score_prices: Any, outbox: Outbox) -> dict[str, Any]
 def test_fridays_email_leads_with_the_scorecard(tmp_path: Path) -> None:
     outbox = Outbox()
     record = _friday(tmp_path, _fetcher({}), outbox)
-    assert record["scorecard"]["lines"][0].startswith("Verdict, Jev against Opus: too early")
+    assert record["scorecard"]["lines"][0].startswith("Ahead so far: no recommendation")
     [email] = outbox.sent
     assert email.subject.startswith("Weekly scorecard + tenq daily, session 2026-11-06")
-    assert email.text.startswith("WEEKLY SCORECARD\nVerdict, Jev against Opus")
+    assert email.text.startswith("WEEKLY SCORECARD\nAhead so far")
     assert email.html.index("Weekly scorecard") < email.html.index("tenq daily calls")
 
 

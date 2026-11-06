@@ -1,7 +1,6 @@
 """The scorecard: each daily recommendation judged by what the stock did next.
 
     python -m tenq.scorecard            # print the scorecard from the records
-    python -m tenq.scorecard --save     # and add newly finished calls to the ledger
 
 A call is entered at the open of the first session that starts after it was
 made (`made_at` in the day's record, which can be after that day's close) and
@@ -11,14 +10,21 @@ call's score is its weight (config/score.yaml) times that excess. Both prices
 come from one fresh fetch, so dividends rescaling past prices cannot skew it.
 
 A finished call is written once to the ledger, runs/daily/scores/<version>.json,
-and never scored again: a later price revision or config change cannot rewrite
-the past (a new config version starts a new ledger).
+with the excess split into its 20 daily moves (they add up to it exactly), and
+never scored again: a later price revision or config change cannot rewrite the
+past (a new config version starts a new ledger).
 
-The scorecard compares the two methods on the calls both made, with a range
-from a bootstrap that resamples stocks and runs of weeks together, and says
-"too early to tell" until enough weeks are scored. Beside them: what holding,
-buying everything, buying last month's winners and a shuffled version of each
-method's own calls would have scored.
+Jev against Opus, on the calls both made: who is ahead so far, every week,
+and how big a gap luck alone could give at this point. The luck range adds up
+the daily moves of every paired call by calendar day, so overlapping 20-session
+windows, calls that stick for weeks and stocks moving together on the same day
+are all counted once (Hodrick 1992; Britten-Jones, Neuberger and Nolte 2011),
+with a short correction for any carry-over from one day to the next (Newey and
+West 1987). "Settled" needs 13 weeks and a gap of `settled_bar` standard errors,
+wider than one 90% check because the card is read every week (Armitage,
+McPherson and Rowe 1969). Beside them: what holding, buying everything, buying
+last month's winners and a shuffled version of each method's own calls would
+have scored.
 
 Only full daily records count: `YYYY-MM-DD.json`, kind daily, no check id,
 complete. Check runs and consistency runs are never scored.
@@ -29,10 +35,10 @@ from __future__ import annotations
 import argparse
 import functools
 import hashlib
+import itertools
 import json
 import logging
 import math
-import random
 import re
 import statistics
 from collections.abc import Callable, Iterable, Sequence
@@ -63,9 +69,8 @@ TOP_LEVEL = {
     "weights",
     "sell_weights_shown",
     "weeks_first_verdict",
-    "range",
-    "draws",
-    "seed",
+    "settled_bar",
+    "carry_days",
     "no_price_after",
     "no_download_after",
 }
@@ -81,9 +86,8 @@ class ScoreConfig:
     weights: dict[str, float]
     sell_weights_shown: tuple[float, ...]
     weeks_first_verdict: int
-    range: float
-    draws: int
-    seed: int
+    settled_bar: float
+    carry_days: int
     no_price_after: int
     no_download_after: int
 
@@ -119,9 +123,9 @@ def load_config(path: Path = DEFAULT_CONFIG) -> ScoreConfig:
     shown = raw["sell_weights_shown"]
     if not isinstance(shown, list) or not shown:
         raise ValueError("score sell_weights_shown must be a list")
-    level = _float(raw["range"], "range")
-    if not 0.5 <= level < 1:
-        raise ValueError("score range must be from 0.5 to under 1")
+    bar = _float(raw["settled_bar"], "settled_bar")
+    if not 1.0 <= bar <= 5.0:
+        raise ValueError("score settled_bar must be from 1 to 5 standard errors")
     return ScoreConfig(
         version=raw["version"],
         sha256=hashlib.sha256(data).hexdigest(),
@@ -129,9 +133,8 @@ def load_config(path: Path = DEFAULT_CONFIG) -> ScoreConfig:
         weights=w,
         sell_weights_shown=tuple(_float(x, "sell_weights_shown") for x in shown),
         weeks_first_verdict=_int(raw["weeks_first_verdict"], "weeks_first_verdict", 1),
-        range=level,
-        draws=_int(raw["draws"], "draws", 100),
-        seed=_int(raw["seed"], "seed", 0),
+        settled_bar=bar,
+        carry_days=_int(raw["carry_days"], "carry_days", 0),
         no_price_after=_int(raw["no_price_after"], "no_price_after", 1),
         no_download_after=_int(raw["no_download_after"], "no_download_after", 1),
     )
@@ -268,6 +271,8 @@ class Outcome:
     entry_day: date | None
     exit_day: date | None
     excess: float | None
+    moves: tuple[float, ...] | None = None  # the excess, day by day; they add up to it
+    move_days: tuple[date, ...] | None = None  # the QQQ session each move belongs to
 
 
 def _key(day: date | str, ticker: str) -> str:
@@ -300,7 +305,27 @@ def outcome(made: Made, bars: dict[str, tuple[Bar, ...]], cfg: ScoreConfig) -> O
             return Outcome("unscored", reason, entry_day, exit_day, None)
         return Outcome("open", "waiting for the stock's price", entry_day, exit_day, None)
     excess = (s_out.close / s_in.open - 1) - (q_out.close / q_in.open - 1)
-    return Outcome("scored", "", entry_day, exit_day, excess)
+    moves = _moves(bench[first : last + 1], mine, s_in.open, q_in.open)
+    if not math.isfinite(excess) or not all(math.isfinite(m) for m in moves):
+        return Outcome("unscored", "bad price", entry_day, exit_day, None)
+    held = tuple(b.day for b in bench[first : last + 1])
+    return Outcome("scored", "", entry_day, exit_day, excess, moves, held)
+
+
+def _moves(
+    held: Sequence[Bar], mine: dict[date, Bar], s_open: float, q_open: float
+) -> tuple[float, ...]:
+    """The excess split by session: each day's change in the stock less QQQ's,
+    both over the entry open, so they add up to the excess exactly. A day the
+    stock has no bar moves 0 and the next bar carries the change."""
+    out = []
+    s_prev, q_prev = s_open, q_open
+    for b in held:
+        s = mine.get(b.day)
+        s_now = s.close if s is not None else s_prev
+        out.append((s_now - s_prev) / s_open - (b.close - q_prev) / q_open)
+        s_prev, q_prev = s_now, b.close
+    return tuple(out)
 
 
 def _row(made: Made, out: Outcome, cfg: ScoreConfig) -> dict[str, Any]:
@@ -313,6 +338,8 @@ def _row(made: Made, out: Outcome, cfg: ScoreConfig) -> dict[str, Any]:
         "entry_day": out.entry_day.isoformat() if out.entry_day else None,
         "exit_day": out.exit_day.isoformat() if out.exit_day else None,
         "excess": out.excess,
+        "moves": list(out.moves) if out.moves is not None else None,
+        "move_days": [d.isoformat() for d in out.move_days] if out.move_days else None,
         "score_version": cfg.version,
     }
     return row
@@ -490,33 +517,27 @@ def method_numbers(rows: Sequence[dict[str, Any]], method: str, cfg: ScoreConfig
     }
 
 
-def _draw_means(
-    cells: dict[tuple[str, str], list[float]], weeks: list[str], cfg: ScoreConfig
-) -> list[float]:
-    """The sorted means of `cfg.draws` resamples. A stock's calls repeat for
-    weeks and each is held 20 sessions, so one stock's weeks are not separate
-    pieces of evidence: each draw picks stocks with replacement, and runs of
-    weeks as long as a call is held (circular blocks), and takes every pair in
-    the picked stock-weeks. Sorted inputs keep a seeded result tied to the data."""
-    rng = random.Random(cfg.seed)
-    stocks = sorted({t for t, _ in cells})
-    block = math.ceil(cfg.sessions / 5)
-    means = []
-    for _ in range(cfg.draws):
-        picked_stocks = [rng.choice(stocks) for _ in stocks]
-        picked_weeks: list[str] = []
-        while len(picked_weeks) < len(weeks):
-            at = rng.randrange(len(weeks))
-            picked_weeks += [weeks[(at + k) % len(weeks)] for k in range(block)]
-        total, n = 0.0, 0
-        for t in picked_stocks:
-            for w in picked_weeks[: len(weeks)]:
-                c = cells.get((t, w), ())
-                total += sum(c)
-                n += len(c)
-        if n:
-            means.append(total / n)
-    return sorted(means)
+# 0.95 quantiles of Student's t by degrees of freedom: a 90% two-sided range.
+T95 = (
+    (1, 6.314), (2, 2.920), (3, 2.353), (4, 2.132), (5, 2.015), (6, 1.943), (8, 1.860),
+    (10, 1.812), (12, 1.782), (15, 1.753), (20, 1.725), (30, 1.697), (60, 1.671),
+    (120, 1.658),
+)  # fmt: skip
+Z95 = 1.645
+
+
+def t95(df: int) -> float:
+    """Student's t for a 90% range, straight-line between table rows in 1/df."""
+    if df < 1:
+        raise ValueError("t95 needs at least 1 degree of freedom")
+    rows = (*T95, (math.inf, Z95))
+    for (d0, t0), (d1, t1) in itertools.pairwise(rows):
+        if d0 <= df <= d1:
+            if df == d0:
+                return t0
+            x, x0, x1 = 1 / df, 1 / d0, (0.0 if d1 == math.inf else 1 / d1)
+            return t1 + (t0 - t1) * (x - x1) / (x0 - x1)
+    return Z95
 
 
 def _week(day: str) -> str:
@@ -524,34 +545,84 @@ def _week(day: str) -> str:
     return f"{y}-W{w:02d}"
 
 
+def _by_day(pairs: Sequence[tuple[float, dict[str, Any]]]) -> list[float]:
+    """The Jev less Opus gap of every paired call, added up by calendar day:
+    a call's weight gap times each of its daily moves, on the QQQ session the
+    move was measured on (stored with it, so a later calendar never moves a
+    written row). A row without usable moves puts its whole excess on its exit
+    day."""
+    return list(day_totals(pairs).values())
+
+
+def day_totals(pairs: Sequence[tuple[float, dict[str, Any]]]) -> dict[date, float]:
+    total: dict[date, float] = {}
+    for dw, r in pairs:
+        moves, days = r.get("moves"), r.get("move_days")
+        if (
+            isinstance(moves, list)
+            and isinstance(days, list)
+            and moves
+            and len(days) == len(moves)
+            and math.isclose(sum(moves), r["excess"], rel_tol=0, abs_tol=1e-9)
+        ):
+            for d, m in zip(days, moves, strict=True):
+                key = date.fromisoformat(d)
+                total[key] = total.get(key, 0.0) + dw * m
+        else:
+            key = date.fromisoformat(r.get("exit_day") or r["day"])
+            total[key] = total.get(key, 0.0) + dw * r["excess"]
+    return dict(sorted(total.items()))
+
+
+def _standard_error(by_day: Sequence[float], pairs: int, carry: int) -> float | None:
+    """The standard error of the mean gap per call, from the day totals: their
+    spread, plus `carry` days of carry-over with Bartlett weights so it can
+    never go below zero, scaled by m/(m-1) for a short sample."""
+    m = len(by_day)
+    if m < 2 or not pairs:
+        return None
+    bar = statistics.fmean(by_day)
+    dev = [x - bar for x in by_day]
+
+    def lag(j: int) -> float:
+        return sum(dev[t] * dev[t - j] for t in range(j, m))
+
+    spread = lag(0) + 2 * sum(
+        (1 - j / (carry + 1)) * lag(j) for j in range(1, min(carry, m - 1) + 1)
+    )
+    return math.sqrt(max(spread, 0.0) * m / (m - 1)) / pairs
+
+
 def paired(rows: Sequence[dict[str, Any]], cfg: ScoreConfig) -> dict[str, Any]:
-    """Jev less Opus on the stocks and days both made a call, with a range from
-    resampling stocks and runs of weeks together (see `_draw_means`)."""
-    cells: dict[tuple[str, str], list[float]] = {}
-    for r in rows:
-        if r.get("jev") and r.get("opus"):
-            d = cfg.weights[r["jev"]] * r["excess"] - cfg.weights[r["opus"]] * r["excess"]
-            cells.setdefault((r["ticker"], _week(r["day"])), []).append(d)
-    diffs = [d for ds in cells.values() for d in ds]
-    weeks = sorted({w for _, w in cells})
-    out: dict[str, Any] = {"pairs": len(diffs), "weeks": len(weeks), "mean": _mean(diffs)}
-    out["low"] = out["high"] = None
-    if len(weeks) >= 2:
-        means = _draw_means(cells, weeks, cfg)
-        if means:
-            tail = (1 - cfg.range) / 2
-            out["low"] = means[int(tail * (len(means) - 1))]
-            out["high"] = means[int((1 - tail) * (len(means) - 1))]
-    if len(weeks) < cfg.weeks_first_verdict:
-        out["verdict"] = (
-            f"too early to tell ({len(weeks)} of {cfg.weeks_first_verdict} weeks scored)"
-        )
-    elif out["low"] is not None and out["low"] > 0:
-        out["verdict"] = "Jev ahead"
-    elif out["high"] is not None and out["high"] < 0:
-        out["verdict"] = "Opus ahead"
-    else:
-        out["verdict"] = "no clear difference yet"
+    """Jev less Opus on the calls both made: the gap so far, who leads, the
+    gap luck alone could give (a 90% range around zero) and, once enough weeks
+    are scored, whether the lead is settled. A gap that rounds to 0.00% on the
+    card has no leader."""
+    pairs = [
+        (cfg.weights[r["jev"]] - cfg.weights[r["opus"]], r)
+        for r in rows
+        if r.get("jev") and r.get("opus")
+    ]
+    weeks = len({_week(r["day"]) for _, r in pairs})
+    mean = _mean([dw * r["excess"] for dw, r in pairs])
+    by_day = _by_day(pairs)
+    se = _standard_error(by_day, len(pairs), cfg.carry_days)
+    level = round(abs(mean or 0.0) * 100, 2) == 0
+    out: dict[str, Any] = {
+        "pairs": len(pairs),
+        "differ": sum(1 for dw, _ in pairs if dw),
+        "weeks": weeks,
+        "days": len(by_day),
+        "mean": mean,
+        "se": se,
+        "luck": None if not se else t95(len(by_day) - 1) * se,
+        "bar": None if not se else cfg.settled_bar * se,
+        "leader": None if level else ("Jev" if (mean or 0.0) > 0 else "Opus"),
+        "settled": None,
+    }
+    enough = weeks >= cfg.weeks_first_verdict
+    if out["leader"] and se and enough and abs(mean or 0.0) >= cfg.settled_bar * se:
+        out["settled"] = out["leader"]
     return out
 
 
@@ -619,6 +690,7 @@ def scorecard(
         "as_of": today.isoformat(),
         "version": cfg.version,
         "sha256": cfg.sha256,
+        "weeks_first_verdict": cfg.weeks_first_verdict,
         "scored": len(scored),
         "unscored": [
             {"day": r["day"], "ticker": r["ticker"], "reason": r["reason"]}
@@ -655,18 +727,54 @@ def _ic(x: Any) -> str:
     return "n/a" if not isinstance(x, int | float) else f"{x:+.2f}"
 
 
-def lines(card: dict[str, Any]) -> list[str]:
-    """The scorecard in plain words; the verdict comes first."""
-    p = card["paired"]
-    out = [f"Verdict, Jev against Opus: {p['verdict']}."]
-    if p["pairs"]:
-        rng = (
-            f", likely range {_pct(p['low'])} to {_pct(p['high'])}" if p["low"] is not None else ""
-        )
+def _lead_lines(p: dict[str, Any], first: int) -> list[str]:
+    """Who is ahead so far (always shown, luck or not), then how settled it is."""
+    if not p["pairs"]:
+        return ["Ahead so far: no recommendation both made has finished yet."]
+    gap = abs(p["mean"] or 0.0)
+    if p["leader"]:
+        lead = f"{p['leader']}, by {gap * 100:.2f}% a recommendation"
+    elif p.get("differ"):
+        lead = "neither, level (under 0.01% apart)"
+    else:
+        lead = "neither, level"
+    out = [f"Ahead so far: {lead} over {p['pairs']} pair(s) in {p['weeks']} week(s)."]
+    if p["settled"]:
         out.append(
-            f"On the {p['pairs']} calls both made over {p['weeks']} week(s), Jev scored "
-            f"{_pct(p['mean'])} a call more than Opus{rng}."
+            f"Settled: {p['settled']} ahead (a gap this size is unlikely to be luck, "
+            "even counting every weekly check)."
         )
+        return out
+    early = f" (too early: {p['weeks']} of {first} weeks scored)" if p["weeks"] < first else ""
+    if not p.get("differ"):
+        out.append("Not settled: the two have not disagreed on a finished call yet.")
+    elif p["luck"] is None:
+        out.append(f"Not settled{early}: too few days scored to size luck yet.")
+    else:
+        luck = p["luck"] * 100
+        out.append(
+            f"Not settled{early}: 9 times in 10, luck alone gives a gap between "
+            f"-{luck:.2f}% and +{luck:.2f}% at this point."
+        )
+        bar = p.get("bar")
+        if p["leader"] and bar and early and gap >= bar:
+            out.append(
+                f"The gap already clears the settle bar of {bar * 100:.2f}%; a lead can "
+                f"settle only once {first} weeks are scored."
+            )
+        elif p["leader"] and bar and gap > p["luck"]:
+            wait = f", and only once {first} weeks are scored" if early else ""
+            out.append(
+                f"The gap is outside that range, but since the card is read every week "
+                f"a lead settles only at {bar * 100:.2f}%{wait}."
+            )
+    return out
+
+
+def lines(card: dict[str, Any]) -> list[str]:
+    """The scorecard in plain words; who leads comes first."""
+    p = card["paired"]
+    out = _lead_lines(p, card.get("weeks_first_verdict") or 13)
     if card["open"]:
         due = f"; the next finish on {card['next_due']}" if card["next_due"] else ""
         wait = card.get("waiting") or 0
