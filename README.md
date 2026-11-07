@@ -73,7 +73,8 @@ lock fixes it.
 When a run stops with "nothing run or sent", the day's record needs a person:
 - **its email may have gone out** (the job stopped while sending, or the mail server's answer
   was lost): check the inbox. If the email arrived, set `"sent": true` in the record's `email`
-  on main; if not, set `"sent": false`. Then dispatch again.
+  on main; if not, set `"sent": false`. Then dispatch again. Records are written on one line,
+  so `python -m json.tool runs/daily/<day>.json` shows one readably first.
 - **unfinished or unreadable**: it was never emailed. Delete it from main and dispatch again.
 
 **How steady each method is.** The consistency workflow (manual only) gathers each stock's facts

@@ -431,12 +431,23 @@ def emit_daily(stock: dict[str, Any], record: dict[str, Any], tracer: Tracer) ->
             agent, version = agents[name]
             attrs = _agent_attrs(dict(agent or {}), version)
             if name == "opus why" and (stock.get("why") or {}).get("message"):
-                attrs[A.OBSERVATION_INPUT] = _json(stock["why"]["message"])
+                attrs[A.OBSERVATION_INPUT] = _json(_why_input(stock))
         span = start(name, step["start"], under, attrs, step.get("error"))
         end_at = step["end"]
         span.end(end_time=_ns(max(end_at, step["start"])))
     root.end(end_time=_ns(max(finish, begin)))
     return trace_id_hex(root)
+
+
+def _why_input(stock: dict[str, Any]) -> str:
+    """The why message Opus was sent: the record keeps its head, the trace shows it whole."""
+    stored = str(stock["why"]["message"])
+    try:
+        from tenq.opus import rebuild_why_message
+
+        return rebuild_why_message(stored, stock["pack"])
+    except Exception:  # a trace never fails the run; the stored head is still worth showing
+        return stored
 
 
 def send_daily_traces(
