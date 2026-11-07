@@ -29,6 +29,7 @@ from __future__ import annotations
 import argparse
 import logging
 import math
+import os
 import statistics
 import time
 import uuid
@@ -272,6 +273,8 @@ def main(argv: list[str] | None = None, *, ctx: Context | None = None) -> int:
             "rules": ctx.rules.version,
             "rules_sha256": ctx.rules.sha256,
             "call_prompt": ctx.call_prompt.version,
+            # the commit checked out, set by the workflow from git (as in daily)
+            "code": os.environ.get("TENQ_CODE_SHA", ""),
         },
         "opus_on": ctx.claude is not None,
         "jev_cost": 0.0,
