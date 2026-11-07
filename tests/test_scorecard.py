@@ -579,6 +579,19 @@ def test_each_day_picks_its_own_ranking_and_the_card_says_how_many_used_the_lean
     assert ranking(jev, "jev", CFG)["lean_days"] == 0
 
 
+def test_a_day_of_tied_leans_falls_back_and_is_not_a_lean_day() -> None:
+    rows = [r | {"opus_lean": 0.37} for r in _mixed_day("2026-11-05", 0)]
+    assert ranking(rows, "opus", CFG) == {"ic": pytest.approx(-1.0), "lean_days": 0, "days": 1}
+
+
+def test_a_stock_with_no_opus_call_is_not_ranked_by_lean() -> None:
+    # five leaned Opus calls plus one stock Opus made no call on: the lean day
+    # ranks the five only; the stray row's lean is never read
+    stray = {"day": "2026-11-05", "opus": None, "opus_lean": 0.99, "excess": -5}
+    rows = [*_mixed_day("2026-11-05", 1), stray]
+    assert ranking(rows, "opus", CFG) == {"ic": pytest.approx(1.0), "lean_days": 1, "days": 1}
+
+
 def _card(tmp_path: Path, *records: dict[str, Any], today: date = EXIT) -> dict[str, Any]:
     for r in records:
         _save(tmp_path, r)

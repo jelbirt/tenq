@@ -491,17 +491,25 @@ def ranking(rows: Sequence[dict[str, Any]], method: str, cfg: ScoreConfig) -> di
     for day_rows in days.values():
         leaned = [r for r in day_rows if r.get("opus") and _finite(r.get("opus_lean")) is not None]
         lean = method == "opus" and len(leaned) >= MIN_RANKED
-        pairs = [
-            (v, r["excess"])
-            for r in (leaned if lean else day_rows)
-            if (v := _signed(r, method, cfg, lean)) is not None
-        ]
-        if len(pairs) >= MIN_RANKED:
-            ic = spearman([a for a, _ in pairs], [b for _, b in pairs])
-            if ic is not None:
-                ics.append(ic)
-                lean_days += lean
+        ic = _day_ic(leaned if lean else day_rows, method, cfg, lean)
+        if ic is None and lean:
+            # leans all tied (or too few distinct): the day is still ranked, by
+            # call weight times confidence over all its calls
+            lean = False
+            ic = _day_ic(day_rows, method, cfg, lean)
+        if ic is not None:
+            ics.append(ic)
+            lean_days += lean
     return {"ic": _mean(ics), "lean_days": lean_days, "days": len(ics)}
+
+
+def _day_ic(
+    rows: Sequence[dict[str, Any]], method: str, cfg: ScoreConfig, lean: bool
+) -> float | None:
+    pairs = [(v, r["excess"]) for r in rows if (v := _signed(r, method, cfg, lean)) is not None]
+    if len(pairs) < MIN_RANKED:
+        return None
+    return spearman([a for a, _ in pairs], [b for _, b in pairs])
 
 
 def rank_ic(rows: Sequence[dict[str, Any]], method: str, cfg: ScoreConfig) -> float | None:
