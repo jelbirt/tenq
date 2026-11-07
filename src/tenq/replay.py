@@ -33,10 +33,9 @@ from collections.abc import Callable, Sequence
 from datetime import UTC, date, datetime, time
 from pathlib import Path
 from typing import Any
-from zoneinfo import ZoneInfo
 
 from tenq.config import load_watchlist
-from tenq.prices import BENCHMARK, Bar, Prices, YahooPrices, aligned, fetch
+from tenq.prices import BENCHMARK, MARKET_TZ, Bar, Prices, YahooPrices, aligned, fetch
 from tenq.scorecard import (
     Made,
     ScoreConfig,
@@ -49,7 +48,6 @@ from tenq.scorecard import (
 
 log = logging.getLogger(__name__)
 
-MARKET_TZ = ZoneInfo("America/New_York")
 MADE_AT = time(18, 30)  # the daily job runs after the close; the next open is the entry
 LOOKBACK = 20  # sessions of history behind the momentum baseline
 BASELINES = {
