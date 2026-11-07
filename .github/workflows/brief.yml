@@ -28,6 +28,10 @@ jobs:
       # No stored token: nothing but the commit step below gets push rights.
       - uses: actions/checkout@v4
         with: {ref: main, persist-credentials: false}
+      # the commit actually checked out, for the record (as in daily.yml). The
+      # records are saved only in the last step, after the brief has run, so no
+      # step runs code newer than this.
+      - run: echo "TENQ_CODE_SHA=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
       - uses: astral-sh/setup-uv@v6
         with: {python-version: "3.12", enable-cache: true}
       - run: uv sync --locked

@@ -19,6 +19,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import os
 import tempfile
 import time
 import uuid
@@ -123,6 +124,8 @@ def brief_filing(
         "mode": mode,
         "model": model,
         "prompt_version": prompt.version,
+        # the commit checked out, set by the workflow from git right after checkout
+        "code": os.environ.get("TENQ_CODE_SHA", ""),
         "prompt_input": user_message(meta),
         "metrics": table.to_dict(),
         "agent": None if agent is None else agent.to_dict(),
