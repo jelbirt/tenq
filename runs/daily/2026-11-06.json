@@ -22512,14 +22512,35 @@
  ],
  "jev_cost": 0.027968304000000003,
  "email": {
-  "sent": null,
-  "status": "sending",
-  "claim": "42328214786-1"
+  "sent": true,
+  "status": "email sent to 1 recipient(s)",
+  "subject": "Weekly scorecard + tenq daily, session 2026-11-06: the two calls agree on 16 of 20"
  },
  "trace": {
-  "stored": false,
-  "status": "trace pending",
-  "ids": {}
+  "stored": true,
+  "status": "traces stored: 20 of 20",
+  "ids": {
+   "CRWD": "f3b7ab8efc46e6ba90764fbce07b0786",
+   "DDOG": "5081b080076c12d63212e6551c13aef5",
+   "SNOW": "a1447df46fdaa24503320dfd1e0822d5",
+   "NET": "474dcfc7b0a1c07b3070f844b4139fef",
+   "ZS": "247f8f7991aa0d57cf899be20eb8b2c9",
+   "MDB": "07950a61671e23277273def2739574a6",
+   "TEAM": "5223fd0b5c47df2562754ab460102380",
+   "PANW": "fc68cd6a87a3794f1be7632abbb92180",
+   "SHOP": "78a890e59b1737387304fb6596e979a2",
+   "RBRK": "4c71e829ed2f9db94d503e9fa813e420",
+   "FTNT": "f2739f12d5ad3020596ed1311b96eacb",
+   "OKTA": "d69094362c05c6cadde7c61adc1e4eb7",
+   "DT": "9a16b51cf8b4744176d6b8b8c1b64dd9",
+   "GTLB": "75fb02e3ade3c83b2c9706fa30855b9d",
+   "IOT": "7bb186be52baace78753c87c829eb5d8",
+   "MNDY": "6f895fa656c737de1b34d1e2a23361cb",
+   "HUBS": "b1c9b04b09b560a8e3bc6e2a814c4b52",
+   "NOW": "6e3452b67d876868710193c392007a21",
+   "PLTR": "648a1035effee4a2cd8f8c64bbfd7b64",
+   "ADSK": "a2c35e2eeef806825af43b4261133a7f"
+  }
  },
  "scorecard": {
   "as_of": "2026-11-06",
