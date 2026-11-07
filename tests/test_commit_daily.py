@@ -38,6 +38,7 @@ def repos(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[Path, Path, 
     job = tmp_path / "job"
     _git(tmp_path, "clone", "-q", str(origin), str(job))
     monkeypatch.setenv("TENQ_PUSH_URL", str(origin))
+    monkeypatch.setenv("TENQ_RETRY_SLEEP", "0")
     return origin, other, job
 
 
@@ -107,13 +108,84 @@ def test_a_consistency_record_is_saved_the_same_way(repos: tuple[Path, Path, Pat
     assert _on_main(origin, "runs/consistency/2026-11-07-abc.json") == "{}"
 
 
-def test_a_failed_push_fails_the_step(
+def test_main_unreachable_fails_the_step(
     repos: tuple[Path, Path, Path], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     _, _, job = repos
     (job / "runs" / "daily" / "2026-11-06.json").write_text("{}")
     monkeypatch.setenv("TENQ_PUSH_URL", str(tmp_path / "nowhere.git"))
-    assert _save(job).returncode != 0
+    got = _save(job)
+    assert got.returncode == 1 and "could not fetch main after 2 tries" in got.stdout
+
+
+def _hook(origin: Path, body: str) -> None:
+    hook = origin / "hooks" / "pre-receive"
+    hook.write_text("#!/bin/sh\n" + body + "\n")
+    hook.chmod(0o755)
+
+
+def test_a_refused_push_fails_the_step_and_main_keeps_its_tip(
+    repos: tuple[Path, Path, Path],
+) -> None:
+    origin, _, job = repos
+    _hook(origin, "exit 1")
+    before = _git(origin, "rev-parse", "main")
+    (job / "runs" / "daily" / "2026-11-06.json").write_text("{}")
+    got = _save(job)
+    assert got.returncode == 1 and "push failed after 2 tries" in got.stdout
+    assert _git(origin, "rev-parse", "main") == before
+
+
+def test_a_push_refused_once_is_tried_again(repos: tuple[Path, Path, Path]) -> None:
+    origin, _, job = repos
+    _hook(origin, "if [ ! -e refused-once ]; then touch refused-once; exit 1; fi")
+    (job / "runs" / "daily" / "2026-11-06.json").write_text('{"a": 1}')
+    got = _save(job)
+    assert got.returncode == 0, got.stdout + got.stderr
+    assert (origin / "refused-once").exists()
+    assert _on_main(origin, "runs/daily/2026-11-06.json") == '{"a": 1}'
+
+
+def test_a_record_another_run_saved_is_never_overwritten(
+    repos: tuple[Path, Path, Path],
+) -> None:
+    origin, other, job = repos
+    # another run claimed the same day after this job checked out
+    (other / "runs" / "daily" / "2026-11-06.json").write_text('{"claim": "A"}')
+    _git(other, "add", ".")
+    _git(other, "commit", "-qm", "the other run's claim")
+    _git(other, "push", "-q", "origin", "HEAD:main")
+    (job / "runs" / "daily" / "2026-11-06.json").write_text('{"claim": "B"}')
+    got = _save(job)
+    assert got.returncode == 1 and "main changed runs/daily/2026-11-06.json" in got.stdout
+    assert _on_main(origin, "runs/daily/2026-11-06.json") == '{"claim": "A"}'
+
+
+def test_a_change_on_main_between_this_runs_saves_stops_the_second(
+    repos: tuple[Path, Path, Path],
+) -> None:
+    origin, other, job = repos
+    record = job / "runs" / "daily" / "2026-11-06.json"
+    record.write_text('{"email": {"status": "sending"}}')
+    assert _save(job).returncode == 0  # the claim
+    # someone edits the claimed record on main before the send step saves
+    _git(other, "pull", "-q", "origin", "main")
+    (other / "runs" / "daily" / "2026-11-06.json").write_text('{"by": "hand"}')
+    _git(other, "commit", "-qam", "hand edit")
+    _git(other, "push", "-q", "origin", "HEAD:main")
+    record.write_text('{"email": {"status": "sent"}}')
+    assert _save(job).returncode == 1
+    assert _on_main(origin, "runs/daily/2026-11-06.json") == '{"by": "hand"}'
+
+
+def test_odd_file_names_are_saved_too(repos: tuple[Path, Path, Path]) -> None:
+    origin, _, job = repos
+    for name in ('q"uote.json', "\u00e9.json", "with space.json"):
+        (job / "runs" / "daily" / name).write_text("{}")
+    assert _save(job).returncode == 0
+    listed = _git(origin, "ls-tree", "-r", "-z", "--name-only", "main").split("\0")
+    for name in ('q"uote.json', "\u00e9.json", "with space.json"):
+        assert f"runs/daily/{name}" in listed
 
 
 @pytest.mark.parametrize("workflow", ["daily", "consistency"])

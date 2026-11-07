@@ -6,12 +6,15 @@
 # The commit is made in a separate, temporary copy of main's current tip, and
 # only the record files this run wrote are copied into it. The job's own
 # checkout never moves, so every later step runs the code the record names
-# (versions.code), even if a pull request merged during the run. If main
-# changed a file this run also wrote, this run's copy wins; only these jobs
-# write their records, so that is not expected.
+# (versions.code), even if a pull request merged during the run.
+#
+# A file this run writes is saved only if main still has the version this job
+# last saw: the one it checked out, or the one its own last save pushed. If
+# anything else changed it on main (another run, a hand fix), the save fails
+# and main keeps the other version, so two runs can never both claim a day.
 #
 # Needs GH_TOKEN (TENQ_PUSH_URL, used by the tests, replaces the GitHub URL).
-# Exits 1 if the push fails.
+# Exits 1 if the save fails.
 set -euo pipefail
 
 dir="${1:-runs/daily}"
@@ -19,6 +22,7 @@ case "$dir" in
   runs/daily | runs/consistency) ;;
   *) echo "not a records folder: $dir"; exit 2 ;;
 esac
+pause="${TENQ_RETRY_SLEEP:-5}"
 
 if [ ! -d "$dir" ]; then
   echo "no record in $dir"
@@ -28,23 +32,49 @@ rm -f "$dir"/.*.tmp # a write the job was stopped in: never committed
 
 # the files this run wrote: new or changed against the job's own checkout
 files=()
-while IFS= read -r f; do
+while IFS= read -r -d '' f; do
   [ -f "$f" ] && files+=("$f")
-done < <(git ls-files --others --modified --exclude-standard -- "$dir")
+done < <(git ls-files -z --others --modified --exclude-standard -- "$dir")
 if [ ${#files[@]} -eq 0 ]; then
   echo "no new record in $dir"
   exit 0
 fi
 
 url="${TENQ_PUSH_URL:-https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git}"
-copy="$(mktemp -d)"
+copy=""
 cleanup() {
-  git worktree remove --force "$copy" 2>/dev/null || rm -rf "$copy"
-  git worktree prune
+  if [ -n "$copy" ]; then
+    git worktree remove --force "$copy" 2>/dev/null || rm -rf "$copy" || true
+  fi
+  git worktree prune 2>/dev/null || true
 }
-trap cleanup EXIT
+# cleanup can never change the script's own exit status
+trap 'rc=$?; cleanup; exit $rc' EXIT
 
-git fetch -q "$url" main
+fetched=""
+for attempt in 1 2; do
+  if git fetch -q "$url" main; then
+    fetched=1
+    break
+  fi
+  sleep "$pause"
+done
+if [ -z "$fetched" ]; then
+  echo "could not fetch main after $attempt tries"
+  exit 1
+fi
+
+# the version of each file this job last saw: its own last save, else its checkout
+base="$(git rev-parse -q --verify refs/tenq/saved || git rev-parse HEAD)"
+blob() { git rev-parse -q --verify "$1" 2>/dev/null || true; }
+for f in "${files[@]}"; do
+  if [ "$(blob "FETCH_HEAD:$f")" != "$(blob "$base:$f")" ]; then
+    echo "main changed $f during this run; not saving over it"
+    exit 1
+  fi
+done
+
+copy="$(mktemp -d)"
 git worktree add -q --detach "$copy" FETCH_HEAD
 for f in "${files[@]}"; do
   mkdir -p "$copy/$(dirname "$f")"
@@ -55,18 +85,24 @@ if git -C "$copy" diff --cached --quiet; then
   echo "no new record in $dir"
   exit 0
 fi
-names="$(git -C "$copy" diff --cached --name-only | xargs -n1 basename | tr '\n' ' ')"
+names=""
+while IFS= read -r -d '' f; do
+  names+="${f##*/} "
+done < <(git -C "$copy" diff --cached --name-only -z)
 git -C "$copy" -c user.name=tenq-bot -c user.email=bot@users.noreply.github.com \
   commit -q -m "runs: ${dir#runs/} record $names"
 
-# the brief job also commits runs/ (other files): rebase onto it, retry once
+# other jobs also commit runs/ (other files): rebase onto them, retry once. A
+# rebase that touches this run's files conflicts, and the save fails.
 for attempt in 1 2; do
   if git -C "$copy" -c user.name=tenq-bot -c user.email=bot@users.noreply.github.com \
     pull -q --rebase "$url" main && git -C "$copy" push -q "$url" HEAD:main; then
+    git update-ref refs/tenq/saved "$(git -C "$copy" rev-parse HEAD)" ||
+      echo "saved, but could not note it: the next save will refuse"
     exit 0
   fi
   git -C "$copy" rebase --abort 2>/dev/null || true
-  sleep 5
+  sleep "$pause"
 done
 echo "push failed after $attempt tries"
 exit 1
