@@ -117,6 +117,14 @@ never do. The scorecard never holds back the email: if it fails, the email says 
 out. `uv run python -m tenq.scorecard` prints the current card without saving anything: only
 the daily workflow writes the ledger.
 
+`uv run python -m tenq.replay` replays the baselines (always Hold, always Buy, last month's
+winners) over the last 3 years of prices ([replay.py](src/tenq/replay.py)), scored exactly as a
+live call is. Jev and Opus cannot be replayed, since the news they read is gone. This shows how
+the baselines have done over the last 3 years and how much they swing from year to year. The
+bar a live method must clear is still the baselines on the same days, on the scorecard. The
+luck range here is for 3 years of calls; a few months of live calls have a much wider one. The
+watchlist was chosen in 2026, which flatters every rule that mostly buys, always Buy most.
+
 ## Guardrails
 
 - The model never sees a shell, files or the web: `--tools ""`, `--strict-mcp-config`, an
