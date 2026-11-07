@@ -579,6 +579,19 @@ def test_each_day_picks_its_own_ranking_and_the_card_says_how_many_used_the_lean
     assert ranking(jev, "jev", CFG)["lean_days"] == 0
 
 
+@pytest.mark.parametrize(("kept", "by_lean"), [(16, True), (15, False)])
+def test_most_of_a_days_calls_must_keep_a_lean_to_rank_by_lean(kept: int, by_lean: bool) -> None:
+    # twenty Opus Buys: confidence orders them against their excess returns,
+    # leans with them; 16 of 20 leans (80%) is enough, 15 is not
+    rows = [
+        {"day": "2026-11-05", "opus": "Buy", "opus_confidence": 0.99 - i / 100}
+        | {"opus_lean": 0.01 + i / 100 if i < kept else None, "excess": i}
+        for i in range(20)
+    ]
+    want = {"ic": pytest.approx(1.0 if by_lean else -1.0), "lean_days": int(by_lean), "days": 1}
+    assert ranking(rows, "opus", CFG) == want
+
+
 def test_a_day_of_tied_leans_falls_back_and_is_not_a_lean_day() -> None:
     rows = [r | {"opus_lean": 0.37} for r in _mixed_day("2026-11-05", 0)]
     assert ranking(rows, "opus", CFG) == {"ic": pytest.approx(-1.0), "lean_days": 0, "days": 1}

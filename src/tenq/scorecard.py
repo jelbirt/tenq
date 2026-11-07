@@ -63,6 +63,10 @@ SESSION_OPENS = clock(9, 30)
 CALLS = ("Buy", "Hold", "Sell", "Short")
 METHODS = {"jev": "Jev", "opus": "Opus"}
 MIN_RANKED = 5  # fewer stocks than this on a day: no rank correlation for that day
+# Opus is ranked by lean on a day only when this share of its calls kept one: a
+# lean is lost mostly when it points against its call, a borderline stock that
+# belongs mid-ranking, so ranking the rest alone would flatter Opus
+LEAN_SHARE = 0.8
 TOP_LEVEL = {
     "version",
     "sessions",
@@ -479,18 +483,20 @@ def _signed(row: dict[str, Any], method: str, cfg: ScoreConfig, lean: bool) -> f
 def ranking(rows: Sequence[dict[str, Any]], method: str, cfg: ScoreConfig) -> dict[str, Any]:
     """Mean over days of the rank correlation between how a method leaned and
     the excess return that followed: does it order the stocks well? On a day
-    where at least MIN_RANKED Opus calls carry a lean, Opus is ranked by lean
-    over those calls only; otherwise by call weight times confidence over all
-    its calls, so one day never mixes the two. Also says on how many of the
-    ranked days the lean was used."""
+    where at least MIN_RANKED Opus calls, and at least LEAN_SHARE of them,
+    carry a lean, Opus is ranked by lean over those calls only; otherwise by
+    call weight times confidence over all its calls, so one day never mixes the
+    two. Also says on how many of the ranked days the lean was used."""
     days: dict[str, list[dict[str, Any]]] = {}
     for r in rows:
         days.setdefault(r["day"], []).append(r)
     ics = []
     lean_days = 0
     for day_rows in days.values():
-        leaned = [r for r in day_rows if r.get("opus") and _finite(r.get("opus_lean")) is not None]
-        lean = method == "opus" and len(leaned) >= MIN_RANKED
+        made = [r for r in day_rows if r.get("opus")]
+        leaned = [r for r in made if _finite(r.get("opus_lean")) is not None]
+        need = max(MIN_RANKED, math.ceil(LEAN_SHARE * len(made)))
+        lean = method == "opus" and len(leaned) >= need
         ic = _day_ic(leaned if lean else day_rows, method, cfg, lean)
         if ic is None and lean:
             # leans all tied (or too few distinct): the day is still ranked, by

@@ -109,7 +109,7 @@ to simple baselines (always Hold, always Buy, buy last month's winners, and the 
 shuffled across stocks), the days the two disagreed, how many calls are still open and the
 week's cost. It also shows how well each method ordered the stocks each day: Jev by its rules
 score, and Opus by its lean, a number from -1 to +1 it gives with each call (over the calls
-that have one, on a day where at least 5 do; otherwise by call weight times confidence, and
+that have one, on a day where at least 5 and at least 80% of its calls do; otherwise by call weight times confidence, and
 the card says on how many days the lean was used). A lean that points against its own call is
 dropped and the call stands. Only the full daily records count; check runs
 never do. The scorecard never holds back the email: if it fails, the email says so and goes
