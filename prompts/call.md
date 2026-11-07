@@ -91,6 +91,6 @@ lean that points against the call: a Buy's must be above 0, and a Sell's or
 Short's below 0.
 
 Answer with one JSON object and nothing else, exactly this shape:
-{"call": "Buy", "confidence": 0.55, "lean": 0.3,
+{"call": "Buy", "confidence": 0.55, "lean": 0.37,
  "reasons": [{"text": "{px:TICKER:excess_5d}, as the outlook disappointed.",
               "cites": ["news:TICKER:0123456789"]}]}

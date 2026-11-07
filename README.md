@@ -108,9 +108,10 @@ day and calls held for weeks are each counted once. After that the card shows ea
 to simple baselines (always Hold, always Buy, buy last month's winners, and the same calls
 shuffled across stocks), the days the two disagreed, how many calls are still open and the
 week's cost. It also shows how well each method ordered the stocks each day: Jev by its rules
-score, and Opus by its lean, a number from -1 to +1 it gives with each call (on a day where any
-Opus call lacks a lean, by call weight times confidence instead). A lean that points against
-its own call is dropped and the call stands. Only the full daily records count; check runs
+score, and Opus by its lean, a number from -1 to +1 it gives with each call (over the calls
+that have one, on a day where at least 5 do; otherwise by call weight times confidence, and
+the card says on how many days the lean was used). A lean that points against its own call is
+dropped and the call stands. Only the full daily records count; check runs
 never do. The scorecard never holds back the email: if it fails, the email says so and goes
 out. `uv run python -m tenq.scorecard` prints the current card without saving anything: only
 the daily workflow writes the ledger.

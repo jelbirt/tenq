@@ -87,7 +87,16 @@ def test_an_unreadable_confidence_is_none_but_the_call_stands(confidence: Any) -
 
 
 @pytest.mark.parametrize(
-    ("call", "lean"), [("Buy", 0.4), ("Hold", -0.2), ("Hold", 0.0), ("Sell", -0.3), ("Short", -1)]
+    ("call", "lean"),
+    [
+        ("Buy", 0.4),
+        ("Buy", 1),  # the end of the range counts
+        ("Hold", -0.2),
+        ("Hold", 0.0),
+        ("Hold", 0.9),  # a Hold's lean is not capped: it ranks, the call decides
+        ("Sell", -0.3),
+        ("Short", -1),
+    ],
 )
 def test_a_lean_that_points_the_way_of_the_call_is_kept(call: str, lean: float) -> None:
     got = parse_call(json.dumps({"call": call, "lean": lean}))
@@ -101,6 +110,7 @@ def test_a_lean_that_points_the_way_of_the_call_is_kept(call: str, lean: float) 
         ('{"call": "Buy", "lean": "high"}', "not a number"),
         ('{"call": "Buy", "lean": true}', "not a number"),
         ('{"call": "Buy", "lean": 1.5}', "not -1 to +1"),
+        ('{"call": "Buy", "lean": 1.0000001}', "not -1 to +1"),
         ('{"call": "Buy", "lean": NaN}', "not -1 to +1"),
         ('{"call": "Buy", "lean": 1e400}', "not -1 to +1"),
         ('{"call": "Buy", "lean": -0.2}', "the lean -0.20 points the other way from Buy"),
