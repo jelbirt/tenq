@@ -31,7 +31,11 @@ def _run(tmp_path: Path, *argv: str, **kw: Any) -> tuple[int, dict[str, Any]]:
     return code, record
 
 
-def test_each_method_is_asked_repeats_times_on_one_pack(tmp_path: Path) -> None:
+def test_each_method_is_asked_repeats_times_on_one_pack(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("GITHUB_SHA", "the-commit-that-triggered-it")
+    monkeypatch.setenv("TENQ_CODE_SHA", "abc123")
     gathered: list[str] = []
     jev, claude = Jev(), Claude()
     ctx = _ctx(jev, claude)
@@ -54,6 +58,7 @@ def test_each_method_is_asked_repeats_times_on_one_pack(tmp_path: Path) -> None:
     assert record["complete"] is True and record["day"] == "2026-11-04"
     assert record["versions"]["call_prompt"].startswith("call-v")
     assert record["versions"]["rules_sha256"]
+    assert record["versions"]["code"] == "abc123"  # the commit checked out
     assert all(record["run_id"][:8] in a for a in jev.asked)  # no clash with another run
     assert record["summary"]["jev"] == {
         "asked": 2,
