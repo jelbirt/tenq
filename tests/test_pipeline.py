@@ -518,3 +518,32 @@ def test_records_are_written_whole(tmp_path: Path) -> None:
     _write(path, {"email": {"sent": True}})
     assert json.loads(path.read_text()) == {"email": {"sent": True}}
     assert [p.name for p in path.parent.iterdir()] == ["r.json"]  # no temp file left
+
+
+def test_a_rerun_of_a_held_filing_never_replaces_its_record(
+    store: FilingStore, tmp_path: Path
+) -> None:
+    runs = tmp_path / "runs"
+    path = record_path(runs, store.filings("CRWD")[0])
+    path.parent.mkdir(parents=True)
+    held = '{"email": {"sent": null, "status": "email may have gone out"}}'
+    path.write_text(held)
+    rec = _brief(store, runs, claimer=lambda p: True)
+    assert path.read_text() == held  # left for a person
+    (rerun,) = path.parent.glob("*.rerun-*.json")
+    assert json.loads(rerun.read_text())["run_id"] == rec["run_id"]
+
+
+def test_a_held_filing_turns_the_job_red(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    import tenq.run
+
+    def held_one(ticker: str, *a: object, held: list[str], **kw: object) -> list[object]:
+        held.append(f"{ticker} 0001")
+        return []
+
+    monkeypatch.setattr(tenq.run, "run_ticker", held_one)
+    monkeypatch.setattr("tenq.edgar.EdgarSource", lambda: None)
+    args = ["--ticker", "CRWD", "--root", str(tmp_path), "--runs", str(tmp_path / "runs")]
+    assert tenq.run.main(args) == 1
+    monkeypatch.setattr(tenq.run, "run_ticker", lambda *a, **kw: [])
+    assert tenq.run.main(args) == 0

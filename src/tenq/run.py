@@ -192,6 +192,10 @@ def email_state(path: Path) -> str:
     return "retry" if sent is False else "person"
 
 
+# the same save the daily run uses (scripts/, next to src/)
+SAVE_SCRIPT = Path(__file__).resolve().parents[2] / "scripts" / "commit-daily.sh"
+
+
 def briefed(path: Path) -> bool:
     """A filing is done once its email went out."""
     return email_state(path) == "sent"
@@ -199,12 +203,31 @@ def briefed(path: Path) -> bool:
 
 def save_claim(path: Path) -> bool:
     """Save the records to main before an email goes out (in the workflow, which
-    sets TENQ_SAVE_CLAIMS); elsewhere there is no shared main to claim on."""
+    sets TENQ_SAVE_CLAIMS); elsewhere there is no shared main to claim on. The
+    claim counts only if this record, as written, is what the save pushed."""
     if os.environ.get("TENQ_SAVE_CLAIMS") != "1":
         return True
     log.info("saving %s to main before sending", path.name)
-    got = subprocess.run(["bash", "scripts/commit-daily.sh", "runs"], check=False)
-    return got.returncode == 0
+
+    def git(*args: str) -> str:
+        got = subprocess.run(["git", *args], cwd=top, capture_output=True, text=True, check=False)
+        return got.stdout.strip() if got.returncode == 0 else ""
+
+    try:
+        top = path.resolve().parent
+        top = Path(git("rev-parse", "--show-toplevel") or "/nonexistent")
+        rel = path.resolve().relative_to(top.resolve()).as_posix()
+        got = subprocess.run(["bash", str(SAVE_SCRIPT), "runs"], cwd=top, check=False)
+    except (OSError, ValueError):
+        log.error("%s: not in a checkout this job can save from", path.name)
+        return False
+    if got.returncode != 0:
+        return False
+    saved = git("rev-parse", "-q", "--verify", f"refs/tenq/saved:{rel}")
+    if not saved or saved != git("hash-object", "--", rel):
+        log.error("%s: the save did not push this record; not sending", path.name)
+        return False
+    return True
 
 
 def run_ticker(
