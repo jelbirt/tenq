@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # Commit and push a runs/ folder to main (default runs/daily). Used by daily.yml
 # twice: after the claim (the email is sent only if this push worked) and after
-# the send; and by consistency.yml with runs/consistency.
+# the send; by consistency.yml with runs/consistency; and by the brief with all
+# of runs (its records sit in runs/<TICKER>/, plus runs/heartbeat), before each
+# email (tenq.run.save_claim) and at the end.
 #
 # The commit is made in a separate, temporary copy of main's current tip, and
 # only the record files this run wrote are copied into it. The job's own
@@ -19,7 +21,7 @@ set -euo pipefail
 
 dir="${1:-runs/daily}"
 case "$dir" in
-  runs/daily | runs/consistency) ;;
+  runs/daily | runs/consistency | runs) ;;
   *) echo "not a records folder: $dir"; exit 2 ;;
 esac
 pause="${TENQ_RETRY_SLEEP:-5}"

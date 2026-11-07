@@ -201,15 +201,29 @@ def test_each_workflow_notes_the_commit_it_checked_out(workflow: str) -> None:
     assert steps[1]["run"] == 'echo "TENQ_CODE_SHA=$(git rev-parse HEAD)" >> "$GITHUB_ENV"'
 
 
-def test_the_brief_saves_its_records_only_after_everything_else_ran() -> None:
+def test_the_brief_never_moves_its_checkout() -> None:
     import yaml
 
     steps = yaml.safe_load(Path(".github/workflows/brief.yml").read_text())["jobs"]["brief"][
         "steps"
     ]
-    # one checkout, first; the only step that moves it (the save) comes last
+    # one checkout, first; no step moves it: records are saved from a copy of main
     checkouts = [i for i, s in enumerate(steps) if s.get("uses", "").startswith("actions/checkout")]
     assert checkouts == [0]
     movers = re.compile(r"\bgit\b[^\n]*\b(pull|fetch|reset|checkout|switch|merge|rebase)\b")
     moves = [i for i, s in enumerate(steps) if movers.search(s.get("run", ""))]
-    assert moves == [len(steps) - 1]
+    assert moves == []
+    assert steps[-1]["run"].strip().endswith("scripts/commit-daily.sh runs")
+    (run,) = [s for s in steps if s.get("name") == "run"]
+    assert run["env"]["TENQ_SAVE_CLAIMS"] == "1"  # each claim reaches main before its email
+
+
+def test_the_brief_saves_all_of_runs(repos: tuple[Path, Path, Path]) -> None:
+    origin, _, job = repos
+    (job / "runs" / "CRWD").mkdir()
+    (job / "runs" / "CRWD" / "0001.json").write_text("{}")
+    (job / "runs" / "heartbeat").write_text("2026-11-07")
+    assert _save(job, "runs").returncode == 0
+    assert _on_main(origin, "runs/CRWD/0001.json") == "{}"
+    assert _on_main(origin, "runs/heartbeat") == "2026-11-07"
+    assert _save(job, "src").returncode == 2  # still only records folders

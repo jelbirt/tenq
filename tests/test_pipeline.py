@@ -20,7 +20,7 @@ from tenq.deliver import DISCLAIMER, Email, render
 from tenq.filings import Fact, FilingMeta, FilingStore, Passage
 from tenq.llm import AgentRun, ToolCall
 from tenq.metrics import metrics_for
-from tenq.run import brief_filing, briefed, record_path, run_ticker
+from tenq.run import brief_filing, briefed, email_state, record_path, run_ticker
 from tenq.trace import Tracing, connect, emit, send_trace
 
 LATEST = "CRWD-0001535527-26-000031"
@@ -419,3 +419,102 @@ def test_a_named_accession_must_be_saved(store: FilingStore, tmp_path: Path) -> 
 def test_dropped_reasons_are_kept_in_order() -> None:
     r = CheckResult(dropped=[Dropped(BAD, "a"), Dropped(GOOD, "b")])
     assert [d.reason for d in r.dropped] == ["a", "b"]
+
+
+def _brief(store: FilingStore, runs: Path, **kw: Any) -> dict[str, Any]:
+    meta = store.filings("CRWD")[0]
+    kw.setdefault("sender", Outbox())
+    kw.setdefault("briefer", _briefer([GOOD]))
+    kw.setdefault("tracer", _no_trace)
+    return brief_filing(meta, store, runs, "http://x", prompt=PROMPT, **kw)
+
+
+def test_the_record_reaches_main_before_the_email_goes_out(
+    store: FilingStore, tmp_path: Path
+) -> None:
+    seen: list[str] = []
+    outbox = Outbox()
+
+    def claimer(path: Path) -> bool:
+        record = json.loads(path.read_text())
+        seen.append(record["email"]["status"])
+        assert not outbox.sent  # nothing sent before the claim is saved
+        return True
+
+    rec = _brief(store, tmp_path / "runs", sender=outbox, claimer=claimer)
+    assert seen == ["sending"] and len(outbox.sent) == 1 and rec["email"]["sent"] is True
+
+
+def test_a_claim_that_could_not_be_saved_sends_nothing(store: FilingStore, tmp_path: Path) -> None:
+    outbox = Outbox()
+    rec = _brief(store, tmp_path / "runs", sender=outbox, claimer=lambda p: False)
+    assert not outbox.sent and rec["email"]["sent"] is False
+    assert "could not be saved to main first" in rec["email"]["status"]
+    # a plain failure: the next run tries again
+    assert email_state(record_path(tmp_path / "runs", store.filings("CRWD")[0])) == "retry"
+
+
+def test_email_off_claims_nothing(store: FilingStore, tmp_path: Path) -> None:
+    def claimer(path: Path) -> bool:
+        raise AssertionError("no claim when no email goes out")
+
+    rec = _brief(store, tmp_path / "runs", email=False, claimer=claimer)
+    assert rec["email"] == {**rec["email"], "sent": False, "status": "email off for this run"}
+
+
+@pytest.mark.parametrize(
+    ("content", "state"),
+    [
+        (None, "none"),
+        ('{"email": {"sent": true}}', "sent"),
+        ('{"email": {"sent": false}}', "retry"),
+        ('{"email": {"sent": null, "status": "sending"}}', "person"),
+        ('{"email": {"sent": null, "status": "email may have gone out"}}', "person"),
+        ('{"email": {"sent": "yes"}}', "person"),
+        ('{"email": {"se', "person"),  # cut off mid-write
+    ],
+)
+def test_email_state(tmp_path: Path, content: str | None, state: str) -> None:
+    path = tmp_path / "r.json"
+    if content is not None:
+        path.write_text(content)
+    assert email_state(path) == state
+
+
+def test_a_record_that_may_have_gone_out_is_never_resent(
+    store: FilingStore, tmp_path: Path
+) -> None:
+    runs = tmp_path / "runs"
+    meta = store.filings("CRWD")[0]
+    path = record_path(runs, meta)
+    path.parent.mkdir(parents=True)
+    path.write_text('{"email": {"sent": null, "status": "email may have gone out"}}')
+    outbox = Outbox()
+    held: list[str] = []
+    got = run_ticker(
+        "CRWD", StoreSource(store), store, runs, node=_fake_node, held=held,
+        prompt=PROMPT, briefer=_briefer([GOOD]), sender=outbox, tracer=_no_trace,
+        claimer=lambda p: True,
+    )  # fmt: skip
+    assert got == [] and not outbox.sent and held == [f"CRWD {meta.accession}"]
+    assert "may have gone out" in path.read_text()  # left for a person
+
+
+def test_a_maybe_sent_answer_is_recorded_as_needing_a_person(
+    store: FilingStore, tmp_path: Path
+) -> None:
+    rec = _brief(
+        store, tmp_path / "runs", claimer=lambda p: True,
+        sender=lambda m: (None, "email may have gone out: TimeoutError while sending"),
+    )  # fmt: skip
+    assert rec["email"]["sent"] is None
+    assert email_state(record_path(tmp_path / "runs", store.filings("CRWD")[0])) == "person"
+
+
+def test_records_are_written_whole(tmp_path: Path) -> None:
+    from tenq.run import _write
+
+    path = tmp_path / "a" / "r.json"
+    _write(path, {"email": {"sent": True}})
+    assert json.loads(path.read_text()) == {"email": {"sent": True}}
+    assert [p.name for p in path.parent.iterdir()] == ["r.json"]  # no temp file left

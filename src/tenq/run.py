@@ -20,6 +20,7 @@ import argparse
 import json
 import logging
 import os
+import subprocess
 import tempfile
 import time
 import uuid
@@ -79,10 +80,16 @@ def brief_filing(
     briefer: Briefer = write_brief,
     sender: Callable[[Email], tuple[bool | None, str]] = send,
     tracer: Callable[[dict[str, Any]], tuple[bool, str]] = send_trace,
+    claimer: Callable[[Path], bool] | None = None,
     steps: Steps | None = None,
 ) -> dict[str, Any]:
-    """Brief one saved filing; write and return its run record."""
+    """Brief one saved filing; write and return its run record.
+
+    Before the email goes out, the record is saved to main marked "sending"
+    (`claimer`); if that save fails, nothing is sent. So a record of every email
+    is on main before it can arrive, and no later run can send it again."""
     steps = steps or Steps()
+    claimer = claimer or save_claim
     run_id = str(uuid.uuid4())
     started = time.time()
     table = metrics_for(store, meta.ticker, meta.accession)
@@ -112,10 +119,6 @@ def brief_filing(
         run_id=run_id,
         prompt_version=prompt.version,
     )
-    t = time.time()
-    sent, status = sender(message) if email else (False, "email off for this run")
-    steps.add("email", t, status, None if sent or not email else status)
-
     record: dict[str, Any] = {
         "run_id": run_id,
         "started_at": started,
@@ -134,17 +137,30 @@ def brief_filing(
             "kept": [_claim_dict(c) for c in result.kept],
             "dropped": [{**_claim_dict(d.claim), "reason": d.reason} for d in result.dropped],
         },
-        "email": {"sent": sent, "status": status, "subject": message.subject},
+        "email": {"sent": None, "status": "sending", "subject": message.subject},
         "steps": steps.items,
     }
-    # written before tracing too: once the email is out, a cancelled job must
-    # still leave the record that stops the next run sending it again
     record["trace"] = {"sent": False, "status": "trace pending"}
     path = record_path(runs, meta)
-    if not record["email"]["sent"] and briefed(path):
-        # a re-run that sent nothing (email off, or SMTP down) must not replace the
-        # record of an email that went out, or the next run would send it again
+    if email_state(path) not in ("none", "retry"):
+        # a re-run of a filing already emailed (or waiting on a person) never
+        # replaces that record: it writes its own beside it
         path = path.with_name(f"{meta.accession}.rerun-{run_id}.json")
+    t = time.time()
+    sent: bool | None
+    if not email:
+        sent, status = False, "email off for this run"
+    else:
+        _write(path, record)
+        if claimer(path):
+            sent, status = sender(message)
+        else:
+            sent, status = False, "not sent: the record could not be saved to main first"
+    steps.add("email", t, status, None if sent or not email else status)
+    record["ended_at"] = time.time()
+    record["email"] = {"sent": sent, "status": status, "subject": message.subject}
+    # written before tracing too: once the email is out, a cancelled job must
+    # still leave the record that stops the next run sending it again
     _write(path, record)
     traced, trace_status = tracer(record)
     record["trace"] = {"sent": traced, "status": trace_status}
@@ -154,16 +170,41 @@ def brief_filing(
 
 
 def _write(path: Path, record: dict[str, Any]) -> None:
+    """Write whole or not at all: a job stopped mid-write leaves the old record."""
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(record, indent=1, default=str) + "\n", encoding="utf-8")
+    tmp = path.with_name(f".{path.name}.tmp")
+    tmp.write_text(json.dumps(record, indent=1, default=str) + "\n", encoding="utf-8")
+    os.replace(tmp, path)
+
+
+def email_state(path: Path) -> str:
+    """ "none" (no record), "sent", "retry" (it failed, or email was off), or
+    "person": the record cannot be read, is still marked as being sent, or says
+    the email may have gone out. Only a person can tell, so it is never resent."""
+    if not path.exists():
+        return "none"
+    try:
+        sent = json.loads(path.read_text(encoding="utf-8"))["email"]["sent"]
+    except (OSError, ValueError, KeyError, TypeError):
+        return "person"
+    if sent is True:
+        return "sent"
+    return "retry" if sent is False else "person"
 
 
 def briefed(path: Path) -> bool:
-    """A filing is done once its email went out; a failed or email-off run is retried."""
-    try:
-        return bool(json.loads(path.read_text(encoding="utf-8"))["email"]["sent"])
-    except (OSError, ValueError, KeyError, TypeError):
-        return False
+    """A filing is done once its email went out."""
+    return email_state(path) == "sent"
+
+
+def save_claim(path: Path) -> bool:
+    """Save the records to main before an email goes out (in the workflow, which
+    sets TENQ_SAVE_CLAIMS); elsewhere there is no shared main to claim on."""
+    if os.environ.get("TENQ_SAVE_CLAIMS") != "1":
+        return True
+    log.info("saving %s to main before sending", path.name)
+    got = subprocess.run(["bash", "scripts/commit-daily.sh", "runs"], check=False)
+    return got.returncode == 0
 
 
 def run_ticker(
@@ -175,6 +216,7 @@ def run_ticker(
     backfill: int = 0,
     accession: str | None = None,
     node: NodeFactory = xerj_node,
+    held: list[str] | None = None,
     **kw: Any,
 ) -> list[dict[str, Any]]:
     """Sync a ticker's filings and brief the ones that need it, oldest first."""
@@ -191,7 +233,17 @@ def run_ticker(
             raise LookupError(f"{ticker} {accession} is not among the saved filings")
     else:
         window = saved[: max(1, backfill)]
-        targets = [m for m in window if not briefed(record_path(runs, m))]
+        states = {m.accession: email_state(record_path(runs, m)) for m in window}
+        for m in window:
+            if states[m.accession] == "person":
+                log.error(
+                    "%s %s: its email may have gone out; check the inbox and set "
+                    "email.sent in %s to true or false",
+                    ticker, m.accession, record_path(runs, m),
+                )  # fmt: skip
+                if held is not None:
+                    held.append(f"{ticker} {m.accession}")
+        targets = [m for m in window if states[m.accession] in ("none", "retry")]
     if not targets:
         log.info("%s: nothing new", ticker)
         return []
@@ -235,6 +287,7 @@ def main(argv: list[str] | None = None) -> int:
         ap.error("--accession needs exactly one --ticker")
     source, store, prompt = EdgarSource(), FilingStore(args.root), load_prompt()
     failed = False
+    held: list[str] = []
     for ticker in tickers:
         try:
             records = run_ticker(
@@ -247,13 +300,14 @@ def main(argv: list[str] | None = None) -> int:
                 prompt=prompt,
                 model=args.model,
                 email=not args.no_email,
+                held=held,
             )
         except Exception:
             log.exception("%s: run failed", ticker)
             failed = True
             continue
         failed |= any(not r["email"]["sent"] for r in records if not args.no_email)
-    return 1 if failed else 0
+    return 1 if failed or held else 0
 
 
 if __name__ == "__main__":
