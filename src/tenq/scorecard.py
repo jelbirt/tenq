@@ -63,6 +63,10 @@ SESSION_OPENS = clock(9, 30)
 CALLS = ("Buy", "Hold", "Sell", "Short")
 METHODS = {"jev": "Jev", "opus": "Opus"}
 MIN_RANKED = 5  # fewer stocks than this on a day: no rank correlation for that day
+# Opus is ranked by lean on a day only when this share of its calls kept one: a
+# lean is lost mostly when it points against its call, a borderline stock that
+# belongs mid-ranking, so ranking the rest alone would flatter Opus
+LEAN_SHARE = 0.8
 TOP_LEVEL = {
     "version",
     "sessions",
@@ -197,6 +201,7 @@ class Made:
     jev_score: float | None  # the rules' score behind Jev's call
     opus: str | None
     opus_confidence: float | None
+    opus_lean: float | None  # -1 to +1 from call-v11 on; None before
     momentum: float | None  # the stock's excess return over QQQ in the 20 sessions before
     volatility: float | None  # its annualised volatility over those sessions
     versions: dict[str, str]
@@ -208,6 +213,12 @@ def _number(pack: Any, wanted: str) -> float | None:
             v = n.get("value")
             return float(v) if isinstance(v, int | float) and math.isfinite(v) else None
     return None
+
+
+def _finite(raw: Any) -> float | None:
+    if isinstance(raw, bool) or not isinstance(raw, int | float):
+        return None
+    return float(raw) if math.isfinite(raw) else None
 
 
 def _call(raw: Any) -> str | None:
@@ -235,6 +246,7 @@ def calls_from(record: dict[str, Any]) -> list[Made]:
                 jev_score=call.get("score") if jev else None,
                 opus=own,
                 opus_confidence=opus.get("confidence") if own else None,
+                opus_lean=_finite(opus.get("lean")) if own else None,
                 momentum=_number(s.get("pack"), f"px:{t}:excess_20d"),
                 volatility=_number(s.get("pack"), f"px:{t}:vol_20d"),
                 versions=versions,
@@ -454,33 +466,62 @@ def spearman(xs: Sequence[float], ys: Sequence[float]) -> float | None:
     return statistics.correlation(_ranks(xs), _ranks(ys))
 
 
-def _signed(row: dict[str, Any], method: str, cfg: ScoreConfig) -> float | None:
-    """How strongly a method leaned, for ranking: Jev's rules score, or Opus's
-    call weight times its confidence."""
+def _signed(row: dict[str, Any], method: str, cfg: ScoreConfig, lean: bool) -> float | None:
+    """How strongly a method leaned, for ranking: Jev's rules score; Opus's own
+    lean when `lean`, otherwise its call weight times its confidence."""
     if method == "jev":
         v = row.get("jev_score")
         return float(v) if isinstance(v, int | float) else None
+    if lean:
+        return _finite(row.get("opus_lean"))
     call, conf = row.get("opus"), row.get("opus_confidence")
     if call is None or not isinstance(conf, int | float):
         return None
     return cfg.weights[call] * float(conf)
 
 
-def rank_ic(rows: Sequence[dict[str, Any]], method: str, cfg: ScoreConfig) -> float | None:
+def ranking(rows: Sequence[dict[str, Any]], method: str, cfg: ScoreConfig) -> dict[str, Any]:
     """Mean over days of the rank correlation between how a method leaned and
-    the excess return that followed: does it order the stocks well?"""
-    by_day: dict[str, list[tuple[float, float]]] = {}
+    the excess return that followed: does it order the stocks well? On a day
+    where at least MIN_RANKED Opus calls, and at least LEAN_SHARE of them,
+    carry a lean, Opus is ranked by lean over those calls only; otherwise by
+    call weight times confidence over all its calls, so one day never mixes the
+    two. Also says on how many of the ranked days the lean was used."""
+    days: dict[str, list[dict[str, Any]]] = {}
     for r in rows:
-        v = _signed(r, method, cfg)
-        if v is not None:
-            by_day.setdefault(r["day"], []).append((v, r["excess"]))
+        days.setdefault(r["day"], []).append(r)
     ics = []
-    for pairs in by_day.values():
-        if len(pairs) >= MIN_RANKED:
-            ic = spearman([a for a, _ in pairs], [b for _, b in pairs])
-            if ic is not None:
-                ics.append(ic)
-    return _mean(ics)
+    lean_days = 0
+    for day_rows in days.values():
+        made = [r for r in day_rows if r.get("opus")]
+        leaned = [r for r in made if _finite(r.get("opus_lean")) is not None]
+        need = max(MIN_RANKED, math.ceil(LEAN_SHARE * len(made)))
+        lean = method == "opus" and len(leaned) >= need
+        ic = _day_ic(leaned if lean else day_rows, method, cfg, lean)
+        if ic is None and lean:
+            # leans all tied (or too few distinct): the day is still ranked, by
+            # call weight times confidence over all its calls
+            lean = False
+            ic = _day_ic(day_rows, method, cfg, lean)
+        if ic is not None:
+            ics.append(ic)
+            lean_days += lean
+    return {"ic": _mean(ics), "lean_days": lean_days, "days": len(ics)}
+
+
+def _day_ic(
+    rows: Sequence[dict[str, Any]], method: str, cfg: ScoreConfig, lean: bool
+) -> float | None:
+    pairs = [(v, r["excess"]) for r in rows if (v := _signed(r, method, cfg, lean)) is not None]
+    if len(pairs) < MIN_RANKED:
+        return None
+    return spearman([a for a, _ in pairs], [b for _, b in pairs])
+
+
+def rank_ic(rows: Sequence[dict[str, Any]], method: str, cfg: ScoreConfig) -> float | None:
+    """The mean daily rank correlation alone; see `ranking`."""
+    ic: float | None = ranking(rows, method, cfg)["ic"]
+    return ic
 
 
 def method_numbers(rows: Sequence[dict[str, Any]], method: str, cfg: ScoreConfig) -> dict[str, Any]:
@@ -511,7 +552,9 @@ def method_numbers(rows: Sequence[dict[str, Any]], method: str, cfg: ScoreConfig
         "hit_rate": (sum(1 for s in bets if s > 0) / len(bets)) if bets else None,
         "mean_scaled": _mean(scaled),
         "by_sell_weight": by_sell,
-        "rank_ic": rank_ic(mine, method, cfg),
+        "rank_ic": (rk := ranking(mine, method, cfg))["ic"],
+        "ranked_days": rk["days"],
+        "lean_days": rk["lean_days"],
         "shuffled": _mean(shuffled),
         "counts": {c: sum(1 for r in mine if r[method] == c) for c in CALLS},
     }
@@ -792,10 +835,15 @@ def lines(card: dict[str, Any]) -> list[str]:
             if not n["calls"]:
                 continue
             sell = ", ".join(f"{w} {_pct(v)}" for w, v in n["by_sell_weight"].items())
+            by_lean = (
+                f" (by lean on {n.get('lean_days', 0)} of {n['ranked_days']} days)"
+                if m == "opus" and n.get("ranked_days")
+                else ""
+            )
             out.append(
                 f"{name}: mean {_pct(n['mean'])} a call over {n['calls']} "
                 f"(right on {_share(n['hit_rate'])} of {n['bets']} non-Hold calls); "
-                f"ranking {_ic(n['rank_ic'])}; shuffled {_pct(n['shuffled'])}; "
+                f"ranking {_ic(n['rank_ic'])}{by_lean}; shuffled {_pct(n['shuffled'])}; "
                 f"per unit of risk {_ic(n['mean_scaled'])}; with Sell weighted {sell}."
             )
         b = card["baselines"]

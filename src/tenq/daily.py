@@ -279,6 +279,8 @@ def _opus(
     out["opus"] = {
         "call": own.call,
         "confidence": own.confidence,
+        "lean": own.lean,
+        "lean_error": own.lean_error,
         "error": own.error,
         **_checked(check_reasons(own.reasons, pack)),
         "agent": run.to_dict(),

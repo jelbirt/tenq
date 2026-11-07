@@ -86,6 +86,49 @@ def test_an_unreadable_confidence_is_none_but_the_call_stands(confidence: Any) -
     assert got.call == "Sell" and got.confidence is None
 
 
+@pytest.mark.parametrize(
+    ("call", "lean"),
+    [
+        ("Buy", 0.4),
+        ("Buy", 1),  # the end of the range counts
+        ("Hold", -0.2),
+        ("Hold", 0.0),
+        ("Hold", 0.9),  # a Hold's lean is not capped: it ranks, the call decides
+        ("Sell", -0.3),
+        ("Short", -1),
+    ],
+)
+def test_a_lean_that_points_the_way_of_the_call_is_kept(call: str, lean: float) -> None:
+    got = parse_call(json.dumps({"call": call, "lean": lean}))
+    assert got.call == call and got.lean == pytest.approx(lean) and got.lean_error is None
+
+
+@pytest.mark.parametrize(
+    ("raw", "error"),
+    [
+        ('{"call": "Buy"}', "no lean given"),
+        ('{"call": "Buy", "lean": "high"}', "not a number"),
+        ('{"call": "Buy", "lean": true}', "not a number"),
+        ('{"call": "Buy", "lean": 1.5}', "not -1 to +1"),
+        ('{"call": "Buy", "lean": 1.0000001}', "not -1 to +1"),
+        ('{"call": "Buy", "lean": NaN}', "not -1 to +1"),
+        ('{"call": "Buy", "lean": 1e400}', "not -1 to +1"),
+        ('{"call": "Buy", "lean": -0.2}', "the lean -0.20 points the other way from Buy"),
+        ('{"call": "Buy", "lean": 0}', "the lean +0.00 points the other way from Buy"),
+        ('{"call": "Short", "lean": 0.3}', "the lean +0.30 points the other way from Short"),
+    ],
+)
+def test_an_unusable_lean_is_dropped_but_the_call_stands(raw: str, error: str) -> None:
+    got = parse_call(raw)
+    assert got.call is not None and got.lean is None
+    assert got.lean_error is not None and error in got.lean_error
+
+
+def test_the_call_prompt_asks_for_a_lean_that_matches_the_call() -> None:
+    text = opus.load_call_prompt().text
+    assert '"lean"' in text and "-1" in text and "+1" in text
+
+
 def test_reasons_are_capped_and_malformed_ones_skipped() -> None:
     many = [{"text": f"reason {i}", "cites": [NEWS]} for i in range(10)]
     junk = [
@@ -171,7 +214,7 @@ def test_a_failed_why_run_says_why() -> None:
 
 
 def test_prompts_are_versioned() -> None:
-    assert opus.load_call_prompt().version == "call-v10"
+    assert opus.load_call_prompt().version == "call-v11"
     assert opus.load_why_prompt().version == "why-v10"
 
 

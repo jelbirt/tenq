@@ -28,6 +28,7 @@ from tenq.scorecard import (
     planned_entry,
     planned_exit,
     rank_ic,
+    ranking,
     read_ledger,
     scorecard,
     spearman,
@@ -168,7 +169,7 @@ def _record(
         "complete": True,
         "day": day,
         "made_at": made_at.isoformat(),
-        "versions": {"call_prompt": "call-v10"},
+        "versions": {"call_prompt": "call-v11"},
         "jev_cost": 0.03,
         "stocks": list(stocks) or [_stock()],
     } | kw
@@ -536,6 +537,74 @@ def test_rank_ic_needs_five_stocks_a_day() -> None:
     assert rank_ic(rows[:4], "jev", CFG) is None
 
 
+def _opus_rows(leans: list[float | None]) -> list[dict[str, Any]]:
+    """Five Opus Holds at 40% (no spread by call times confidence), with leans
+    that order the stocks the way their excess returns do."""
+    return [
+        {"day": "2026-11-05", "opus": "Hold", "opus_confidence": 0.4, "opus_lean": v, "excess": i}
+        for i, v in enumerate(leans)
+    ]
+
+
+def test_opus_is_ranked_by_its_lean_when_every_call_that_day_has_one() -> None:
+    assert rank_ic(_opus_rows([-0.4, -0.2, 0.0, 0.1, 0.3]), "opus", CFG) == pytest.approx(1.0)
+
+
+def _mixed_day(day: str, missing: int) -> list[dict[str, Any]]:
+    """Six Opus Buys whose confidence orders the stocks against their excess
+    returns while their leans order them with it; `missing` leans left out."""
+    rows = [
+        {"day": day, "opus": "Buy", "opus_confidence": 0.9 - i / 10, "opus_lean": 0.1 + i / 10}
+        | {"excess": i}
+        for i in range(6)
+    ]
+    for r in rows[2 : 2 + missing]:
+        r["opus_lean"] = None
+    return rows
+
+
+def test_a_day_with_five_leans_ranks_those_by_lean_and_fewer_falls_back() -> None:
+    assert rank_ic(_mixed_day("2026-11-05", 0), "opus", CFG) == pytest.approx(1.0)
+    # one lean missing: the five that have one are still ranked by lean
+    assert rank_ic(_mixed_day("2026-11-05", 1), "opus", CFG) == pytest.approx(1.0)
+    # two missing leaves four: all six are ranked by weight times confidence
+    assert rank_ic(_mixed_day("2026-11-05", 2), "opus", CFG) == pytest.approx(-1.0)
+
+
+def test_each_day_picks_its_own_ranking_and_the_card_says_how_many_used_the_lean() -> None:
+    rows = _mixed_day("2026-11-05", 0) + _mixed_day("2026-11-06", 2)
+    assert ranking(rows, "opus", CFG) == {"ic": pytest.approx(0.0), "lean_days": 1, "days": 2}
+    # Jev has no lean: its days are never counted as lean days
+    jev = [r | {"jev_score": r["excess"]} for r in rows]
+    assert ranking(jev, "jev", CFG)["lean_days"] == 0
+
+
+@pytest.mark.parametrize(("kept", "by_lean"), [(16, True), (15, False)])
+def test_most_of_a_days_calls_must_keep_a_lean_to_rank_by_lean(kept: int, by_lean: bool) -> None:
+    # twenty Opus Buys: confidence orders them against their excess returns,
+    # leans with them; 16 of 20 leans (80%) is enough, 15 is not
+    rows = [
+        {"day": "2026-11-05", "opus": "Buy", "opus_confidence": 0.99 - i / 100}
+        | {"opus_lean": 0.01 + i / 100 if i < kept else None, "excess": i}
+        for i in range(20)
+    ]
+    want = {"ic": pytest.approx(1.0 if by_lean else -1.0), "lean_days": int(by_lean), "days": 1}
+    assert ranking(rows, "opus", CFG) == want
+
+
+def test_a_day_of_tied_leans_falls_back_and_is_not_a_lean_day() -> None:
+    rows = [r | {"opus_lean": 0.37} for r in _mixed_day("2026-11-05", 0)]
+    assert ranking(rows, "opus", CFG) == {"ic": pytest.approx(-1.0), "lean_days": 0, "days": 1}
+
+
+def test_a_stock_with_no_opus_call_is_not_ranked_by_lean() -> None:
+    # five leaned Opus calls plus one stock Opus made no call on: the lean day
+    # ranks the five only; the stray row's lean is never read
+    stray = {"day": "2026-11-05", "opus": None, "opus_lean": 0.99, "excess": -5}
+    rows = [*_mixed_day("2026-11-05", 1), stray]
+    assert ranking(rows, "opus", CFG) == {"ic": pytest.approx(1.0), "lean_days": 1, "days": 1}
+
+
 def _card(tmp_path: Path, *records: dict[str, Any], today: date = EXIT) -> dict[str, Any]:
     for r in records:
         _save(tmp_path, r)
@@ -578,6 +647,20 @@ def test_the_words_put_the_leader_first_and_name_the_open_calls(tmp_path: Path) 
     ) in text
     assert "No call has finished its 20 sessions yet." in text
     assert text[-1].startswith("This week's cost: Jev $0.00 over 0 day(s)")
+
+
+def test_the_opus_line_says_on_how_many_days_the_lean_ranked_it(tmp_path: Path) -> None:
+    card = _card(tmp_path, _record())
+    card["methods"]["opus"] |= {"rank_ic": 0.12, "ranked_days": 15, "lean_days": 12}
+    card["methods"]["jev"] |= {"rank_ic": 0.05, "ranked_days": 15, "lean_days": 0}
+    text = lines(card)
+    opus = next(t for t in text if t.startswith("Opus: "))
+    jev = next(t for t in text if t.startswith("Jev: "))
+    assert "ranking +0.12 (by lean on 12 of 15 days);" in opus
+    assert "by lean" not in jev
+    # no ranked day yet: nothing to say about the lean
+    card["methods"]["opus"] |= {"rank_ic": None, "ranked_days": 0, "lean_days": 0}
+    assert not any("by lean" in t for t in lines(card))
 
 
 def test_unscored_calls_are_one_line_per_stock(tmp_path: Path) -> None:
@@ -688,3 +771,12 @@ def test_a_test_that_reaches_yahoo_fails_even_through_the_catch_all() -> None:
 
     with pytest.raises(NoNetwork):
         fetch(["CRWD"], YahooPrices(), period="1mo")
+
+
+def test_opus_lean_is_read_from_the_record_and_old_records_have_none() -> None:
+    stock = _stock()
+    stock["opus"]["lean"] = -0.25
+    [made] = calls_from(_record("2026-11-05", MADE, stock))
+    assert made.opus_lean == pytest.approx(-0.25)
+    [old] = calls_from(_record())
+    assert old.opus_lean is None

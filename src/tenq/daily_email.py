@@ -70,6 +70,14 @@ def _conf(v: Any) -> str:
     return f"{v:.0%}" if isinstance(v, int | float) else "confidence unreadable"
 
 
+def _lean(opus: dict[str, Any]) -> str:
+    """Opus's lean after its confidence; nothing for records made before it had one."""
+    v = opus.get("lean")
+    if isinstance(v, int | float) and not isinstance(v, bool):
+        return f", lean {v:+.2f}"
+    return f", lean not kept ({opus['lean_error']})" if opus.get("lean_error") else ""
+
+
 def _jev_cell(stock: dict[str, Any]) -> str:
     call = stock.get("call")
     if call:
@@ -174,7 +182,8 @@ def render(record: dict[str, Any]) -> Email:
                         t.append(f"      {label}" + (f": {link}" if link else ""))
         opus = s.get("opus") or {}
         if opus.get("call"):
-            t.append(f"  Opus: {opus['call']}, confidence {_conf(opus.get('confidence'))}")
+            conf = _conf(opus.get("confidence"))
+            t.append(f"  Opus: {opus['call']}, confidence {conf}{_lean(opus)}")
             for r in opus.get("kept") or []:
                 t.append(f"    - {r['text']}")
                 for label, link in _cited(r["cites"], where):
@@ -251,7 +260,7 @@ def render(record: dict[str, Any]) -> Email:
         if opus.get("call"):
             h.append(
                 f"<div><b>Opus: {e(opus['call'])}</b>, confidence "
-                f"{e(_conf(opus.get('confidence')))}</div>"
+                f"{e(_conf(opus.get('confidence')) + _lean(opus))}</div>"
             )
             h.append(reasons_html(opus.get("kept") or [], where))
         for n in _notes(s):
