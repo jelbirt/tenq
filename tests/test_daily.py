@@ -579,7 +579,8 @@ def test_the_why_message_is_recorded_and_a_lagging_price_is_noted(
 
     ctx.gather = gather
     outbox = Outbox()
-    monkeypatch.setenv("GITHUB_SHA", "abc123")
+    monkeypatch.setenv("GITHUB_SHA", "the-commit-that-triggered-it")
+    monkeypatch.setenv("TENQ_CODE_SHA", "abc123")
     assert _run(tmp_path, ctx=ctx, mailer=outbox) == 0
     rec = _record(tmp_path)
     assert "How the rules reached it" in rec["stocks"][0]["why"]["message"]
@@ -787,6 +788,12 @@ def test_the_workflow_runs_on_weekdays_and_notices_only_a_failed_scheduled_run()
     )
     assert "--stage notice" in notice["run"]
     assert set(notice["env"]) == {"RUN_URL", "SMTP_USER", "SMTP_PASS", "RECIPIENT_EMAILS"}
+    # the record's code version is the commit checked out, read from git right
+    # after the checkout, before any step can change it
+    runs = [s.get("run", "") for s in flow["jobs"]["daily"]["steps"]]
+    pin = 'echo "TENQ_CODE_SHA=$(git rev-parse HEAD)" >> "$GITHUB_ENV"'
+    assert runs.index(pin) < next(i for i, r in enumerate(runs) if "--stage calls" in r)
+    assert flow["jobs"]["daily"]["steps"][0]["uses"].startswith("actions/checkout")
 
 
 @pytest.mark.parametrize(("ok", "emailed"), [(True, "yes"), (False, "no")])

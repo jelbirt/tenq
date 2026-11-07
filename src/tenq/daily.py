@@ -299,7 +299,7 @@ def _opus(
         "error": why.error,
         # what Opus was shown, without a second copy of the facts sheet: the sheet
         # is this record's pack, rendered, and the hash pins the whole message
-        "message": f"{opus.why_head(pack, call)}{opus.SHEET_HEADER} {SHEET_NOTE}",
+        "message": f"{why.message.split(opus.SHEET_HEADER, 1)[0]}{opus.SHEET_HEADER} {SHEET_NOTE}",
         "message_sha256": hashlib.sha256(why.message.encode("utf-8")).hexdigest(),
         **_checked(check_reasons(why.reasons, pack)),
         "agent": run.to_dict(),
@@ -485,8 +485,10 @@ def run_day(
             "rules_sha256": ctx.rules.sha256,
             "call_prompt": ctx.call_prompt.version,
             "why_prompt": ctx.why_prompt.version,
-            # the commit that ran, so the facts sheet can be rendered again exactly
-            "code": os.environ.get("GITHUB_SHA", ""),
+            # the commit that was checked out and ran (set by the workflow from git,
+            # not GITHUB_SHA, which is the commit that triggered the run), so the
+            # facts sheet can be rendered again exactly
+            "code": os.environ.get("TENQ_CODE_SHA", ""),
         },
         "benchmark": {"ticker": BENCHMARK, "day": day.isoformat(), "close": bench_close},
         "opus_on": ctx.claude is not None,
