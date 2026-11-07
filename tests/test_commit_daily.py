@@ -2,6 +2,7 @@
 the record reaches main even when main moved during the run, and the job's
 own checkout never moves, so later steps keep running the code that started."""
 
+import re
 import subprocess
 from pathlib import Path
 
@@ -206,6 +207,9 @@ def test_the_brief_saves_its_records_only_after_everything_else_ran() -> None:
     steps = yaml.safe_load(Path(".github/workflows/brief.yml").read_text())["jobs"]["brief"][
         "steps"
     ]
-    # the only step that moves the checkout (it rebases onto main) comes last
-    moves = [i for i, s in enumerate(steps) if "pull --rebase" in s.get("run", "")]
+    # one checkout, first; the only step that moves it (the save) comes last
+    checkouts = [i for i, s in enumerate(steps) if s.get("uses", "").startswith("actions/checkout")]
+    assert checkouts == [0]
+    movers = re.compile(r"\bgit\b[^\n]*\b(pull|fetch|reset|checkout|switch|merge|rebase)\b")
+    moves = [i for i, s in enumerate(steps) if movers.search(s.get("run", ""))]
     assert moves == [len(steps) - 1]
