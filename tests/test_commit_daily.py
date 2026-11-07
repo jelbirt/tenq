@@ -201,15 +201,108 @@ def test_each_workflow_notes_the_commit_it_checked_out(workflow: str) -> None:
     assert steps[1]["run"] == 'echo "TENQ_CODE_SHA=$(git rev-parse HEAD)" >> "$GITHUB_ENV"'
 
 
-def test_the_brief_saves_its_records_only_after_everything_else_ran() -> None:
+def test_the_brief_never_moves_its_checkout() -> None:
     import yaml
 
     steps = yaml.safe_load(Path(".github/workflows/brief.yml").read_text())["jobs"]["brief"][
         "steps"
     ]
-    # one checkout, first; the only step that moves it (the save) comes last
+    # one checkout, first; no step moves it: records are saved from a copy of main
     checkouts = [i for i, s in enumerate(steps) if s.get("uses", "").startswith("actions/checkout")]
     assert checkouts == [0]
     movers = re.compile(r"\bgit\b[^\n]*\b(pull|fetch|reset|checkout|switch|merge|rebase)\b")
     moves = [i for i, s in enumerate(steps) if movers.search(s.get("run", ""))]
-    assert moves == [len(steps) - 1]
+    assert moves == []
+    assert steps[-1]["run"].strip().endswith("scripts/commit-daily.sh runs")
+    (run,) = [s for s in steps if s.get("name") == "run"]
+    assert run["env"]["TENQ_SAVE_CLAIMS"] == "1"  # each claim reaches main before its email
+
+
+def test_the_brief_saves_all_of_runs(repos: tuple[Path, Path, Path]) -> None:
+    origin, _, job = repos
+    (job / "runs" / "CRWD").mkdir()
+    (job / "runs" / "CRWD" / "0001.json").write_text("{}")
+    (job / "runs" / "heartbeat").write_text("2026-11-07")
+    assert _save(job, "runs").returncode == 0
+    assert _on_main(origin, "runs/CRWD/0001.json") == "{}"
+    assert _on_main(origin, "runs/heartbeat") == "2026-11-07"
+    assert _save(job, "src").returncode == 2  # still only records folders
+
+
+def test_a_file_saved_for_the_first_time_is_checked_against_the_checkout(
+    repos: tuple[Path, Path, Path],
+) -> None:
+    """A later save compares a new file with the job's checkout, not with main
+    as it was at the job's earlier save (which holds other writers' changes)."""
+    origin, other, job = repos
+    (other / "runs" / "B").mkdir()
+    (other / "runs" / "B" / "x.json").write_text('{"sent": false}')
+    _git(other, "add", ".")
+    _git(other, "commit", "-q", "-m", "B")
+    _git(other, "push", "-q", "origin", "HEAD:main")
+    _git(job, "pull", "-q", "origin", "main")
+    # a person marks B sent on main while the job runs
+    (other / "runs" / "B" / "x.json").write_text('{"sent": true}')
+    _git(other, "commit", "-q", "-am", "hand fix")
+    _git(other, "push", "-q", "origin", "HEAD:main")
+    (job / "runs" / "A").mkdir()
+    (job / "runs" / "A" / "a.json").write_text("{}")
+    assert _save(job, "runs").returncode == 0  # unrelated file: saved
+    (job / "runs" / "B" / "x.json").write_text('{"sent": null, "status": "sending"}')
+    got = _save(job, "runs")
+    assert got.returncode == 1 and "main changed runs/B/x.json" in got.stdout
+    assert _on_main(origin, "runs/B/x.json") == '{"sent": true}'
+
+
+def test_the_job_can_save_its_own_file_again(repos: tuple[Path, Path, Path]) -> None:
+    origin, _, job = repos
+    (job / "runs" / "A").mkdir()
+    for status in ("sending", "sent", "traced"):
+        (job / "runs" / "A" / "a.json").write_text(status)
+        assert _save(job, "runs").returncode == 0
+        assert _on_main(origin, "runs/A/a.json") == status
+
+
+def test_a_cut_off_write_in_a_ticker_folder_is_never_committed(
+    repos: tuple[Path, Path, Path],
+) -> None:
+    origin, _, job = repos
+    (job / "runs" / "A").mkdir()
+    (job / "runs" / "A" / "a.json").write_text("{}")
+    (job / "runs" / "A" / ".a.json.tmp").write_text("half")
+    assert _save(job, "runs").returncode == 0
+    assert "runs/A/.a.json.tmp" not in _git(origin, "ls-tree", "-r", "main")
+    assert not (job / "runs" / "A" / ".a.json.tmp").exists()
+
+
+def test_a_claim_counts_only_once_the_record_is_on_main(
+    repos: tuple[Path, Path, Path], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from tenq.run import save_claim
+
+    origin, _, job = repos
+    record = job / "runs" / "CRWD" / "0001.json"
+    record.parent.mkdir()
+    record.write_text('{"email": {"sent": null, "status": "sending"}}')
+
+    def refuse(*a: object, **kw: object) -> None:
+        raise AssertionError("no save without TENQ_SAVE_CLAIMS")
+
+    with monkeypatch.context() as m:
+        m.setattr("tenq.run.subprocess.run", refuse)
+        assert save_claim(record) is True  # off: nothing shared to claim on
+
+    monkeypatch.setenv("TENQ_SAVE_CLAIMS", "1")
+    assert save_claim(record) is True
+    assert _on_main(origin, "runs/CRWD/0001.json") == record.read_text()
+
+    # outside the saved folder: nothing reaches main, so no claim
+    elsewhere = job / "records" / "0002.json"
+    elsewhere.parent.mkdir()
+    elsewhere.write_text("{}")
+    assert save_claim(elsewhere) is False
+
+    # a push that fails is no claim
+    record.write_text('{"email": {"sent": null, "status": "sending", "try": 2}}')
+    monkeypatch.setenv("TENQ_PUSH_URL", str(tmp_path / "nowhere.git"))
+    assert save_claim(record) is False

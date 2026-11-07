@@ -134,7 +134,12 @@ watchlist was chosen in 2026, which flatters every rule that mostly buys, always
 - The model's process gets its own token and no other secret; xerj gets none. Run records hold
   no secret, since they are public.
 - A filing counts as briefed only once its email has gone out, and runs are serialized, so a
-  filing is neither skipped nor emailed twice.
+  filing is neither skipped nor emailed twice. Before the email goes out, its record (marked
+  as sending) is saved to main; if that save fails, nothing is sent and the next run tries
+  again. A record that is still marked as sending, says its email may have gone out, or cannot
+  be read is never resent: the run skips it and goes red. To clear one, check the inbox and set
+  `email.sent` in `runs/<TICKER>/<accession>.json` to `true` (it arrived) or `false` (send it
+  again), or delete a record that cannot be read.
 - SEC fair access: a contact email in the User-Agent and under 10 requests a second.
 
 ## Running it

@@ -23,6 +23,12 @@ def no_real_claude(
     monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ['PATH']}")
 
 
+@pytest.fixture(autouse=True)
+def no_saving_claims(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Claims reach main only where a test asks for it (never GitHub)."""
+    monkeypatch.delenv("TENQ_SAVE_CLAIMS", raising=False)
+
+
 class NoNetwork(BaseException):
     """Not an Exception, so the price fetcher's catch-all cannot swallow it."""
 

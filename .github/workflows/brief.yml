@@ -68,6 +68,9 @@ jobs:
           LANGFUSE_PUBLIC_KEY: ${{ secrets.LANGFUSE_PUBLIC_KEY }}
           LANGFUSE_SECRET_KEY: ${{ secrets.LANGFUSE_SECRET_KEY }}
           LANGFUSE_HOST: ${{ secrets.LANGFUSE_HOST }}
+          # each record is saved to main before its email goes out (tenq.run.save_claim)
+          TENQ_SAVE_CLAIMS: "1"
+          GH_TOKEN: ${{ github.token }}
         run: |
           args=(--backfill "${BACKFILL:-0}")
           [ -n "$TICKER" ] && args+=(--ticker "$TICKER")
@@ -87,26 +90,12 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          git config user.name tenq-bot
-          git config user.email bot@users.noreply.github.com
-          git remote set-url origin "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
           # GitHub disables a public repo's schedule after 60 days with no commits,
           # and a quarter can pass without a record: leave a heartbeat after 30
           if [ $(( $(date +%s) - $(git log -1 --format=%ct) )) -gt 2592000 ]; then
+            mkdir -p runs
             date -u +%Y-%m-%dT%H:%M:%SZ > runs/heartbeat
           fi
-          git add runs
-          if git diff --cached --quiet; then
-            echo "no new run records"
-            exit 0
-          fi
-          git commit -m "runs: record $(git diff --cached --name-only | wc -l) run(s)"
-          # a commit landing on main after checkout makes a bare push fail; rebase, retry once
-          for attempt in 1 2; do
-            if git pull --rebase origin main && git push; then
-              exit 0
-            fi
-            git rebase --abort 2>/dev/null || true
-            sleep 5
-          done
-          exit 1
+          # from a separate copy of main: the checkout never moves, and a record
+          # main changed during the run is never written over
+          scripts/commit-daily.sh runs
