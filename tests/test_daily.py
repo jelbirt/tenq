@@ -792,8 +792,9 @@ def test_the_workflow_runs_on_weekdays_and_notices_only_a_failed_scheduled_run()
     # after the checkout, before any step can change it
     runs = [s.get("run", "") for s in flow["jobs"]["daily"]["steps"]]
     pin = 'echo "TENQ_CODE_SHA=$(git rev-parse HEAD)" >> "$GITHUB_ENV"'
-    assert runs.index(pin) < next(i for i, r in enumerate(runs) if "--stage calls" in r)
-    assert flow["jobs"]["daily"]["steps"][0]["uses"].startswith("actions/checkout")
+    checkout = flow["jobs"]["daily"]["steps"][0]
+    assert checkout["uses"].startswith("actions/checkout") and checkout["with"]["ref"] == "main"
+    assert runs.index(pin) == 1
 
 
 @pytest.mark.parametrize(("ok", "emailed"), [(True, "yes"), (False, "no")])
