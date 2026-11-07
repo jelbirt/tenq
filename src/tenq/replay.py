@@ -92,6 +92,7 @@ def rows_from(prices: Prices, tickers: Sequence[str], cfg: ScoreConfig) -> list[
                 jev_score=None,
                 opus=None,
                 opus_confidence=None,
+                opus_lean=None,
                 momentum=momentum(pairs, j),
                 volatility=None,
                 versions={},
