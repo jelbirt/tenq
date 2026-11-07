@@ -79,7 +79,11 @@ def _no_trace(record: dict[str, Any]) -> tuple[bool, str]:
     return False, "trace skipped"
 
 
-def test_a_checked_brief_is_emailed_and_recorded(store: FilingStore, tmp_path: Path) -> None:
+def test_a_checked_brief_is_emailed_and_recorded(
+    store: FilingStore, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("GITHUB_SHA", "the-commit-that-triggered-it")
+    monkeypatch.setenv("TENQ_CODE_SHA", "abc123")
     meta = store.filings("CRWD")[0]
     outbox = Outbox()
     rec = brief_filing(
@@ -98,6 +102,7 @@ def test_a_checked_brief_is_emailed_and_recorded(store: FilingStore, tmp_path: P
     assert email.subject.startswith("tenq: CRWD 10-Q") and "+25.8% YoY" in email.subject
     saved = json.loads(record_path(tmp_path / "runs", meta).read_text())
     assert saved["run_id"] == rec["run_id"] and saved["prompt_version"] == "brief-test"
+    assert saved["code"] == "abc123"  # the commit checked out, not the trigger's
     assert saved["agent"]["usage"]["output_tokens"] == 50
 
 

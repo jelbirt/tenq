@@ -2,6 +2,7 @@
 the record reaches main even when main moved during the run, and the job's
 own checkout never moves, so later steps keep running the code that started."""
 
+import re
 import subprocess
 from pathlib import Path
 
@@ -188,7 +189,7 @@ def test_odd_file_names_are_saved_too(repos: tuple[Path, Path, Path]) -> None:
         assert f"runs/daily/{name}" in listed
 
 
-@pytest.mark.parametrize("workflow", ["daily", "consistency"])
+@pytest.mark.parametrize("workflow", ["daily", "consistency", "brief"])
 def test_each_workflow_notes_the_commit_it_checked_out(workflow: str) -> None:
     import yaml
 
@@ -198,3 +199,17 @@ def test_each_workflow_notes_the_commit_it_checked_out(workflow: str) -> None:
     assert steps[0]["uses"].startswith("actions/checkout") and steps[0]["with"]["ref"] == "main"
     # read from git right after the checkout, before any step can change it
     assert steps[1]["run"] == 'echo "TENQ_CODE_SHA=$(git rev-parse HEAD)" >> "$GITHUB_ENV"'
+
+
+def test_the_brief_saves_its_records_only_after_everything_else_ran() -> None:
+    import yaml
+
+    steps = yaml.safe_load(Path(".github/workflows/brief.yml").read_text())["jobs"]["brief"][
+        "steps"
+    ]
+    # one checkout, first; the only step that moves it (the save) comes last
+    checkouts = [i for i, s in enumerate(steps) if s.get("uses", "").startswith("actions/checkout")]
+    assert checkouts == [0]
+    movers = re.compile(r"\bgit\b[^\n]*\b(pull|fetch|reset|checkout|switch|merge|rebase)\b")
+    moves = [i for i, s in enumerate(steps) if movers.search(s.get("run", ""))]
+    assert moves == [len(steps) - 1]
