@@ -24,9 +24,12 @@ from tenq.screen import (
     main,
     moves,
     new_filings,
+    picked,
     previous_session,
     random_fill,
+    run_screen,
     screen,
+    universe_names,
 )
 
 DAY = date(2026, 11, 6)  # a Friday session; the previous session is 2026-11-05
@@ -688,3 +691,46 @@ def test_main_without_qqq_screens_nothing(capsys: pytest.CaptureFixture[str]) ->
 
     assert main(["--no-filings"], prices_fetch=fetch, now=NOW) == 1
     assert "no QQQ prices" in capsys.readouterr().out
+
+
+def test_run_screen_never_raises_and_says_why_it_failed() -> None:
+    def broken(tickers: object, source: object, *, now: datetime) -> Prices:
+        raise OSError("disk")
+
+    def no_qqq(tickers: object, source: object, *, now: datetime) -> Prices:
+        return Prices({}, ())
+
+    assert run_screen(NOW, prices_fetch=broken, check_filings=False) == {
+        "kind": "screen",
+        "ok": False,
+        "refused": ["the screen failed (OSError)"],
+    }
+    assert run_screen(NOW, prices_fetch=no_qqq, check_filings=False)["refused"] == ["no QQQ prices"]
+    late = run_screen(datetime(2026, 11, 9, 23, tzinfo=UTC), prices_fetch=_all_priced,
+                      check_filings=False)  # fmt: skip
+    assert late["ok"] is False and "2026-11-09 session" in late["refused"][0]
+
+
+def test_run_screen_marks_a_result_too_broken_to_trust() -> None:
+    filings = Filings({}, broken=frozenset(load_universe()[:12]))
+    result = run_screen(NOW, prices_fetch=_all_priced, filings=filings)
+    assert result["ok"] is False and result["refused"] == ["12 EDGAR lookups failed"]
+    assert "chosen" in result  # the detail is kept for the record
+
+
+def test_the_models_get_the_stocks_that_passed_then_the_random_fill() -> None:
+    def fetch(tickers: object, source: object, *, now: datetime) -> Prices:
+        return _prices(**dict.fromkeys(load_universe(), 0.0) | {"CRWD": 0.08})
+
+    filings = Filings({"DDOG": [_meta("DDOG", "8-K", date(2026, 11, 6))]})
+    result = run_screen(NOW, prices_fetch=fetch, filings=filings)
+    assert result["ok"] is True and result["day"] == "2026-11-06"
+    got = picked(result)
+    assert got[:2] == ["DDOG", "CRWD"]  # a filing ranks before a move
+    assert got[2:] == result["filled"] and len(got) == CFG.fill_to
+
+
+def test_every_stock_the_screen_can_pick_has_a_name() -> None:
+    names = universe_names()
+    assert set(load_universe()) <= set(names)
+    assert names["CRWD"] == load_watchlist().names["CRWD"]

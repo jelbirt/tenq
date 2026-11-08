@@ -950,3 +950,85 @@ def test_the_why_trace_shows_the_whole_message_opus_was_sent(tmp_path: Path) -> 
     assert (
         str((spans[-1].attributes or {})["langfuse.observation.input"]) == (stock["why"]["message"])
     )
+
+
+def _screen(day: date, chosen: list[str], filled: list[str] = (), **extra: Any) -> Any:  # type: ignore[assignment]
+    def screener(now: datetime) -> dict[str, Any]:
+        return {
+            "kind": "screen",
+            "version": "screen-v4",
+            "day": day.isoformat(),
+            "universe": 113,
+            "chosen": [{"ticker": t, "reasons": [f"{t} moved"]} for t in chosen],
+            "over_cap": [],
+            "filled": list(filled),
+            "held": ["AAPL", "PEP"],
+            "unscreened": [],
+            "ok": True,
+            "refused": [],
+        } | extra
+
+    return screener
+
+
+def test_a_good_screen_decides_which_stocks_the_models_judge(tmp_path: Path) -> None:
+    outbox = Outbox()
+    screener = _screen(DAY, ["TEAM", "AAPL"], ["MSFT"])
+    assert _run(tmp_path, screener=screener, mailer=outbox) == 0
+    record = _record(tmp_path)
+    assert [s["ticker"] for s in record["stocks"]] == ["TEAM", "AAPL", "MSFT"]
+    assert record["screen"]["used"] == "screen"
+    assert record["screen"]["held"] == ["AAPL", "PEP"]
+    [mail] = outbox.sent
+    assert not mail.subject.startswith("SCREEN FAILED")
+    assert (
+        "Screen screen-v4: 2 of 113 stocks passed, 1 more drawn at random as a check;" in mail.text
+    )
+    assert "  TEAM: TEAM moved" in mail.text
+    assert "Random fill: MSFT" in mail.text
+    assert "SCREEN FAILED" not in mail.text and "#b00" not in mail.html
+
+
+@pytest.mark.parametrize(
+    ("result", "why"),
+    [
+        ({"kind": "screen", "ok": False, "refused": ["no QQQ prices"]}, "no QQQ prices"),
+        (
+            {"kind": "screen", "ok": False, "refused": ["the screen failed (OSError)"]},
+            "the screen failed (OSError)",
+        ),
+        (
+            _screen(date(2026, 11, 3), ["TEAM"])(NOW),
+            "it screened the 2026-11-03 session, not 2026-11-04",
+        ),
+    ],
+)
+def test_a_failed_screen_runs_the_watchlist_and_says_so_first(
+    tmp_path: Path, result: dict[str, Any], why: str, caplog: pytest.LogCaptureFixture
+) -> None:
+    outbox = Outbox()
+    assert _run(tmp_path, screener=lambda now: result, mailer=outbox) == 0
+    record = _record(tmp_path)
+    assert [s["ticker"] for s in record["stocks"]] == list(WATCH.tickers)
+    assert record["screen"]["used"] == "watchlist"
+    assert record["screen"]["ok"] is False
+    [mail] = outbox.sent
+    assert mail.subject.startswith("SCREEN FAILED + tenq daily, session 2026-11-04")
+    assert mail.text.startswith(f"SCREEN FAILED: {why}.\nThe 20 watchlist stocks were asked")
+    assert mail.html.index("#b00") < mail.html.index("tenq daily calls")
+    assert "SCREEN FAILED" in caplog.text
+
+
+def test_a_check_on_named_stocks_skips_the_screen_and_takes_any_universe_stock(
+    tmp_path: Path,
+) -> None:
+    def never(now: datetime) -> dict[str, Any]:
+        raise AssertionError("a check on named stocks must not screen")
+
+    outbox = Outbox()
+    assert _run(tmp_path, "--ticker", "AAPL", screener=never, mailer=outbox) == 0
+    [check] = _checks(tmp_path)
+    assert [s["ticker"] for s in check["stocks"]] == ["AAPL"]
+    assert check["screen"] is None
+    assert "Screen" not in outbox.sent[0].text
+    assert _run(tmp_path, "--ticker", "ZZZZ", screener=never) == 2

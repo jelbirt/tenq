@@ -106,10 +106,43 @@ def subject_for(record: dict[str, Any]) -> str:
     agree = sum(1 for s in both if _agree(s) == "agree")
     what = "daily check" if record.get("check_id") else "daily"
     weekly = "Weekly scorecard + " if (record.get("scorecard") or {}).get("lines") else ""
+    failed = "SCREEN FAILED + " if screen_failed(record) else ""
     return (
-        f"{weekly}tenq {what}, session {record['day']}: "
+        f"{failed}{weekly}tenq {what}, session {record['day']}: "
         f"the two calls agree on {agree} of {len(both)}"
     )
+
+
+def screen_failed(record: dict[str, Any]) -> bool:
+    return (record.get("screen") or {}).get("used") == "watchlist"
+
+
+def screen_lines(record: dict[str, Any]) -> list[str]:
+    """Which stocks were asked and why; empty for a check on named stocks."""
+    sc = record.get("screen")
+    if not sc:
+        return []
+    if sc.get("used") == "watchlist":
+        why = "; ".join(sc.get("refused") or []) or "no reason given"
+        return [
+            f"SCREEN FAILED: {why}.",
+            f"The {len(record['stocks'])} watchlist stocks were asked instead. "
+            "Today's calls are not a screened day.",
+        ]
+    chosen, filled = sc.get("chosen") or [], sc.get("filled") or []
+    out = [
+        f"Screen {sc.get('version')}: {len(chosen)} of {sc.get('universe')} stocks passed"
+        + (f", {len(filled)} more drawn at random as a check" if filled else "")
+        + f"; {len(sc.get('held') or [])} Hold by screen"
+        + (f"; {len(sc['unscreened'])} could not be screened" if sc.get("unscreened") else "")
+        + "."
+    ]
+    out += [f"  {r['ticker']}: {'; '.join(r.get('reasons') or [])}" for r in chosen]
+    if filled:
+        out.append("  Random fill: " + ", ".join(filled))
+    if sc.get("over_cap"):
+        out.append("  Cut by the cap: " + ", ".join(r["ticker"] for r in sc["over_cap"]))
+    return out
 
 
 def scorecard_lines(record: dict[str, Any]) -> list[str]:
@@ -157,12 +190,18 @@ def render(record: dict[str, Any]) -> Email:
     )
 
     card = scorecard_lines(record)
+    screened = screen_lines(record)
+    failed = screen_failed(record)
 
     # plain text
     t = []
+    if failed:
+        t += [*screened, ""]
     if card:
         t += ["WEEKLY SCORECARD", *card, ""]
     t += [f"tenq daily calls, session {record['day']}", ""]
+    if screened and not failed:
+        t += [*screened, ""]
     t.append("Stock | Jev | Opus | the two")
     t += [" | ".join(r) for r in rows]
     t.append("")
@@ -213,6 +252,14 @@ def render(record: dict[str, Any]) -> Email:
 
     cell = "padding:4px 10px;text-align:left"
     h = ["<div style='font-family:Arial,sans-serif;max-width:760px'>"]
+    if failed:
+        h.append(
+            "<div style='border:3px solid #b00;background:#fdecec;padding:10px 14px;"
+            "margin-bottom:16px'>"
+            f"<h2 style='margin:0 0 6px 0;color:#b00'>{e(screened[0])}</h2>"
+            + "".join(f"<p style='font-size:14px;margin:2px 0'>{e(x)}</p>" for x in screened[1:])
+            + "</div>"
+        )
     if card:
         h.append(
             "<div style='border:2px solid #246;background:#eef3fa;padding:10px 14px;"
@@ -223,6 +270,15 @@ def render(record: dict[str, Any]) -> Email:
         )
     h += [
         f"<h2 style='margin-bottom:4px'>tenq daily calls, session {e(record['day'])}</h2>",
+        *(
+            [
+                "<p style='font-size:13px;margin:4px 0 10px 0'>"
+                + "<br>".join(e(x) for x in screened)
+                + "</p>"
+            ]
+            if screened and not failed
+            else []
+        ),
         "<table style='border-collapse:collapse;font-size:13px'>",
         "<tr>"
         + "".join(f"<th style='{cell}'>{x}</th>" for x in ("Stock", "Jev", "Opus", ""))

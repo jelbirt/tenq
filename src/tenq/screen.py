@@ -396,6 +396,60 @@ def lines(result: dict[str, Any]) -> list[str]:
     return out
 
 
+def universe_names(path: Path = DEFAULT_UNIVERSE) -> dict[str, str]:
+    """Company names for every stock the screen can pick, the watchlist's own
+    names first."""
+    raw = yaml.safe_load(path.read_text())
+    names = raw.get("names") if isinstance(raw, dict) else None
+    out = {str(k).upper(): str(v) for k, v in (names or {}).items()}
+    return out | load_watchlist().names
+
+
+def _failed(reason: str) -> dict[str, Any]:
+    return {"kind": "screen", "ok": False, "refused": [reason]}
+
+
+def run_screen(
+    now: datetime,
+    *,
+    prices_fetch: Callable[..., Prices] = fetch,
+    filings: Filings | None = None,
+    check_filings: bool = True,
+) -> dict[str, Any]:
+    """The screen for the latest session. Never raises: when it cannot be
+    trusted the result says `"ok": false` and why, so the caller can fall back."""
+    from tenq.daily import expected_session  # daily imports this module
+
+    try:
+        cfg, tickers = load_config(), load_universe()
+        prices = prices_fetch(tickers, YahooPrices(), now=now)
+        bench = prices.bars.get(BENCHMARK)
+        if not bench:
+            return _failed("no QQQ prices")
+        expected = expected_session(now)
+        if bench[-1].day < expected:
+            return _failed(f"no QQQ bar for the {expected} session yet (latest: {bench[-1].day})")
+        if filings is None and check_filings:
+            from tenq.edgar import EdgarSource
+
+            filings = EdgarSource()
+        today = now.astimezone(MARKET_TZ).date()
+        result = screen(tickers, bench[-1].day, today, cfg, prices, filings)
+    except Exception as e:  # any failure means fall back to the watchlist, never crash
+        return _failed(f"the screen failed ({type(e).__name__})")
+    refused = refusals(result)
+    # Decided before anyone reads it, so a refused screen never reads as a good one.
+    result["ok"] = not refused
+    result["refused"] = refused
+    return result
+
+
+def picked(result: dict[str, Any]) -> list[str]:
+    """The stocks a good screen sends to the models: those that passed, then the
+    random fill."""
+    return [r["ticker"] for r in result["chosen"]] + list(result["filled"])
+
+
 def main(
     argv: list[str] | None = None,
     *,
@@ -408,36 +462,20 @@ def main(
     ap.add_argument("--json", type=Path, help="also write the result here")
     args = ap.parse_args(argv)
     logging.basicConfig(level=logging.WARNING, format="%(levelname)s %(name)s: %(message)s")
-    now = now or datetime.now(UTC)
-    cfg, tickers = load_config(), load_universe()
-    prices = prices_fetch(tickers, YahooPrices(), now=now)
-    bench = prices.bars.get(BENCHMARK)
-    if not bench:
-        print("no QQQ prices: nothing screened")
+    result = run_screen(
+        now or datetime.now(UTC),
+        prices_fetch=prices_fetch,
+        filings=filings,
+        check_filings=not args.no_filings,
+    )
+    if "chosen" not in result:
+        print(f"{result['refused'][0]}: nothing screened")
         return 1
-    from tenq.daily import expected_session
-
-    expected = expected_session(now)
-    if bench[-1].day < expected:
-        print(
-            f"no QQQ bar for the {expected} session yet (latest: {bench[-1].day}): nothing screened"
-        )
-        return 1
-    if filings is None and not args.no_filings:
-        from tenq.edgar import EdgarSource
-
-        filings = EdgarSource()
-    today = now.astimezone(MARKET_TZ).date()
-    result = screen(tickers, bench[-1].day, today, cfg, prices, filings)
-    refused = refusals(result)
-    # Decided before the file is written, so a refused screen never reads as a good one.
-    result["ok"] = not refused
-    result["refused"] = refused
     print("\n".join(lines(result)))
     if args.json:
         args.json.write_text(json.dumps(result, indent=1) + "\n")
-    if refused:
-        print(f"\n{'; '.join(refused)}: too many to trust this screen")
+    if result["refused"]:
+        print(f"\n{'; '.join(result['refused'])}: too many to trust this screen")
         return 1
     return 0
 

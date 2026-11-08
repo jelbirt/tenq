@@ -48,7 +48,7 @@ A GitHub Actions workflow ([brief.yml](.github/workflows/brief.yml)) runs daily:
 
 A second workflow ([daily.yml](.github/workflows/daily.yml), [daily.py](src/tenq/daily.py)) runs
 on weekdays at 22:30 UTC (5:30pm New York in winter, 6:30pm in summer) and makes
-two calls (Buy, Hold, Sell or Short) on every watchlist stock after the close, from the same
+two calls (Buy, Hold, Sell or Short) on each stock the screen picks (below) after the close, from the same
 facts sheet ([pack.py](src/tenq/pack.py)): Jev answers text-only questions and fixed rules
 ([rules.py](src/tenq/rules.py), [config/rules.yaml](config/rules.yaml)) turn the answers into a
 call; Opus makes its own call and writes the why for Jev's ([opus.py](src/tenq/opus.py)). Code
@@ -125,9 +125,10 @@ bar a live method must clear is still the baselines on the same days, on the sco
 luck range here is for 3 years of calls; a few months of live calls have a much wider one. The
 watchlist was chosen in 2026, which flatters every rule that mostly buys, always Buy most.
 
-### The screen (preview only)
+### The screen
 
-`uv run python -m tenq.screen` shows which stocks a wider daily run would send to Jev and Opus
+Before any model is asked, the daily run screens which stocks to send to Jev and Opus
+(`uv run python -m tenq.screen` shows today's screen on its own)
 ([screen.py](src/tenq/screen.py), settings in [config/screen.yaml](config/screen.yaml)). It
 asks no model anything. From the watchlist plus the Nasdaq-100
 ([config/universe.yaml](config/universe.yaml), 113 stocks) it passes a stock that filed an
@@ -145,7 +146,13 @@ too little history for both moves, or its EDGAR lookup failed): that is listed a
 screened, and is never drawn for the fill. The run stops, and its JSON says `"ok": false`, if
 QQQ's bar for the session is missing, or more than 1 in 10 stocks' EDGAR lookups or prices
 fail.
-The manual `screen` workflow runs it with the EDGAR check on. The daily run does not use it yet.
+The daily run asks the models about the stocks that passed plus the random fill (20 to 25 a
+day) and keeps the whole screen in its record, so the "Hold by screen" stocks can be scored on
+prices later. If the screen fails or cannot be trusted (any of the stops above, or it screened
+a different session), the daily run asks the 20 watchlist stocks instead, and the email's
+subject starts "SCREEN FAILED" with a red box at the top saying why. A check on named stocks
+(`--ticker`) skips the screen and takes any stock in the universe. The manual `screen`
+workflow runs the screen alone, with the EDGAR check on.
 
 ## Guardrails
 
