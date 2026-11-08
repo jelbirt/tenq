@@ -1,9 +1,11 @@
 """The daily screen (L6): code alone picks which stocks Jev and Opus see.
 
 A stock passes when either of two things holds (config/screen.yaml):
-1. it filed an 8-K, 10-Q or 10-K after the previous session's day;
+1. it filed one of `forms` after the previous session's day (8-K, 10-Q, 10-K,
+   or a foreign company's 6-K, 20-F or 40-F);
 2. it moved a lot against QQQ for that stock: over 1 session, or over 5, by
-   at least `move_sigma` of its own usual daily moves (20-session volatility).
+   at least `move_sigma` of its usual daily moves against QQQ, measured over
+   the 20 sessions before the move.
 
 At most `cap` pass; past it, new filings come first, then the bigger move.
 If fewer than `fill_to` pass, the rest of the slots up to `fill_to` go to
@@ -23,10 +25,12 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import itertools
 import json
 import logging
 import math
 import random
+import statistics
 import sys
 from collections.abc import Callable, Sequence
 from dataclasses import asdict, dataclass, field
@@ -41,11 +45,10 @@ from tenq.filings import FilingMeta
 from tenq.prices import (
     BENCHMARK,
     MARKET_TZ,
-    SESSIONS_PER_YEAR,
     Prices,
     YahooPrices,
+    aligned,
     fetch,
-    price_facts,
 )
 from tenq.scorecard import is_session
 
@@ -55,6 +58,7 @@ DEFAULT_SCREEN = REPO_ROOT / "config" / "screen.yaml"
 DEFAULT_UNIVERSE = REPO_ROOT / "config" / "universe.yaml"
 TOP_LEVEL = {"version", "forms", "move_sigma", "cap", "fill_to"}
 LIST_DEPTH = 8  # newest filings looked at per stock; more than a day's worth
+YARDSTICK = 20  # sessions of daily moves against QQQ that set a stock's usual move
 MAX_FAILED_SHARE = 0.1  # more EDGAR lookups failing than this: the run says so and exits 1
 
 
@@ -144,29 +148,42 @@ def previous_session(day: date) -> date:
 
 
 def moves(ticker: str, prices: Prices, day: date) -> tuple[float | None, int | None, str | None]:
-    """The bigger of the 1- and 5-session excess moves up to the `day` session,
-    in the stock's usual daily moves, with its window; or a note saying why it
-    is missing. Prices that end before `day` are not used: they would pass a
-    stock today on an earlier day's move."""
-    facts = price_facts(ticker, prices)
-    if facts is None:
+    """The bigger of the 1- and 5-session moves against QQQ up to the `day`
+    session, in the stock's usual daily moves against QQQ, with its window; or
+    a note saying why it is missing.
+
+    The yardstick is the spread of the stock's daily return less QQQ's over the
+    YARDSTICK sessions before the window tested, so the move being tested is
+    not part of its own yardstick. Prices that end before `day` are not used:
+    they would pass a stock today on an earlier day's move."""
+    stock, bench = prices.bars.get(ticker), prices.bars.get(BENCHMARK)
+    pairs = aligned(stock, bench) if stock and bench else []
+    if not pairs:
         return None, None, "no prices"
-    if facts.day != day:
-        return None, None, f"prices end {facts.day.isoformat()}, not {day.isoformat()}"
-    vol = facts.volatility
-    if vol is None or not math.isfinite(vol) or vol <= 0:
-        return None, None, "no volatility"
-    daily = vol / math.sqrt(SESSIONS_PER_YEAR)
+    if pairs[-1][0].day != day:
+        return None, None, f"prices end {pairs[-1][0].day.isoformat()}, not {day.isoformat()}"
+    mine = [s.close for s, _ in pairs]
+    theirs = [q.close for _, q in pairs]
     best: tuple[float, int] | None = None
     for n in (1, 5):
-        x = facts.excess.get(n)
-        if x is None or not math.isfinite(x):
+        if len(pairs) < YARDSTICK + n + 1:
             continue
-        z = x / (daily * math.sqrt(n))
+        x = (mine[-1] / mine[-1 - n] - 1) - (theirs[-1] / theirs[-1 - n] - 1)
+        before_s, before_q = mine[:-n][-(YARDSTICK + 1) :], theirs[:-n][-(YARDSTICK + 1) :]
+        daily = [
+            (b / a) - (d / c)
+            for (a, b), (c, d) in zip(
+                itertools.pairwise(before_s), itertools.pairwise(before_q), strict=True
+            )
+        ]
+        usual = statistics.stdev(daily)
+        if not (math.isfinite(x) and math.isfinite(usual)) or usual <= 0:
+            continue
+        z = x / (usual * math.sqrt(n))
         if best is None or abs(z) > abs(best[0]):
             best = (z, n)
     if best is None:
-        return None, None, "no excess return"
+        return None, None, "too little price history"
     return best[0], best[1], None
 
 

@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import itertools
 import json
 import math
+import statistics
 from dataclasses import replace
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
@@ -12,7 +14,7 @@ import pytest
 
 from tenq.config import load_watchlist
 from tenq.filings import FilingMeta
-from tenq.prices import BENCHMARK, Bar, Prices, price_facts
+from tenq.prices import BENCHMARK, Bar, Prices
 from tenq.screen import (
     lines,
     load_config,
@@ -86,9 +88,9 @@ class Filings:
 
 
 def test_the_settings_load() -> None:
-    assert CFG.version == "screen-v1"
+    assert CFG.version == "screen-v2"
     assert (CFG.move_sigma, CFG.cap, CFG.fill_to) == (2.5, 25, 20)
-    assert CFG.forms == ("8-K", "10-Q", "10-K")
+    assert CFG.forms == ("8-K", "10-Q", "10-K", "6-K", "20-F", "40-F")
     assert len(CFG.sha256) == 64
 
 
@@ -100,7 +102,7 @@ def test_the_settings_load() -> None:
         (lambda t: t.replace("fill_to: 20", "fill_to: -1"), "fill_to"),
         (lambda t: t.replace("cap: 25", "cap: true"), "cap"),
         (lambda t: t.replace("move_sigma: 2.5", "move_sigma: 0"), "move_sigma"),
-        (lambda t: t.replace("forms: [8-K, 10-Q, 10-K]", "forms: []"), "forms"),
+        (lambda t: t.replace("forms: [8-K, 10-Q, 10-K, 6-K, 20-F, 40-F]", "forms: []"), "forms"),
     ],
 )
 def test_bad_settings_are_refused(tmp_path: Path, edit: object, says: str) -> None:
@@ -169,13 +171,48 @@ def test_a_steady_five_session_move_is_scaled_by_root_five() -> None:
     bars = tuple(Bar(d, c, 1e6) for d, c in zip(days, closes, strict=True))
     prices = Prices({BENCHMARK: _flat(), "STEADY": bars}, ())
     z, window, _ = moves("STEADY", prices, DAY)
-    facts = price_facts("STEADY", prices)
-    assert facts is not None and facts.volatility is not None
-    x = facts.excess[5]
-    assert x is not None
+    # QQQ is flat, so the daily moves against it are the stock's own; the
+    # yardstick is the 20 sessions before the 5 tested, all the 1% swing.
+    before = closes[-26:-5]
+    usual = statistics.stdev(b / a - 1 for a, b in itertools.pairwise(before))
     assert window == 5
-    assert z == pytest.approx(x / (facts.volatility / math.sqrt(252) * math.sqrt(5)))
+    assert z == pytest.approx((closes[-1] / closes[-6] - 1) / (usual * math.sqrt(5)))
     assert z is not None and z >= CFG.move_sigma
+
+
+def _tracking(gap: float, n: int = 40) -> Prices:
+    """QQQ swings 2% a day; TRACK follows it with a 0.3% wobble of its own,
+    then on the last day moves `gap` more than QQQ."""
+    days = _days(n)
+    q, s = [500.0], [100.0]
+    for i in range(1, n):
+        r = 0.02 if i % 2 else -0.02
+        own = (0.003 if i % 3 else -0.003) + (gap if i == n - 1 else 0.0)
+        q.append(q[-1] * (1 + r))
+        s.append(s[-1] * (1 + r + own))
+    return Prices(
+        {
+            BENCHMARK: tuple(Bar(d, c, 1e6) for d, c in zip(days, q, strict=True)),
+            "TRACK": tuple(Bar(d, c, 1e6) for d, c in zip(days, s, strict=True)),
+        },
+        (),
+    )
+
+
+def test_the_yardstick_is_the_usual_move_against_qqq_not_the_stocks_own_swings() -> None:
+    """A stock that moves with QQQ: a 2% gap is small next to its own 2% swings
+    but large next to its usual 0.3% gap from QQQ, so it passes."""
+    z, _, _ = moves("TRACK", _tracking(0.02), DAY)
+    assert z is not None and z >= CFG.move_sigma
+    z_none, _, _ = moves("TRACK", _tracking(0.0), DAY)
+    assert z_none is not None and abs(z_none) < CFG.move_sigma
+
+
+def test_the_move_tested_is_not_part_of_its_own_yardstick() -> None:
+    """With the move inside its yardstick, a 1-session z can never pass about
+    4.25 however large the move; outside it, a huge move reads as huge."""
+    z, window, _ = moves("BIG", _prices(BIG=0.5), DAY)
+    assert window == 1 and z is not None and z > 20
 
 
 # who passes
@@ -287,9 +324,9 @@ def test_no_fill_when_the_screen_already_reaches_fill_to() -> None:
 
 def test_the_fill_is_the_same_on_a_rerun_and_changes_by_day() -> None:
     left = [f"S{i:02d}" for i in range(50)]
-    first = random_fill(left, 9, "screen-v1", DAY)
-    assert first == random_fill(list(reversed(left)), 9, "screen-v1", DAY)
-    assert first != random_fill(left, 9, "screen-v1", date(2026, 11, 5))
+    first = random_fill(left, 9, "screen-v2", DAY)
+    assert first == random_fill(list(reversed(left)), 9, "screen-v2", DAY)
+    assert first != random_fill(left, 9, "screen-v2", date(2026, 11, 5))
     assert len(set(first)) == 9
 
 
@@ -297,7 +334,7 @@ def test_the_fill_is_the_same_on_a_rerun_and_changes_by_day() -> None:
     ("left", "slots", "count"), [([], 5, 0), (["A"], 0, 0), (["A", "B"], 5, 2)]
 )
 def test_the_fill_never_draws_more_than_it_can(left: list[str], slots: int, count: int) -> None:
-    assert len(random_fill(left, slots, "screen-v1", DAY)) == count
+    assert len(random_fill(left, slots, "screen-v2", DAY)) == count
 
 
 # the command
@@ -316,7 +353,7 @@ def test_main_prints_the_screen_and_writes_json(
     out = tmp_path / "screen.json"
     assert main(["--json", str(out)], prices_fetch=fetch, filings=filings, now=NOW) == 0
     text = capsys.readouterr().out
-    assert "Screen screen-v1 for the 2026-11-06 session" in text
+    assert "Screen screen-v2 for the 2026-11-06 session" in text
     result = json.loads(out.read_text())
     assert {r["ticker"] for r in result["chosen"]} == {"CRWD", "DDOG"}
     assert len(result["filled"]) == CFG.fill_to - 2

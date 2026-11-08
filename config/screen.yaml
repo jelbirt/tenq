@@ -2,15 +2,20 @@
 # day. No model sees a stock the screen leaves out; it is recorded as "Hold by
 # screen" and scored on prices like any other call, so the screen is judged too.
 # Any edit here, even a comment, needs a new version.
-version: screen-v1
+version: screen-v2
 
-# 1. A new filing: an 8-K, 10-Q or 10-K filed after the previous session's day,
-#    up to the day the screen runs.
-forms: [8-K, 10-Q, 10-K]
+# 1. A new filing filed after the previous session's day, up to the day the
+#    screen runs: an 8-K, 10-Q or 10-K, or for a foreign company the 6-K,
+#    20-F or 40-F it files instead (v2: ASML, PDD, FER, TRI and MNDY file
+#    those, so without them they could never pass on a filing).
+forms: [8-K, 10-Q, 10-K, 6-K, 20-F, 40-F]
 
-# 2. A big move against QQQ, measured in the stock's own usual daily moves
-#    (its 20-session volatility): over 1 session, or over 5 sessions scaled up
-#    by the square root of 5. 2.5 means about a 1-in-80 move for that stock.
+# 2. A big move against QQQ, measured in the stock's usual daily moves against
+#    QQQ (the spread of its daily return less QQQ's over the 20 sessions before
+#    the move): over 1 session, or over 5 sessions scaled up by the square root
+#    of 5. v2: v1 measured against the stock's own total swings, which set too
+#    high a bar for stocks that move with QQQ and passed quiet stocks on any
+#    big QQQ day; it also counted the move in its own yardstick.
 move_sigma: 2.5
 
 # Not a reason to pass (decided 2026-11-08): a recent Buy, Sell or Short from
