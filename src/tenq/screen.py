@@ -55,6 +55,7 @@ DEFAULT_SCREEN = REPO_ROOT / "config" / "screen.yaml"
 DEFAULT_UNIVERSE = REPO_ROOT / "config" / "universe.yaml"
 TOP_LEVEL = {"version", "forms", "move_sigma", "cap", "fill_to"}
 LIST_DEPTH = 8  # newest filings looked at per stock; more than a day's worth
+MAX_FAILED_SHARE = 0.1  # more EDGAR lookups failing than this: the run says so and exits 1
 
 
 @dataclass(frozen=True)
@@ -105,7 +106,7 @@ def load_universe(path: Path = DEFAULT_UNIVERSE) -> tuple[str, ...]:
 
 
 class Filings(Protocol):
-    def list_recent(self, ticker: str, limit: int) -> list[FilingMeta]: ...
+    def list_recent(self, ticker: str, forms: tuple[str, ...], limit: int) -> list[FilingMeta]: ...
 
 
 @dataclass
@@ -142,12 +143,16 @@ def previous_session(day: date) -> date:
     return d
 
 
-def moves(ticker: str, prices: Prices) -> tuple[float | None, int | None, str | None]:
-    """The bigger of the 1- and 5-session excess moves, in the stock's usual
-    daily moves, with its window; or a note saying why it is missing."""
+def moves(ticker: str, prices: Prices, day: date) -> tuple[float | None, int | None, str | None]:
+    """The bigger of the 1- and 5-session excess moves up to the `day` session,
+    in the stock's usual daily moves, with its window; or a note saying why it
+    is missing. Prices that end before `day` are not used: they would pass a
+    stock today on an earlier day's move."""
     facts = price_facts(ticker, prices)
     if facts is None:
         return None, None, "no prices"
+    if facts.day != day:
+        return None, None, f"prices end {facts.day.isoformat()}, not {day.isoformat()}"
     vol = facts.volatility
     if vol is None or not math.isfinite(vol) or vol <= 0:
         return None, None, "no volatility"
@@ -188,12 +193,12 @@ def screen(
     stocks: list[Stock] = []
     for t in tickers:
         st = Stock(t)
-        st.move, st.move_window, note = moves(t, prices)
+        st.move, st.move_window, note = moves(t, prices, day)
         if note:
             st.unchecked.append(note)
         if filings is not None:
             try:
-                listed = filings.list_recent(t, LIST_DEPTH)
+                listed = filings.list_recent(t, cfg.forms, LIST_DEPTH)
             except Exception as exc:
                 st.unchecked.append(f"filings unavailable ({type(exc).__name__})")
                 listed = []
@@ -208,8 +213,13 @@ def screen(
     passed = sorted(
         (s for s in stocks if s.passes(cfg.move_sigma)), key=lambda s: s.rank(cfg.move_sigma)
     )
-    left = [s.ticker for s in stocks if not s.passes(cfg.move_sigma)]
+    # A stock that did not pass but could not be fully checked is not a screen
+    # decision: it is neither Hold by screen nor in the random fill's pool.
+    out = [s for s in stocks if not s.passes(cfg.move_sigma)]
+    left = [s.ticker for s in out if not s.unchecked]
+    unscreened = [s.ticker for s in out if s.unchecked]
     filled = random_fill(left, cfg.fill_to - min(len(passed), cfg.cap), cfg.version, day)
+    failed = sum(any(n.startswith("filings unavailable") for n in s.unchecked) for s in stocks)
     return {
         "kind": "screen",
         "version": cfg.version,
@@ -223,8 +233,10 @@ def screen(
         "over_cap": [_row(s, cfg) for s in passed[cfg.cap :]],
         "filled": filled,
         "held": [t for t in left if t not in filled],
+        "unscreened": unscreened,
         "unchecked": {s.ticker: s.unchecked for s in stocks if s.unchecked},
         "filings_checked": filings is not None,
+        "filings_failed": failed,
         "price_notes": list(prices.notes),
     }
 
@@ -241,7 +253,10 @@ def lines(result: dict[str, Any]) -> list[str]:
         f"{len(chosen)} of {result['universe']} stocks pass"
         + (f"; {len(over)} more passed but are over the cap of {result['cap']}" if over else "")
         + (f"; {len(result['filled'])} more drawn at random" if result["filled"] else "")
-        + f"; {len(result['held'])} are Hold by screen.",
+        + f"; {len(result['held'])} are Hold by screen"
+        + (
+            f"; {len(result['unscreened'])} could not be screened." if result["unscreened"] else "."
+        ),
         "",
         "Would go to Jev and Opus:",
     ]
@@ -252,6 +267,8 @@ def lines(result: dict[str, Any]) -> list[str]:
     if result["filled"]:
         out += ["", "Random fill (a check on the screen): " + ", ".join(result["filled"])]
     out += ["", "Hold by screen: " + (", ".join(result["held"]) or "none")]
+    if result["unscreened"]:
+        out += ["", "Could not be screened (no decision): " + ", ".join(result["unscreened"])]
     if not result["filings_checked"]:
         out += ["", "Filings were not checked (no EDGAR lookup): new filings could add stocks."]
     if result["unchecked"]:
@@ -279,6 +296,14 @@ def main(
     if not bench:
         print("no QQQ prices: nothing screened")
         return 1
+    from tenq.daily import expected_session
+
+    expected = expected_session(now)
+    if bench[-1].day < expected:
+        print(
+            f"no QQQ bar for the {expected} session yet (latest: {bench[-1].day}): nothing screened"
+        )
+        return 1
     if filings is None and not args.no_filings:
         from tenq.edgar import EdgarSource
 
@@ -288,6 +313,9 @@ def main(
     print("\n".join(lines(result)))
     if args.json:
         args.json.write_text(json.dumps(result, indent=1) + "\n")
+    if result["filings_failed"] > MAX_FAILED_SHARE * len(tickers):
+        print(f"\n{result['filings_failed']} EDGAR lookups failed: too many to trust this screen")
+        return 1
     return 0
 
 

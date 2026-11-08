@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 from dataclasses import replace
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
@@ -11,7 +12,7 @@ import pytest
 
 from tenq.config import load_watchlist
 from tenq.filings import FilingMeta
-from tenq.prices import BENCHMARK, Bar, Prices
+from tenq.prices import BENCHMARK, Bar, Prices, price_facts
 from tenq.screen import (
     lines,
     load_config,
@@ -73,8 +74,9 @@ class Filings:
     ) -> None:
         self.listed, self.broken, self.asked = listed, broken, 0
 
-    def list_recent(self, ticker: str, limit: int) -> list[FilingMeta]:
+    def list_recent(self, ticker: str, forms: tuple[str, ...], limit: int) -> list[FilingMeta]:
         self.asked += 1
+        assert forms == CFG.forms  # the settings decide which forms are listed
         if ticker in self.broken:
             raise ConnectionError("EDGAR down")
         return self.listed.get(ticker, [])
@@ -134,17 +136,46 @@ def test_the_previous_session_skips_weekends_and_holidays(day: date, before: dat
 
 def test_a_big_move_is_measured_in_the_stocks_own_usual_moves() -> None:
     prices = _prices(BIG=0.08, DOWN=-0.08, QUIET=0.002)
-    z, window, note = moves("BIG", prices)
+    z, window, note = moves("BIG", prices, DAY)
     assert z is not None and z >= CFG.move_sigma and note is None
     assert window in (1, 5)
-    z_down, _, _ = moves("DOWN", prices)
+    z_down, _, _ = moves("DOWN", prices, DAY)
     assert z_down is not None and z_down <= -CFG.move_sigma
-    z_quiet, _, _ = moves("QUIET", prices)
+    z_quiet, _, _ = moves("QUIET", prices, DAY)
     assert z_quiet is not None and abs(z_quiet) < CFG.move_sigma
 
 
 def test_a_stock_without_prices_is_noted_not_dropped_silently() -> None:
-    assert moves("NONE", _prices()) == (None, None, "no prices")
+    assert moves("NONE", _prices(), DAY) == (None, None, "no prices")
+
+
+def test_prices_that_end_before_the_session_are_not_used() -> None:
+    """A lagging feed would otherwise pass a stock today on yesterday's move."""
+    yesterday = date(2026, 11, 5)
+    late = tuple(
+        Bar(d, b.close, 1e6) for d, b in zip(_days(40, yesterday), _bars(0.08), strict=True)
+    )
+    prices = Prices({BENCHMARK: _flat(), "LATE": late}, ())
+    assert moves("LATE", prices, DAY) == (None, None, "prices end 2026-11-05, not 2026-11-06")
+    out = screen(["LATE"], DAY, DAY, CFG, prices, None)
+    assert out["chosen"] == [] and out["unscreened"] == ["LATE"]
+
+
+def test_a_steady_five_session_move_is_scaled_by_root_five() -> None:
+    days = _days(40)
+    closes = [100.0 if i % 2 == 0 else 101.0 for i in range(35)]
+    for _ in range(5):
+        closes.append(closes[-1] * 1.025)
+    bars = tuple(Bar(d, c, 1e6) for d, c in zip(days, closes, strict=True))
+    prices = Prices({BENCHMARK: _flat(), "STEADY": bars}, ())
+    z, window, _ = moves("STEADY", prices, DAY)
+    facts = price_facts("STEADY", prices)
+    assert facts is not None and facts.volatility is not None
+    x = facts.excess[5]
+    assert x is not None
+    assert window == 5
+    assert z == pytest.approx(x / (facts.volatility / math.sqrt(252) * math.sqrt(5)))
+    assert z is not None and z >= CFG.move_sigma
 
 
 # who passes
@@ -169,6 +200,28 @@ def test_a_new_filing_or_a_big_move_passes_and_nothing_else_does() -> None:
     assert out["filings_checked"] is True and out["since"] == "2026-11-05"
 
 
+def test_a_big_down_move_passes_too() -> None:
+    out = screen(["DOWN"], DAY, DAY, replace(CFG, fill_to=0), _prices(DOWN=-0.08), None)
+    assert [r["ticker"] for r in out["chosen"]] == ["DOWN"]
+    assert "below QQQ" in out["chosen"][0]["reasons"][0]
+
+
+def test_on_monday_a_weekend_filing_counts_and_fridays_does_not() -> None:
+    monday = date(2026, 11, 9)
+    days = _days(40, monday)
+    swing = [100.0 if i % 2 == 0 else 101.0 for i in range(40)]
+    bars = {
+        t: tuple(Bar(d, c, 1e6) for d, c in zip(days, swing, strict=True)) for t in ("SAT", "FRI")
+    }
+    bars[BENCHMARK] = tuple(Bar(d, 500.0, 1e6) for d in days)
+    filings = Filings(
+        {"SAT": [_meta("SAT", "8-K", date(2026, 11, 7))], "FRI": [_meta("FRI", "8-K", DAY)]}
+    )
+    out = screen(["SAT", "FRI"], monday, monday, replace(CFG, fill_to=0), Prices(bars, ()), filings)
+    assert [r["ticker"] for r in out["chosen"]] == ["SAT"]
+    assert out["since"] == "2026-11-06" and out["held"] == ["FRI"]
+
+
 def test_past_the_cap_filings_come_first_then_the_bigger_move() -> None:
     filings = Filings({"FILED": [_meta("FILED", "10-K", DAY)]})
     prices = _prices(SMALL=0.06, HUGE=0.15, FILED=0.0)
@@ -191,6 +244,15 @@ def test_an_edgar_failure_for_one_stock_is_noted_and_the_rest_still_screen() -> 
     out = screen(["DOWN", "FILED"], DAY, DAY, replace(CFG, fill_to=0), prices, filings)
     assert [r["ticker"] for r in out["chosen"]] == ["FILED"]
     assert out["unchecked"] == {"DOWN": ["filings unavailable (ConnectionError)"]}
+    assert out["unscreened"] == ["DOWN"] and out["held"] == []  # no decision, so not a Hold
+    assert out["filings_failed"] == 1
+
+
+def test_a_stock_that_could_not_be_checked_is_never_drawn_for_the_fill() -> None:
+    filings = Filings({}, broken=frozenset({"DOWN"}))
+    out = screen(["DOWN", "OK"], DAY, DAY, CFG, _prices(DOWN=0.0, OK=0.0), filings)
+    assert out["filled"] == ["OK"] and out["unscreened"] == ["DOWN"]
+    assert "Could not be screened (no decision): DOWN" in "\n".join(lines(out))
 
 
 def test_without_filings_only_moves_count_and_the_output_says_so() -> None:
@@ -248,7 +310,7 @@ def test_main_prints_the_screen_and_writes_json(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     def fetch(tickers: object, source: object, *, now: datetime) -> Prices:
-        return _prices(CRWD=0.08, DDOG=0.0)
+        return _prices(**dict.fromkeys(load_universe(), 0.0) | {"CRWD": 0.08})
 
     filings = Filings({"DDOG": [_meta("DDOG", "8-K", date(2026, 11, 6))]})
     out = tmp_path / "screen.json"
@@ -259,6 +321,28 @@ def test_main_prints_the_screen_and_writes_json(
     assert {r["ticker"] for r in result["chosen"]} == {"CRWD", "DDOG"}
     assert len(result["filled"]) == CFG.fill_to - 2
     assert filings.asked == 113  # every stock in the universe is looked up once
+
+
+def test_main_refuses_a_qqq_bar_that_is_a_session_behind(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    def fetch(tickers: object, source: object, *, now: datetime) -> Prices:
+        return _prices(CRWD=0.0)  # QQQ's last bar is 2026-11-06
+
+    monday_evening = datetime(2026, 11, 9, 23, tzinfo=UTC)
+    assert main(["--no-filings"], prices_fetch=fetch, now=monday_evening) == 1
+    assert "no QQQ bar for the 2026-11-09 session yet" in capsys.readouterr().out
+
+
+def test_main_fails_when_too_many_edgar_lookups_fail(capsys: pytest.CaptureFixture[str]) -> None:
+    def fetch(tickers: object, source: object, *, now: datetime) -> Prices:
+        return _prices(CRWD=0.0)
+
+    filings = Filings({}, broken=frozenset(load_universe()[:12]))
+    assert main([], prices_fetch=fetch, filings=filings, now=NOW) == 1
+    assert "12 EDGAR lookups failed" in capsys.readouterr().out
+    few = Filings({}, broken=frozenset(load_universe()[:11]))
+    assert main([], prices_fetch=fetch, filings=few, now=NOW) == 0
 
 
 def test_main_without_qqq_screens_nothing(capsys: pytest.CaptureFixture[str]) -> None:
