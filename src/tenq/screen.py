@@ -56,8 +56,11 @@ log = logging.getLogger(__name__)
 
 DEFAULT_SCREEN = REPO_ROOT / "config" / "screen.yaml"
 DEFAULT_UNIVERSE = REPO_ROOT / "config" / "universe.yaml"
-TOP_LEVEL = {"version", "forms", "move_sigma", "cap", "fill_to"}
-LIST_DEPTH = 8  # newest filings looked at per stock; more than a day's worth
+TOP_LEVEL = {"version", "forms", "routine", "move_sigma", "cap", "fill_to"}
+ROUTINE_KEYS = {"sessions", "filings"}
+# Newest filings looked at per stock: enough to see a day's filings and the
+# routine look-back before them, even for a company that files every day.
+LIST_DEPTH = 30
 YARDSTICK = 20  # sessions of daily moves against QQQ that set a stock's usual move
 MAX_FAILED_SHARE = 0.1  # more EDGAR lookups failing than this: the run says so and exits 1
 
@@ -66,6 +69,8 @@ MAX_FAILED_SHARE = 0.1  # more EDGAR lookups failing than this: the run says so 
 class ScreenConfig:
     version: str
     forms: tuple[str, ...]
+    routine_sessions: int
+    routine_filings: int
     move_sigma: float
     cap: int
     fill_to: int
@@ -80,6 +85,13 @@ def load_config(path: Path = DEFAULT_SCREEN) -> ScreenConfig:
     forms = raw["forms"]
     if not isinstance(forms, list) or not forms or not all(isinstance(f, str) for f in forms):
         raise ValueError(f"{path}: 'forms' must be a list of form names")
+    routine = raw["routine"]
+    if not isinstance(routine, dict) or set(routine) != ROUTINE_KEYS:
+        raise ValueError(f"{path}: 'routine' must have exactly the keys {sorted(ROUTINE_KEYS)}")
+    r_sessions, r_filings = routine["sessions"], routine["filings"]
+    for name, v, top in (("sessions", r_sessions, 60), ("filings", r_filings, 20)):
+        if isinstance(v, bool) or not isinstance(v, int) or not 1 <= v <= top:
+            raise ValueError(f"{path}: 'routine.{name}' must be a whole number from 1 to {top}")
     sigma, cap = raw["move_sigma"], raw["cap"]
     if isinstance(sigma, bool) or not isinstance(sigma, int | float) or not 0 < sigma <= 10:
         raise ValueError(f"{path}: 'move_sigma' must be a number above 0, at most 10")
@@ -93,6 +105,8 @@ def load_config(path: Path = DEFAULT_SCREEN) -> ScreenConfig:
     return ScreenConfig(
         version=raw["version"],
         forms=tuple(forms),
+        routine_sessions=r_sessions,
+        routine_filings=r_filings,
         move_sigma=float(sigma),
         cap=cap,
         fill_to=fill,
@@ -117,6 +131,7 @@ class Filings(Protocol):
 class Stock:
     ticker: str
     filings: list[str] = field(default_factory=list)  # "8-K filed 2026-11-06"
+    routine: list[str] = field(default_factory=list)  # new filings not counted, and why
     move: float | None = None  # the bigger of the 1- and 5-session moves, in usual moves
     move_window: int | None = None
     unchecked: list[str] = field(default_factory=list)  # what could not be looked at
@@ -200,6 +215,41 @@ def moves(ticker: str, prices: Prices, day: date) -> tuple[float | None, int | N
     return best[0], best[1], note
 
 
+def new_filings(
+    listed: Sequence[FilingMeta], cfg: ScreenConfig, since: date, look_back: date, today: date
+) -> tuple[list[str], list[str]]:
+    """The new filings that count as a reason to pass, and those that do not
+    because they are routine for this company.
+
+    New means filed after `since` (the previous session) up to `today`. A new
+    filing is routine when the company filed the same form on at least
+    `routine_filings` other days from `look_back` to `since`, the
+    `routine_sessions` sessions before: a company that files a form that often
+    (weekly buyback notices, say) is not telling us anything new by filing it
+    again."""
+    dated: list[tuple[str, date]] = []
+    for m in listed:
+        try:
+            dated.append((m.form, date.fromisoformat(m.filed)))
+        except ValueError:
+            continue
+    counted: list[str] = []
+    routine: list[str] = []
+    for form, filed in dated:
+        if form not in cfg.forms or not since < filed <= today:
+            continue
+        before = {f for g, f in dated if g == form and look_back <= f <= since}
+        text = f"{form} filed {filed.isoformat()}"
+        if len(before) >= cfg.routine_filings:
+            routine.append(
+                f"{text} (routine: {form} filed on {len(before)} days in the "
+                f"{cfg.routine_sessions} sessions before)"
+            )
+        else:
+            counted.append(text)
+    return counted, routine
+
+
 def random_fill(left: Sequence[str], slots: int, version: str, day: date) -> list[str]:
     """Up to `slots` of the left-out stocks, drawn at random but the same on a
     rerun: the draw is seeded by the screen version and the session day."""
@@ -220,6 +270,9 @@ def screen(
     """Who passes for the `day` session. Never raises for one stock: what
     could not be checked is noted, and that check simply does not count."""
     since = previous_session(day)
+    look_back = since
+    for _ in range(cfg.routine_sessions - 1):
+        look_back = previous_session(look_back)
     stocks: list[Stock] = []
     price_failed = 0
     for t in tickers:
@@ -234,13 +287,7 @@ def screen(
             except Exception as exc:
                 st.unchecked.append(f"filings unavailable ({type(exc).__name__})")
                 listed = []
-            for m in listed:
-                try:
-                    filed = date.fromisoformat(m.filed)
-                except ValueError:
-                    continue
-                if m.form in cfg.forms and since < filed <= today:
-                    st.filings.append(f"{m.form} filed {m.filed}")
+            st.filings, st.routine = new_filings(listed, cfg, since, look_back, today)
         stocks.append(st)
     passed = sorted(
         (s for s in stocks if s.passes(cfg.move_sigma)), key=lambda s: s.rank(cfg.move_sigma)
@@ -267,6 +314,7 @@ def screen(
         "held": [t for t in left if t not in filled],
         "unscreened": unscreened,
         "unchecked": {s.ticker: s.unchecked for s in stocks if s.unchecked},
+        "routine": {s.ticker: s.routine for s in stocks if s.routine},
         "filings_checked": filings is not None,
         "filings_failed": failed,
         "prices_failed": price_failed,
@@ -312,6 +360,9 @@ def lines(result: dict[str, Any]) -> list[str]:
     if result["filled"]:
         out += ["", "Random fill (a check on the screen): " + ", ".join(result["filled"])]
     out += ["", "Hold by screen: " + (", ".join(result["held"]) or "none")]
+    if result["routine"]:
+        out += ["", "New filings not counted, routine for the company:"]
+        out += [f"  {t}: {'; '.join(n)}" for t, n in result["routine"].items()]
     if result["unscreened"]:
         out += ["", "Could not be screened (no decision): " + ", ".join(result["unscreened"])]
     if not result["filings_checked"]:

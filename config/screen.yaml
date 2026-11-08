@@ -2,13 +2,23 @@
 # day. No model sees a stock the screen leaves out; it is recorded as "Hold by
 # screen" and scored on prices like any other call, so the screen is judged too.
 # Any edit here, even a comment, needs a new version.
-version: screen-v2
+version: screen-v3
 
 # 1. A new filing filed after the previous session's day, up to the day the
 #    screen runs: an 8-K, 10-Q or 10-K, or for a foreign company the 6-K,
 #    20-F or 40-F it files instead (v2: ASML, PDD, FER, TRI and MNDY file
 #    those, so without them they could never pass on a filing).
 forms: [8-K, 10-Q, 10-K, 6-K, 20-F, 40-F]
+
+#    Routine filers (v3, decided 2026-11-08): a new filing does not count when
+#    the company filed the same form on at least `filings` other days in the
+#    `sessions` sessions before. Over Aug 14 to Nov 6 2026, CCEP passed on a
+#    6-K alone on 17 of 60 sessions, FER 11, NBIS 7 and TRI 6 (buyback and
+#    similar notices), and MSTR passed on 8-Ks on 18 (weekly purchase reports).
+#    A big move still passes such a stock.
+routine:
+  sessions: 10
+  filings: 2
 
 # 2. A big move against QQQ, measured in the stock's usual daily moves against
 #    QQQ (the spread of its daily return less QQQ's over the 20 sessions before

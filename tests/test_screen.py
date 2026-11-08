@@ -22,6 +22,7 @@ from tenq.screen import (
     load_universe,
     main,
     moves,
+    new_filings,
     previous_session,
     random_fill,
     screen,
@@ -89,8 +90,9 @@ class Filings:
 
 
 def test_the_settings_load() -> None:
-    assert CFG.version == "screen-v2"
+    assert CFG.version == "screen-v3"
     assert (CFG.move_sigma, CFG.cap, CFG.fill_to) == (2.5, 25, 20)
+    assert (CFG.routine_sessions, CFG.routine_filings) == (10, 2)
     assert CFG.forms == ("8-K", "10-Q", "10-K", "6-K", "20-F", "40-F")
     assert len(CFG.sha256) == 64
 
@@ -100,6 +102,9 @@ def test_the_settings_load() -> None:
     [
         (lambda t: t.replace("cap: 25", "cap: 25\nrecent_sessions: 20"), "expected exactly"),
         (lambda t: t.replace("fill_to: 20", "fill_to: 30"), "fill_to"),
+        (lambda t: t.replace("  filings: 2", "  filings: 0"), "routine.filings"),
+        (lambda t: t.replace("  sessions: 10", "  sessions: 61"), "routine.sessions"),
+        (lambda t: t.replace("  filings: 2", "  filings: 2\n  forms: x"), "routine"),
         (lambda t: t.replace("fill_to: 20", "fill_to: -1"), "fill_to"),
         (lambda t: t.replace("cap: 25", "cap: true"), "cap"),
         (lambda t: t.replace("move_sigma: 2.5", "move_sigma: 0"), "move_sigma"),
@@ -431,6 +436,72 @@ def test_the_fill_never_draws_more_than_it_can(left: list[str], slots: int, coun
     assert len(random_fill(left, slots, "screen-v2", DAY)) == count
 
 
+# routine filers
+
+# DAY is Friday 2026-11-06: the previous session is 11-05, and the 10 sessions
+# before it run from 2026-10-23 to 11-05.
+SINCE, LOOK_BACK = date(2026, 11, 5), date(2026, 10, 23)
+
+
+def _new(*listed: tuple[str, date]) -> tuple[list[str], list[str]]:
+    metas = [_meta("X", form, filed) for form, filed in listed]
+    return new_filings(metas, CFG, SINCE, LOOK_BACK, DAY)
+
+
+def test_a_form_the_company_files_every_few_days_is_routine() -> None:
+    counted, routine = _new(("6-K", DAY), ("6-K", date(2026, 11, 2)), ("6-K", date(2026, 10, 27)))
+    assert counted == []
+    assert routine == [
+        "6-K filed 2026-11-06 (routine: 6-K filed on 2 days in the 10 sessions before)"
+    ]
+
+
+def test_one_earlier_filing_of_the_form_is_not_routine() -> None:
+    """An earnings 8-K a week after another 8-K still counts."""
+    counted, routine = _new(("8-K", DAY), ("8-K", date(2026, 10, 30)))
+    assert counted == ["8-K filed 2026-11-06"] and routine == []
+
+
+def test_only_the_same_form_makes_a_filing_routine() -> None:
+    counted, _ = _new(("10-Q", DAY), ("8-K", date(2026, 11, 2)), ("8-K", date(2026, 10, 27)))
+    assert counted == ["10-Q filed 2026-11-06"]
+
+
+def test_two_filings_on_one_day_count_as_one_day() -> None:
+    counted, _ = _new(("8-K", DAY), ("8-K", date(2026, 11, 2)), ("8-K", date(2026, 11, 2)))
+    assert counted == ["8-K filed 2026-11-06"]
+
+
+@pytest.mark.parametrize(
+    ("older", "routine"),
+    [(date(2026, 10, 23), True), (date(2026, 10, 22), False)],
+)
+def test_the_look_back_is_the_ten_sessions_before(older: date, routine: bool) -> None:
+    counted, skipped = _new(("6-K", DAY), ("6-K", date(2026, 11, 2)), ("6-K", older))
+    assert bool(skipped) is routine and bool(counted) is not routine
+
+
+@pytest.mark.parametrize(("older", "passes"), [(LOOK_BACK, False), (date(2026, 10, 22), True)])
+def test_the_screen_looks_back_ten_sessions_before_the_previous_one(
+    older: date, passes: bool
+) -> None:
+    filings = Filings({"X": [_meta("X", "6-K", d) for d in (DAY, date(2026, 11, 2), older)]})
+    out = screen(["X"], DAY, DAY, CFG, _prices(X=0.0), filings)
+    assert bool(out["chosen"]) is passes
+
+
+def test_a_routine_filer_still_passes_on_a_big_move_and_the_output_says_why() -> None:
+    days = [DAY, date(2026, 11, 2), date(2026, 10, 27)]
+    filings = Filings({t: [_meta(t, "6-K", d) for d in days] for t in ("CCEP", "BIG")})
+    out = screen(["CCEP", "BIG"], DAY, DAY, CFG, _prices(CCEP=0.0, BIG=0.08), filings)
+    assert [r["ticker"] for r in out["chosen"]] == ["BIG"]
+    assert "CCEP" in out["held"] + out["filled"]  # left out, so held or drawn at random
+    assert set(out["routine"]) == {"CCEP", "BIG"}
+    text = "\n".join(lines(out))
+    assert "New filings not counted, routine for the company:" in text
+    assert "CCEP: 6-K filed 2026-11-06 (routine" in text
+
+
 # the command
 
 
@@ -447,7 +518,7 @@ def test_main_prints_the_screen_and_writes_json(
     out = tmp_path / "screen.json"
     assert main(["--json", str(out)], prices_fetch=fetch, filings=filings, now=NOW) == 0
     text = capsys.readouterr().out
-    assert "Screen screen-v2 for the 2026-11-06 session" in text
+    assert "Screen screen-v3 for the 2026-11-06 session" in text
     result = json.loads(out.read_text())
     assert {r["ticker"] for r in result["chosen"]} == {"CRWD", "DDOG"}
     assert len(result["filled"]) == CFG.fill_to - 2
