@@ -135,9 +135,11 @@ asks no model anything. From the watchlist plus the Nasdaq-100
 that moved against QQQ by more than 2.5 of its usual daily moves against QQQ over 1 or 5 days. At most 25 pass; filings come first, then the bigger move.
 When fewer than 20 pass, the rest of the 20 are drawn at random from the stocks left out, the
 same draw on a rerun, as a check on the screen itself. Everyone else would be "Hold by screen",
-except a stock that could not be fully checked (prices behind the session, or its EDGAR lookup
-failed): that is listed as not screened, and is never drawn for the fill. The run stops if
-QQQ's bar for the session is missing or more than 1 in 10 EDGAR lookups fail.
+except a stock that could not be fully checked (prices behind the session, a gap in its prices,
+too little history for both moves, or its EDGAR lookup failed): that is listed as not
+screened, and is never drawn for the fill. The run stops, and its JSON says `"ok": false`, if
+QQQ's bar for the session is missing, or more than 1 in 10 stocks' EDGAR lookups or prices
+fail.
 The manual `screen` workflow runs it with the EDGAR check on. The daily run does not use it yet.
 
 ## Guardrails

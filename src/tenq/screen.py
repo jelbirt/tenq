@@ -155,18 +155,29 @@ def moves(ticker: str, prices: Prices, day: date) -> tuple[float | None, int | N
     The yardstick is the spread of the stock's daily return less QQQ's over the
     YARDSTICK sessions before the window tested, so the move being tested is
     not part of its own yardstick. Prices that end before `day` are not used:
-    they would pass a stock today on an earlier day's move."""
+    they would pass a stock today on an earlier day's move.
+
+    A window is tested only when the stock has a bar on every QQQ session it
+    and its yardstick span: a missing bar would stretch a 1-session move over
+    two sessions. A window that cannot be tested is noted, so the stock counts
+    as not fully checked rather than as held."""
     stock, bench = prices.bars.get(ticker), prices.bars.get(BENCHMARK)
     pairs = aligned(stock, bench) if stock and bench else []
-    if not pairs:
+    if not pairs or not bench:
         return None, None, "no prices"
     if pairs[-1][0].day != day:
         return None, None, f"prices end {pairs[-1][0].day.isoformat()}, not {day.isoformat()}"
     mine = [s.close for s, _ in pairs]
     theirs = [q.close for _, q in pairs]
     best: tuple[float, int] | None = None
+    notes: list[str] = []
     for n in (1, 5):
-        if len(pairs) < YARDSTICK + n + 1:
+        k = YARDSTICK + n + 1
+        if len(pairs) < k:
+            notes.append(f"too little price history for the {n}-session move")
+            continue
+        if [s.day for s, _ in pairs[-k:]] != [b.day for b in bench[-k:]]:
+            notes.append(f"gap in prices for the {n}-session move")
             continue
         x = (mine[-1] / mine[-1 - n] - 1) - (theirs[-1] / theirs[-1 - n] - 1)
         before_s, before_q = mine[:-n][-(YARDSTICK + 1) :], theirs[:-n][-(YARDSTICK + 1) :]
@@ -178,13 +189,15 @@ def moves(ticker: str, prices: Prices, day: date) -> tuple[float | None, int | N
         ]
         usual = statistics.stdev(daily)
         if not (math.isfinite(x) and math.isfinite(usual)) or usual <= 0:
+            notes.append(f"no usual move for the {n}-session move")
             continue
         z = x / (usual * math.sqrt(n))
         if best is None or abs(z) > abs(best[0]):
             best = (z, n)
+    note = "; ".join(notes) or None
     if best is None:
-        return None, None, "too little price history"
-    return best[0], best[1], None
+        return None, None, note
+    return best[0], best[1], note
 
 
 def random_fill(left: Sequence[str], slots: int, version: str, day: date) -> list[str]:
@@ -208,11 +221,13 @@ def screen(
     could not be checked is noted, and that check simply does not count."""
     since = previous_session(day)
     stocks: list[Stock] = []
+    price_failed = 0
     for t in tickers:
         st = Stock(t)
         st.move, st.move_window, note = moves(t, prices, day)
         if note:
             st.unchecked.append(note)
+            price_failed += 1
         if filings is not None:
             try:
                 listed = filings.list_recent(t, cfg.forms, LIST_DEPTH)
@@ -254,8 +269,21 @@ def screen(
         "unchecked": {s.ticker: s.unchecked for s in stocks if s.unchecked},
         "filings_checked": filings is not None,
         "filings_failed": failed,
+        "prices_failed": price_failed,
         "price_notes": list(prices.notes),
     }
+
+
+def refusals(result: dict[str, Any]) -> list[str]:
+    """Why this screen is not to be trusted, if it is not: too many stocks
+    whose filings or prices could not be checked."""
+    limit = MAX_FAILED_SHARE * result["universe"]
+    out = []
+    if result["filings_failed"] > limit:
+        out.append(f"{result['filings_failed']} EDGAR lookups failed")
+    if result["prices_failed"] > limit:
+        out.append(f"{result['prices_failed']} stocks' prices could not be fully checked")
+    return out
 
 
 def _row(s: Stock, cfg: ScreenConfig) -> dict[str, Any]:
@@ -327,11 +355,15 @@ def main(
         filings = EdgarSource()
     today = now.astimezone(MARKET_TZ).date()
     result = screen(tickers, bench[-1].day, today, cfg, prices, filings)
+    refused = refusals(result)
+    # Decided before the file is written, so a refused screen never reads as a good one.
+    result["ok"] = not refused
+    result["refused"] = refused
     print("\n".join(lines(result)))
     if args.json:
         args.json.write_text(json.dumps(result, indent=1) + "\n")
-    if result["filings_failed"] > MAX_FAILED_SHARE * len(tickers):
-        print(f"\n{result['filings_failed']} EDGAR lookups failed: too many to trust this screen")
+    if refused:
+        print(f"\n{'; '.join(refused)}: too many to trust this screen")
         return 1
     return 0
 

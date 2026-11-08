@@ -5,6 +5,7 @@ from __future__ import annotations
 import itertools
 import json
 import math
+import random
 import statistics
 from dataclasses import replace
 from datetime import UTC, date, datetime, timedelta
@@ -215,6 +216,99 @@ def test_the_move_tested_is_not_part_of_its_own_yardstick() -> None:
     assert window == 1 and z is not None and z > 20
 
 
+def _random_walk(n: int, seed: int) -> tuple[list[float], list[float]]:
+    """Irregular closes for a stock and QQQ, with the stock's own volatility
+    ramping up, so a yardstick one return short or one session off differs."""
+    rng = random.Random(seed)
+    s, q = [100.0], [500.0]
+    for i in range(1, n):
+        m = rng.gauss(0, 0.01)
+        q.append(q[-1] * (1 + m))
+        s.append(s[-1] * (1 + m + rng.gauss(0, 0.002 + 0.0004 * i)))
+    return s, q
+
+
+def _expected_z(s: list[float], q: list[float], n: int) -> float:
+    """The rule written out from return indices: the move over the last n
+    sessions, over the 20 daily gaps from QQQ that end where the move begins."""
+    last = len(s) - 1
+    x = (s[last] / s[last - n] - 1) - (q[last] / q[last - n] - 1)
+    gaps = [
+        (s[t] / s[t - 1] - 1) - (q[t] / q[t - 1] - 1) for t in range(last - n - 19, last - n + 1)
+    ]
+    assert len(gaps) == 20
+    return x / (statistics.stdev(gaps) * math.sqrt(n))
+
+
+@pytest.mark.parametrize(("length", "seed"), [(26, 1), (27, 2), (40, 3), (60, 4)])
+def test_the_move_matches_the_rule_written_out_by_hand(length: int, seed: int) -> None:
+    s, q = _random_walk(length, seed)
+    days = _days(length)
+    prices = Prices(
+        {
+            BENCHMARK: tuple(Bar(d, c, 1e6) for d, c in zip(days, q, strict=True)),
+            "W": tuple(Bar(d, c, 1e6) for d, c in zip(days, s, strict=True)),
+        },
+        (),
+    )
+    z, window, note = moves("W", prices, DAY)
+    by_window = {n: _expected_z(s, q, n) for n in (1, 5)}
+    best = max(by_window, key=lambda n: abs(by_window[n]))
+    assert note is None and window == best
+    assert z == pytest.approx(by_window[best])
+
+
+@pytest.mark.parametrize(
+    ("length", "window", "note"),
+    [
+        (21, None, "too little price history for the 1-session move"),
+        (22, 1, "too little price history for the 5-session move"),
+        (25, 1, "too little price history for the 5-session move"),
+        (26, None, None),
+    ],
+)
+def test_short_histories_say_which_move_could_not_be_tested(
+    length: int, window: int | None, note: str | None
+) -> None:
+    prices = Prices({BENCHMARK: _flat(length), "NEW": _bars(0.0, length)}, ())
+    z, got_window, got_note = moves("NEW", prices, DAY)
+    if length == 21:
+        assert z is None and got_note == (
+            "too little price history for the 1-session move; "
+            "too little price history for the 5-session move"
+        )
+    else:
+        assert got_note == note
+        if window is not None:
+            assert got_window == window
+    out = screen(["NEW"], DAY, DAY, CFG, prices, None)
+    # Only a stock with both moves tested is a screen decision.
+    assert (out["unscreened"] == ["NEW"]) is (length < 26)
+
+
+def test_a_missing_bar_is_not_read_as_a_one_session_move() -> None:
+    """Without the day before the session, the '1-session' move would span two
+    sessions but be measured against a one-session yardstick."""
+    bars = _bars(0.03)
+    holed = bars[:-2] + bars[-1:]
+    prices = Prices({BENCHMARK: _flat(), "HOLE": holed}, ())
+    z, window, note = moves("HOLE", prices, DAY)
+    assert z is None and window is None
+    assert note == "gap in prices for the 1-session move; gap in prices for the 5-session move"
+    old = bars[:-30] + bars[-29:]  # a hole long before the windows tested
+    z, window, note = moves("OLD", Prices({BENCHMARK: _flat(), "OLD": old}, ()), DAY)
+    assert note is None and window in (1, 5)
+
+
+def test_a_stock_with_no_usual_move_says_so() -> None:
+    prices = Prices({BENCHMARK: _flat(), "STILL": _flat()}, ())
+    assert moves("STILL", prices, DAY) == (
+        None,
+        None,
+        "no usual move for the 1-session move; no usual move for the 5-session move",
+    )
+
+
 # who passes
 
 
@@ -371,15 +465,42 @@ def test_main_refuses_a_qqq_bar_that_is_a_session_behind(
     assert "no QQQ bar for the 2026-11-09 session yet" in capsys.readouterr().out
 
 
-def test_main_fails_when_too_many_edgar_lookups_fail(capsys: pytest.CaptureFixture[str]) -> None:
-    def fetch(tickers: object, source: object, *, now: datetime) -> Prices:
-        return _prices(CRWD=0.0)
+def _all_priced(tickers: object, source: object, *, now: datetime) -> Prices:
+    return _prices(**dict.fromkeys(load_universe(), 0.0))
 
+
+def test_main_fails_when_too_many_edgar_lookups_fail(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    out = tmp_path / "screen.json"
     filings = Filings({}, broken=frozenset(load_universe()[:12]))
-    assert main([], prices_fetch=fetch, filings=filings, now=NOW) == 1
+    assert main(["--json", str(out)], prices_fetch=_all_priced, filings=filings, now=NOW) == 1
     assert "12 EDGAR lookups failed" in capsys.readouterr().out
+    refused = json.loads(out.read_text())
+    assert refused["ok"] is False and refused["refused"] == ["12 EDGAR lookups failed"]
     few = Filings({}, broken=frozenset(load_universe()[:11]))
-    assert main([], prices_fetch=fetch, filings=few, now=NOW) == 0
+    assert main(["--json", str(out)], prices_fetch=_all_priced, filings=few, now=NOW) == 0
+    kept = json.loads(out.read_text())
+    assert kept["ok"] is True and kept["refused"] == []
+
+
+@pytest.mark.parametrize(("missing", "code"), [(12, 1), (11, 0)])
+def test_main_fails_when_too_many_stocks_have_no_prices(
+    missing: int, code: int, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Yahoo can serve QQQ and drop many stocks: those would all be
+    'could not be screened', and the run must not call that a screen."""
+    gone = set(load_universe()[:missing])
+
+    def fetch(tickers: object, source: object, *, now: datetime) -> Prices:
+        return _prices(**{t: 0.0 for t in load_universe() if t not in gone})
+
+    out = tmp_path / "screen.json"
+    assert main(["--no-filings", "--json", str(out)], prices_fetch=fetch, now=NOW) == code
+    result = json.loads(out.read_text())
+    assert result["prices_failed"] == missing and result["ok"] is (code == 0)
+    if code:
+        assert f"{missing} stocks' prices could not be fully checked" in capsys.readouterr().out
 
 
 def test_main_without_qqq_screens_nothing(capsys: pytest.CaptureFixture[str]) -> None:
