@@ -525,6 +525,19 @@ def test_a_weekly_8k_filers_earnings_or_major_event_still_counts(items: str) -> 
     assert counted[0].startswith("8-K item")
 
 
+def test_the_note_lists_an_8ks_items_in_order() -> None:
+    counted, _ = _eight_k((DAY, "9.01,5.02,2.02"), *WEEKLY)
+    assert counted == ["8-K items 2.02, 5.02 filed 2026-11-06"]
+
+
+def test_an_8k_is_routine_only_when_its_exact_items_repeat() -> None:
+    """A deliberate choice (v4): items are matched as a set, so a weekly filer
+    whose item list changes one week passes that week. That fails toward more
+    passes; matching item by item would be the stricter rule."""
+    counted, routine = _eight_k((DAY, "7.01,8.01"), *WEEKLY)
+    assert counted == ["8-K items 7.01, 8.01 filed 2026-11-06"] and routine == []
+
+
 def test_the_exhibit_item_does_not_change_what_an_8k_reports() -> None:
     counted, routine = _eight_k(
         (DAY, "8.01,9.01"), (date(2026, 11, 2), "8.01"), (date(2026, 10, 26), " 9.01 , 8.01")

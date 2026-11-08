@@ -135,7 +135,8 @@ asks no model anything. From the watchlist plus the Nasdaq-100
 that moved against QQQ by more than 2.5 of its usual daily moves against QQQ over 1 or 5 days.
 A filing does not count when the company filed the same kind on 2 or more other days in the 10
 sessions before (a routine filer, such as weekly buyback notices); for an 8-K the kind includes
-its items, so a weekly filer's earnings 8-K (item 2.02) still counts. A big move still passes it.
+its items, so a weekly filer's earnings 8-K (item 2.02) still counts. A 6-K lists no items, so
+a frequent 6-K filer's results 6-K is still routine. A big move still passes either.
 At most 25 pass; filings come first, then the bigger move.
 When fewer than 20 pass, the rest of the 20 are drawn at random from the stocks left out, the
 same draw on a rerun, as a check on the screen itself. Everyone else would be "Hold by screen",
