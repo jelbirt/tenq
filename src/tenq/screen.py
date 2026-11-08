@@ -215,6 +215,26 @@ def moves(ticker: str, prices: Prices, day: date) -> tuple[float | None, int | N
     return best[0], best[1], note
 
 
+EXHIBITS_ITEM = "9.01"  # an 8-K's exhibit list; it says nothing about the event
+
+
+def kind_of(meta: FilingMeta) -> tuple[str, frozenset[str]]:
+    """What a filing reports: its form, and for an 8-K the items it lists
+    (2.02 earnings, 1.01 a major deal, 5.02 an executive change, and so on),
+    leaving out 9.01, the exhibit list, which rides along with most of them."""
+    if meta.form != "8-K":
+        return meta.form, frozenset()
+    items = {i.strip() for i in meta.items.split(",") if i.strip()}
+    return meta.form, frozenset(items - {EXHIBITS_ITEM})
+
+
+def _kind_text(kind: tuple[str, frozenset[str]]) -> str:
+    form, items = kind
+    if not items:
+        return form
+    return f"{form} item{'s' if len(items) > 1 else ''} {', '.join(sorted(items))}"
+
+
 def new_filings(
     listed: Sequence[FilingMeta], cfg: ScreenConfig, since: date, look_back: date, today: date
 ) -> tuple[list[str], list[str]]:
@@ -222,28 +242,30 @@ def new_filings(
     because they are routine for this company.
 
     New means filed after `since` (the previous session) up to `today`. A new
-    filing is routine when the company filed the same form on at least
-    `routine_filings` other days from `look_back` to `since`, the
-    `routine_sessions` sessions before: a company that files a form that often
+    filing is routine when the company filed the same kind of filing on at
+    least `routine_filings` other days from `look_back` to `since`, the
+    `routine_sessions` sessions before: a company that files it that often
     (weekly buyback notices, say) is not telling us anything new by filing it
-    again. When a run is late and several sessions' filings are new at once,
-    they are not counted against each other; that only lets more through."""
-    dated: list[tuple[str, date]] = []
+    again. For an 8-K the kind is its items as well as its form (v4), so a
+    weekly filer's purchase reports are routine but its earnings 8-K is not.
+    When a run is late and several sessions' filings are new at once, they are
+    not counted against each other; that only lets more through."""
+    dated: list[tuple[tuple[str, frozenset[str]], date]] = []
     for m in listed:
         try:
-            dated.append((m.form, date.fromisoformat(m.filed)))
+            dated.append((kind_of(m), date.fromisoformat(m.filed)))
         except ValueError:
             continue
     counted: list[str] = []
     routine: list[str] = []
-    for form, filed in dated:
-        if form not in cfg.forms or not since < filed <= today:
+    for kind, filed in dated:
+        if kind[0] not in cfg.forms or not since < filed <= today:
             continue
-        before = {f for g, f in dated if g == form and look_back <= f <= since}
-        text = f"{form} filed {filed.isoformat()}"
+        before = {f for k, f in dated if k == kind and look_back <= f <= since}
+        text = f"{_kind_text(kind)} filed {filed.isoformat()}"
         if len(before) >= cfg.routine_filings:
             routine.append(
-                f"{text} (routine: {form} filed on {len(before)} days in the "
+                f"{text} (routine: filed on {len(before)} days in the "
                 f"{cfg.routine_sessions} sessions before)"
             )
         else:

@@ -2,7 +2,7 @@
 # day. No model sees a stock the screen leaves out; it is recorded as "Hold by
 # screen" and scored on prices like any other call, so the screen is judged too.
 # Any edit here, even a comment, needs a new version.
-version: screen-v3
+version: screen-v4
 
 # 1. A new filing filed after the previous session's day, up to the day the
 #    screen runs: an 8-K, 10-Q or 10-K, or for a foreign company the 6-K,
@@ -16,6 +16,11 @@ forms: [8-K, 10-Q, 10-K, 6-K, 20-F, 40-F]
 #    6-K alone on 17 of 60 sessions, FER 11, NBIS 7 and TRI 6 (buyback and
 #    similar notices), and MSTR passed on 8-Ks on 18 (weekly purchase reports).
 #    A big move still passes such a stock.
+#    v4: for an 8-K, the same kind means the same items as well (leaving out
+#    9.01, the exhibit list). Under v3 a weekly 8-K filer's earnings 8-K (item
+#    2.02), or any other major event, could never pass on the filing.
+#    Over the same 60 sessions MSTR now passes on a filing 4 times, its
+#    2026-10-29 earnings 8-K among them; CCEP stays at 1.
 routine:
   sessions: 10
   filings: 2

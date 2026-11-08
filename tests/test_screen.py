@@ -17,6 +17,7 @@ from tenq.config import load_watchlist
 from tenq.filings import FilingMeta
 from tenq.prices import BENCHMARK, Bar, Prices
 from tenq.screen import (
+    kind_of,
     lines,
     load_config,
     load_universe,
@@ -59,7 +60,7 @@ def _prices(**jumps: float) -> Prices:
     return Prices(bars, ())
 
 
-def _meta(ticker: str, form: str, filed: date) -> FilingMeta:
+def _meta(ticker: str, form: str, filed: date, items: str = "") -> FilingMeta:
     return FilingMeta(
         ticker=ticker,
         cik=1,
@@ -69,6 +70,7 @@ def _meta(ticker: str, form: str, filed: date) -> FilingMeta:
         filed=filed.isoformat(),
         period=filed.isoformat(),
         url="https://www.sec.gov/",
+        items=items,
     )
 
 
@@ -90,7 +92,7 @@ class Filings:
 
 
 def test_the_settings_load() -> None:
-    assert CFG.version == "screen-v3"
+    assert CFG.version == "screen-v4"
     assert (CFG.move_sigma, CFG.cap, CFG.fill_to) == (2.5, 25, 20)
     assert (CFG.routine_sessions, CFG.routine_filings) == (10, 2)
     assert CFG.forms == ("8-K", "10-Q", "10-K", "6-K", "20-F", "40-F")
@@ -463,9 +465,7 @@ def _new(*listed: tuple[str, date]) -> tuple[list[str], list[str]]:
 def test_a_form_the_company_files_every_few_days_is_routine() -> None:
     counted, routine = _new(("6-K", DAY), ("6-K", date(2026, 11, 2)), ("6-K", date(2026, 10, 27)))
     assert counted == []
-    assert routine == [
-        "6-K filed 2026-11-06 (routine: 6-K filed on 2 days in the 10 sessions before)"
-    ]
+    assert routine == ["6-K filed 2026-11-06 (routine: filed on 2 days in the 10 sessions before)"]
 
 
 def test_a_filing_the_session_before_counts_toward_routine() -> None:
@@ -478,7 +478,7 @@ def test_the_settings_decide_how_many_earlier_days_make_a_form_routine() -> None
     metas = [_meta("X", "8-K", d) for d in (DAY, date(2026, 10, 30))]
     assert new_filings(metas, one, SINCE, LOOK_BACK, DAY) == (
         [],
-        ["8-K filed 2026-11-06 (routine: 8-K filed on 1 days in the 10 sessions before)"],
+        ["8-K filed 2026-11-06 (routine: filed on 1 days in the 10 sessions before)"],
     )
 
 
@@ -500,6 +500,55 @@ def test_a_heavy_filer_is_still_seen_as_routine() -> None:
     busy += [_meta("X", "6-K", date(2026, 10, 26)) for _ in range(3)]
     out = screen(["X"], DAY, DAY, CFG, _prices(X=0.0), Filings({"X": busy}))
     assert not out["chosen"] and "X" in out["routine"]
+
+
+def _eight_k(*filed: tuple[date, str]) -> tuple[list[str], list[str]]:
+    metas = [_meta("X", "8-K", day, items) for day, items in filed]
+    return new_filings(metas, CFG, SINCE, LOOK_BACK, DAY)
+
+
+WEEKLY = ((date(2026, 11, 2), "8.01"), (date(2026, 10, 26), "8.01"))
+
+
+def test_a_weekly_8k_filers_purchase_report_is_routine() -> None:
+    counted, routine = _eight_k((DAY, "8.01"), *WEEKLY)
+    assert counted == []
+    assert routine == [
+        "8-K item 8.01 filed 2026-11-06 (routine: filed on 2 days in the 10 sessions before)"
+    ]
+
+
+@pytest.mark.parametrize("items", ["2.02,9.01", "1.01", "5.02,9.01", "2.02,8.01,9.01"])
+def test_a_weekly_8k_filers_earnings_or_major_event_still_counts(items: str) -> None:
+    counted, routine = _eight_k((DAY, items), *WEEKLY)
+    assert routine == [] and len(counted) == 1
+    assert counted[0].startswith("8-K item")
+
+
+def test_the_exhibit_item_does_not_change_what_an_8k_reports() -> None:
+    counted, routine = _eight_k(
+        (DAY, "8.01,9.01"), (date(2026, 11, 2), "8.01"), (date(2026, 10, 26), " 9.01 , 8.01")
+    )
+    assert counted == [] and len(routine) == 1
+
+
+def test_an_8k_with_only_exhibits_or_no_items_matches_its_own_kind() -> None:
+    counted, _ = _eight_k((DAY, ""), *WEEKLY)
+    assert counted == ["8-K filed 2026-11-06"]
+    _, routine = _eight_k((DAY, "9.01"), (date(2026, 11, 2), ""), (date(2026, 10, 26), "9.01"))
+    assert routine == ["8-K filed 2026-11-06 (routine: filed on 2 days in the 10 sessions before)"]
+
+
+def test_items_are_only_read_for_8ks() -> None:
+    assert kind_of(_meta("X", "6-K", DAY, "8.01")) == ("6-K", frozenset())
+    assert kind_of(_meta("X", "8-K", DAY, "9.01,2.02")) == ("8-K", frozenset({"2.02"}))
+
+
+def test_a_weekly_filers_earnings_8k_passes_the_screen() -> None:
+    listed = [_meta("MSTR", "8-K", DAY, "2.02,9.01")]
+    listed += [_meta("MSTR", "8-K", d, i) for d, i in WEEKLY]
+    out = screen(["MSTR"], DAY, DAY, CFG, _prices(MSTR=0.0), Filings({"MSTR": listed}))
+    assert [r["ticker"] for r in out["chosen"]] == ["MSTR"]
 
 
 def test_one_earlier_filing_of_the_form_is_not_routine() -> None:
@@ -564,7 +613,7 @@ def test_main_prints_the_screen_and_writes_json(
     out = tmp_path / "screen.json"
     assert main(["--json", str(out)], prices_fetch=fetch, filings=filings, now=NOW) == 0
     text = capsys.readouterr().out
-    assert "Screen screen-v3 for the 2026-11-06 session" in text
+    assert "Screen screen-v4 for the 2026-11-06 session" in text
     result = json.loads(out.read_text())
     assert {r["ticker"] for r in result["chosen"]} == {"CRWD", "DDOG"}
     assert len(result["filled"]) == CFG.fill_to - 2
