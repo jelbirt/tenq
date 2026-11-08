@@ -18,10 +18,11 @@ from urllib.parse import urlsplit
 from tenq.deliver import Email
 
 DISCLAIMER = (
-    "Not investment advice. Two methods each make a call on every stock from the "
-    "same public facts: Jev answers questions and fixed rules turn the answers into "
-    "a call; Opus makes its own. This is an experiment, and both are scored against "
-    "prices later. Every figure in a reason was written by code from the facts sheet."
+    "Not investment advice. Two methods each make a call on each stock the day's "
+    "screen picked, from the same public facts: Jev answers questions and fixed "
+    "rules turn the answers into a call; Opus makes its own. This is an experiment, "
+    "and both are scored against prices later. Every figure in a reason was written "
+    "by code from the facts sheet."
 )
 
 

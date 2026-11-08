@@ -436,6 +436,7 @@ def run_screen(
         today = now.astimezone(MARKET_TZ).date()
         result = screen(tickers, bench[-1].day, today, cfg, prices, filings)
     except Exception as e:  # any failure means fall back to the watchlist, never crash
+        log.exception("the screen failed")  # the traceback stays in the log, not the email
         return _failed(f"the screen failed ({type(e).__name__})")
     refused = refusals(result)
     # Decided before anyone reads it, so a refused screen never reads as a good one.

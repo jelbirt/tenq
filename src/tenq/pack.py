@@ -616,7 +616,13 @@ def gather(ticker: str, now: datetime) -> Pack | None:
 
     # Any stock the screen can pick, not only the watchlist: without its company
     # name the news match falls back to the bare symbol and finds little.
-    names = universe_names()
+    try:
+        names = universe_names()
+    except Exception:  # a broken universe file must not stop the watchlist fallback
+        from tenq.config import load_watchlist
+
+        log.exception("the universe names could not be read; watchlist names only")
+        names = load_watchlist().names
     source = EdgarSource()
     filings, current = FilingStore(Path("data/filings")), FilingStore(CURRENT_ROOT, tag=CURRENT_TAG)
     sync(source, filings, ticker, DEFAULT_DEPTH)

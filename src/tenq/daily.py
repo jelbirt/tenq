@@ -469,11 +469,13 @@ def run_day(
     *,
     check_id: str | None = None,
     screen: dict[str, Any] | None = None,
+    started: float | None = None,
     save: Callable[[dict[str, Any]], None] = lambda record: None,
 ) -> dict[str, Any]:
     """Every stock's calls, as the day's record (email and trace not yet sent).
     `save` gets the record after every stock, unfinished until the last."""
-    state = State(deadline=ctx.clock() + ctx.opus_budget_s)
+    # The budget runs from `started` (before the screen), so screen time counts too.
+    state = State(deadline=(ctx.clock() if started is None else started) + ctx.opus_budget_s)
     record: dict[str, Any] = {
         "kind": KIND,
         "run_id": str(uuid.uuid4()),
@@ -660,12 +662,12 @@ def main(
             return 0
         return _finish(deliver(path, done, email=True, mailer=mailer, tracer=tracer), True)
 
-    screened = None
+    screened, started = None, ctx.clock()
     if not args.ticker:
         screened, tickers = choose((screener or run_screen)(ctx.now), day, list(watch.tickers))
     record = run_day(
         tickers, names, day, bench_close, ctx, check_id=check_id, screen=screened,
-        save=lambda r: _write(path, r),
+        started=started, save=lambda r: _write(path, r),
     )  # fmt: skip
     if check_id is None:
         # the week's last session: the scorecard rides at the top of the email

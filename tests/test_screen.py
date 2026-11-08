@@ -693,7 +693,7 @@ def test_main_without_qqq_screens_nothing(capsys: pytest.CaptureFixture[str]) ->
     assert "no QQQ prices" in capsys.readouterr().out
 
 
-def test_run_screen_never_raises_and_says_why_it_failed() -> None:
+def test_run_screen_never_raises_and_says_why_it_failed(caplog: pytest.LogCaptureFixture) -> None:
     def broken(tickers: object, source: object, *, now: datetime) -> Prices:
         raise OSError("disk")
 
@@ -705,6 +705,7 @@ def test_run_screen_never_raises_and_says_why_it_failed() -> None:
         "ok": False,
         "refused": ["the screen failed (OSError)"],
     }
+    assert "OSError: disk" in caplog.text  # the traceback is logged, the email gets the type only
     assert run_screen(NOW, prices_fetch=no_qqq, check_filings=False)["refused"] == ["no QQQ prices"]
     late = run_screen(datetime(2026, 11, 9, 23, tzinfo=UTC), prices_fetch=_all_priced,
                       check_filings=False)  # fmt: skip

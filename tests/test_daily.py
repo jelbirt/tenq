@@ -1048,9 +1048,8 @@ def test_a_screened_stock_off_the_watchlist_shows_its_company(tmp_path: Path) ->
     assert "AAPL (Apple)" in outbox.sent[0].text
 
 
-def test_the_facts_pack_and_news_get_the_company_of_any_screened_stock(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def _spy_on_gather(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
+    """Stub everything gather fetches; return what it passed as names."""
     from tenq import pack as pack_module
     from tenq.news import News
 
@@ -1073,5 +1072,43 @@ def test_the_facts_pack_and_news_get_the_company_of_any_screened_stock(
     monkeypatch.setattr("tenq.prices.fetch", lambda *a, **k: Prices({}, ()))
     monkeypatch.setattr("tenq.news.collect", collect)
     monkeypatch.setattr(pack_module, "build", build)
+    return seen
+
+
+def test_the_facts_pack_and_news_get_the_company_of_any_screened_stock(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from tenq import pack as pack_module
+
+    seen = _spy_on_gather(monkeypatch)
     assert pack_module.gather("AAPL", NOW) == "pack"  # type: ignore[comparison-overlap]
     assert seen == {"news": {"AAPL": "Apple"}, "pack": "Apple"}
+
+
+def test_a_broken_universe_file_still_lets_the_watchlist_gather(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from tenq import pack as pack_module
+
+    def broken() -> dict[str, str]:
+        raise ValueError("bad universe")
+
+    seen = _spy_on_gather(monkeypatch)
+    monkeypatch.setattr("tenq.screen.universe_names", broken)
+    assert pack_module.gather("CRWD", NOW) == "pack"  # type: ignore[comparison-overlap]
+    assert seen["pack"] == WATCH.names["CRWD"]
+
+
+def test_the_screens_time_counts_against_the_opus_budget(tmp_path: Path) -> None:
+    ticks = iter(range(10_000))
+    ctx = _ctx()
+    ctx.opus_budget_s = 2.5
+    ctx.clock = lambda: float(next(ticks))
+
+    def slow(now: datetime) -> Any:
+        for _ in range(3):  # the screen uses up the whole budget
+            next(ticks)
+        return _screen(DAY, list(WATCH.tickers))(now)
+
+    assert _run(tmp_path, ctx=ctx, screener=slow) == 0
+    assert "time budget" in _record(tmp_path)["stocks"][0]["opus"]["error"]
