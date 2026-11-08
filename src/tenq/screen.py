@@ -226,7 +226,8 @@ def new_filings(
     `routine_filings` other days from `look_back` to `since`, the
     `routine_sessions` sessions before: a company that files a form that often
     (weekly buyback notices, say) is not telling us anything new by filing it
-    again."""
+    again. When a run is late and several sessions' filings are new at once,
+    they are not counted against each other; that only lets more through."""
     dated: list[tuple[str, date]] = []
     for m in listed:
         try:

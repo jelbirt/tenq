@@ -83,7 +83,7 @@ class Filings:
         assert forms == CFG.forms  # the settings decide which forms are listed
         if ticker in self.broken:
             raise ConnectionError("EDGAR down")
-        return self.listed.get(ticker, [])
+        return self.listed.get(ticker, [])[:limit]
 
 
 # settings
@@ -105,6 +105,8 @@ def test_the_settings_load() -> None:
         (lambda t: t.replace("  filings: 2", "  filings: 0"), "routine.filings"),
         (lambda t: t.replace("  sessions: 10", "  sessions: 61"), "routine.sessions"),
         (lambda t: t.replace("  filings: 2", "  filings: 2\n  forms: x"), "routine"),
+        (lambda t: t.replace("  filings: 2\n", ""), "routine"),
+        (lambda t: t.replace("  sessions: 10", "  sessions: true"), "routine.sessions"),
         (lambda t: t.replace("fill_to: 20", "fill_to: -1"), "fill_to"),
         (lambda t: t.replace("cap: 25", "cap: true"), "cap"),
         (lambda t: t.replace("move_sigma: 2.5", "move_sigma: 0"), "move_sigma"),
@@ -117,6 +119,16 @@ def test_bad_settings_are_refused(tmp_path: Path, edit: object, says: str) -> No
     path.write_text(edit(text))  # type: ignore[operator]
     with pytest.raises(ValueError, match=says):
         load_config(path)
+
+
+def test_the_routine_settings_are_read_from_the_file(tmp_path: Path) -> None:
+    text = (Path(__file__).parents[1] / "config" / "screen.yaml").read_text()
+    path = tmp_path / "screen.yaml"
+    path.write_text(
+        text.replace("  sessions: 10", "  sessions: 7").replace("  filings: 2", "  filings: 3")
+    )
+    cfg = load_config(path)
+    assert (cfg.routine_sessions, cfg.routine_filings) == (7, 3)
 
 
 def test_the_universe_is_the_watchlist_first_then_the_nasdaq_100_once_each() -> None:
@@ -454,6 +466,40 @@ def test_a_form_the_company_files_every_few_days_is_routine() -> None:
     assert routine == [
         "6-K filed 2026-11-06 (routine: 6-K filed on 2 days in the 10 sessions before)"
     ]
+
+
+def test_a_filing_the_session_before_counts_toward_routine() -> None:
+    counted, routine = _new(("6-K", DAY), ("6-K", SINCE), ("6-K", date(2026, 10, 30)))
+    assert counted == [] and len(routine) == 1
+
+
+def test_the_settings_decide_how_many_earlier_days_make_a_form_routine() -> None:
+    one = replace(CFG, routine_filings=1)
+    metas = [_meta("X", "8-K", d) for d in (DAY, date(2026, 10, 30))]
+    assert new_filings(metas, one, SINCE, LOOK_BACK, DAY) == (
+        [],
+        ["8-K filed 2026-11-06 (routine: 8-K filed on 1 days in the 10 sessions before)"],
+    )
+
+
+def test_the_settings_decide_how_far_back_the_screen_looks() -> None:
+    """With 5 sessions the look back starts 2026-10-30, so a 6-K on 10-29 is
+    too old to make the new one routine."""
+    short = replace(CFG, routine_sessions=5)
+    days = (DAY, date(2026, 11, 2), date(2026, 10, 29))
+    filings = Filings({"X": [_meta("X", "6-K", d) for d in days]})
+    assert screen(["X"], DAY, DAY, short, _prices(X=0.0), filings)["chosen"]
+    assert not screen(["X"], DAY, DAY, CFG, _prices(X=0.0), filings)["chosen"]
+
+
+def test_a_heavy_filer_is_still_seen_as_routine() -> None:
+    """A company that files many 6-Ks a day still has its earlier days in view:
+    the list is deep enough to reach back past a busy few weeks."""
+    busy = [_meta("X", "6-K", DAY)]
+    busy += [_meta("X", "6-K", date(2026, 11, 4)) for _ in range(20)]
+    busy += [_meta("X", "6-K", date(2026, 10, 26)) for _ in range(3)]
+    out = screen(["X"], DAY, DAY, CFG, _prices(X=0.0), Filings({"X": busy}))
+    assert not out["chosen"] and "X" in out["routine"]
 
 
 def test_one_earlier_filing_of_the_form_is_not_routine() -> None:
