@@ -9,7 +9,7 @@ on:
     - cron: "30 22 * * 1-5"
   workflow_dispatch:
     inputs:
-      tickers: {description: "A check on these tickers only (space separated); empty: the whole watchlist", required: false, default: ""}
+      tickers: {description: "A check on these tickers only (space separated); empty: the screen's picks", required: false, default: ""}
       email: {description: "Send the email", type: boolean, default: true}
 
 permissions:
@@ -23,8 +23,8 @@ concurrency:
 jobs:
   daily:
     runs-on: ubuntu-latest
-    timeout-minutes: 180 # 20 stocks: Jev, then two claude runs each
-    # a scheduled run has no inputs: tickers is empty (the whole watchlist)
+    timeout-minutes: 180 # the screen (~10 min), then 20 to 25 stocks: Jev and two claude runs each
+    # a scheduled run has no inputs: tickers is empty (the screen's picks)
     # and email is not "false", so it emails
     steps:
       - uses: actions/checkout@v4

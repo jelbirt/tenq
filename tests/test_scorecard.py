@@ -709,12 +709,13 @@ def test_a_failing_scorecard_is_an_error_line_not_a_crash(tmp_path: Path) -> Non
 FRIDAY = datetime(2026, 11, 6, 22, 30, tzinfo=UTC)
 
 
-def _friday(tmp_path: Path, score_prices: Any, outbox: Outbox) -> dict[str, Any]:
+def _friday(tmp_path: Path, score_prices: Any, outbox: Outbox, **kw: Any) -> dict[str, Any]:
     ctx = _ctx()
     ctx.now = FRIDAY
     code = daily_main(
         ["--runs", str(tmp_path), "--stage", "all"],
         ctx=ctx,
+        **kw,
         prices=lambda: Prices({BENCHMARK: (Bar(date(2026, 11, 6), 600.0, None),)}, ()),
         score_prices=score_prices,
         mailer=outbox,
@@ -780,3 +781,14 @@ def test_opus_lean_is_read_from_the_record_and_old_records_have_none() -> None:
     assert made.opus_lean == pytest.approx(-0.25)
     [old] = calls_from(_record())
     assert old.opus_lean is None
+
+
+def test_a_failed_screen_comes_before_even_the_weekly_scorecard(tmp_path: Path) -> None:
+    outbox = Outbox()
+    failed = {"kind": "screen", "ok": False, "refused": ["no QQQ prices"]}
+    _friday(tmp_path, _fetcher({}), outbox, screener=lambda now: failed)
+    [email] = outbox.sent
+    assert email.subject.startswith("SCREEN FAILED + Weekly scorecard + tenq daily")
+    assert email.text.startswith("SCREEN FAILED: no QQQ prices.")
+    assert email.text.index("SCREEN FAILED") < email.text.index("WEEKLY SCORECARD")
+    assert email.html.index("#b00") < email.html.index("Weekly scorecard")

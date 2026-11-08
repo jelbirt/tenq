@@ -1032,3 +1032,46 @@ def test_a_check_on_named_stocks_skips_the_screen_and_takes_any_universe_stock(
     assert check["screen"] is None
     assert "Screen" not in outbox.sent[0].text
     assert _run(tmp_path, "--ticker", "ZZZZ", screener=never) == 2
+
+
+def test_a_check_without_named_stocks_still_uses_the_screen(tmp_path: Path) -> None:
+    assert _run(tmp_path, "--no-email", screener=_screen(DAY, ["TEAM", "AAPL"])) == 0
+    [check] = _checks(tmp_path)
+    assert check["screen"]["used"] == "screen"
+    assert [s["ticker"] for s in check["stocks"]] == ["TEAM", "AAPL"]
+
+
+def test_a_screened_stock_off_the_watchlist_shows_its_company(tmp_path: Path) -> None:
+    outbox = Outbox()
+    assert _run(tmp_path, screener=_screen(DAY, ["AAPL"]), mailer=outbox) == 0
+    assert _record(tmp_path)["stocks"][0]["company"] == "Apple"
+    assert "AAPL (Apple)" in outbox.sent[0].text
+
+
+def test_the_facts_pack_and_news_get_the_company_of_any_screened_stock(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from tenq import pack as pack_module
+    from tenq.news import News
+
+    seen: dict[str, Any] = {}
+
+    class Source:
+        pass
+
+    def collect(names: dict[str, str | None], since: datetime) -> News:
+        seen["news"] = names
+        return News({}, ())
+
+    def build(ticker: str, company: str, **kw: Any) -> str:
+        seen["pack"] = company
+        return "pack"
+
+    monkeypatch.setattr("tenq.edgar.EdgarSource", Source)
+    monkeypatch.setattr("tenq.fetch.sync", lambda *a, **k: None)
+    monkeypatch.setattr("tenq.current.sync_current", lambda *a, **k: type("S", (), {"notes": ()})())
+    monkeypatch.setattr("tenq.prices.fetch", lambda *a, **k: Prices({}, ()))
+    monkeypatch.setattr("tenq.news.collect", collect)
+    monkeypatch.setattr(pack_module, "build", build)
+    assert pack_module.gather("AAPL", NOW) == "pack"  # type: ignore[comparison-overlap]
+    assert seen == {"news": {"AAPL": "Apple"}, "pack": "Apple"}

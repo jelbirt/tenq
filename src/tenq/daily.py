@@ -1,7 +1,8 @@
-"""The daily run: both calls on every watchlist stock after the close, one
-email, one record, and a trace per stock.
+"""The daily run: both calls on each stock the screen picks after the close
+(tenq.screen; the watchlist if the screen fails), one email, one record, and a
+trace per stock.
 
-    python -m tenq.daily                  # every watchlist stock, the latest session
+    python -m tenq.daily                  # the screen's picks, the latest session
     python -m tenq.daily --ticker CRWD    # a check (see below)
     python -m tenq.daily --no-email       # a check that emails nothing
 
@@ -569,7 +570,9 @@ def main(
     mailer: Mailer = send,
     tracer: Tracer = send_daily_traces,
 ) -> int:
-    ap = argparse.ArgumentParser(description="Both daily calls on the watchlist, emailed.")
+    ap = argparse.ArgumentParser(
+        description="Both daily calls on the screen's picks (the watchlist if it fails), emailed."
+    )
     ap.add_argument("--ticker", action="append", help="a check on these stocks only")
     ap.add_argument("--no-email", action="store_true", help="a check that emails nothing")
     ap.add_argument("--no-opus", action="store_true", help="a check of Jev's calls only")
@@ -600,9 +603,12 @@ def main(
         return send_claimed(args.record, args.claim, mailer, tracer)
 
     watch = load_watchlist()
-    names = universe_names()
+    try:
+        names, universe = universe_names(), set(load_universe())
+    except Exception as e:  # a broken universe file: the screen fails too, so run the watchlist
+        log.error("the universe could not be read (%s): watchlist only", type(e).__name__)
+        names, universe = dict(watch.names), set(watch.tickers)
     tickers = list(dict.fromkeys(t.upper() for t in args.ticker or watch.tickers))
-    universe = set(load_universe())
     bad = [t for t in tickers if not TICKER.fullmatch(t) or t not in universe]
     if bad:
         print(f"not on the watchlist or the Nasdaq-100: {bad}")
