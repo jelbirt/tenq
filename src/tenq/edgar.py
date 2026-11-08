@@ -149,6 +149,10 @@ class EdgarSource:
         # usually re-reported in an 8-K or the next 10-Q
         return self._list(ticker, (CURRENT,), limit)
 
+    def list_recent(self, ticker: str, limit: int) -> list[FilingMeta]:
+        """The newest 8-Ks, 10-Qs and 10-Ks together, in one company lookup."""
+        return self._list(ticker, (*FORMS, CURRENT), limit)
+
     def _list(self, ticker: str, forms: tuple[str, ...], limit: int) -> list[FilingMeta]:
         from edgar import Company
 

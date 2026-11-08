@@ -125,6 +125,18 @@ bar a live method must clear is still the baselines on the same days, on the sco
 luck range here is for 3 years of calls; a few months of live calls have a much wider one. The
 watchlist was chosen in 2026, which flatters every rule that mostly buys, always Buy most.
 
+### The screen (preview only)
+
+`uv run python -m tenq.screen` shows which stocks a wider daily run would send to Jev and Opus
+([screen.py](src/tenq/screen.py), settings in [config/screen.yaml](config/screen.yaml)). It
+asks no model anything. From the watchlist plus the Nasdaq-100
+([config/universe.yaml](config/universe.yaml), 113 stocks) it passes a stock that filed an
+8-K, 10-Q or 10-K since the previous session, or that moved against QQQ by more than 2.5 of its
+own usual moves over 1 or 5 days. At most 25 pass; filings come first, then the bigger move.
+When fewer than 20 pass, the rest of the 20 are drawn at random from the stocks left out, the
+same draw on a rerun, as a check on the screen itself. Everyone else would be "Hold by screen".
+The manual `screen` workflow runs it with the EDGAR check on. The daily run does not use it yet.
+
 ## Guardrails
 
 - The model never sees a shell, files or the web: `--tools ""`, `--strict-mcp-config`, an

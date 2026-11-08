@@ -1,0 +1,37 @@
+# The daily screen (L6): code alone picks which stocks go to Jev and Opus each
+# day. No model sees a stock the screen leaves out; it is recorded as "Hold by
+# screen" and scored on prices like any other call, so the screen is judged too.
+# Any edit here, even a comment, needs a new version.
+version: screen-v1
+
+# 1. A new filing: an 8-K, 10-Q or 10-K filed after the previous session's day,
+#    up to the day the screen runs.
+forms: [8-K, 10-Q, 10-K]
+
+# 2. A big move against QQQ, measured in the stock's own usual daily moves
+#    (its 20-session volatility): over 1 session, or over 5 sessions scaled up
+#    by the square root of 5. 2.5 means about a 1-in-80 move for that stock.
+move_sigma: 2.5
+
+# Not a reason to pass (decided 2026-11-08): a recent Buy, Sell or Short from
+# Jev or Opus. Each day's call is scored on its own 20 sessions whether or not
+# the stock is asked again, so re-asking adds nothing to the scoring, and it
+# feeds itself: an asked stock can get another call, which keeps it asked, until
+# the same names fill the cap. If following up open bets is wanted later, add
+# it back as its own small allowance of slots, never ahead of filings and moves.
+
+# At most this many go to the models a day. Past the cap, stocks are kept in
+# this order: a new filing first, then the bigger move.
+cap: 25
+
+# Random fill (decided 2026-11-08): when fewer than this many pass, the rest of
+# the slots up to it go to left-out stocks drawn at random (seeded by the day,
+# so a rerun draws the same). Why: on prices from Dec 2024 to Oct 2026 the
+# big-move rule picked stocks that moved no more afterwards than the ones it
+# left out, and fewer than 20 passed on 97% of days. Random fills are a fair
+# sample of what the screen skips, so the scorecard can show whether screened
+# stocks give the models more to act on than random ones. Filling from recent
+# Buy, Sell or Short calls instead was considered and not chosen: those calls
+# are picked by the models themselves, so they cannot serve as that check, and
+# in November 2026 there were only days of them, from an unusually wild week.
+fill_to: 20
