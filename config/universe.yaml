@@ -1,0 +1,209 @@
+# The wider list the daily screen picks from (L6): the Nasdaq-100 plus the
+# watchlist (config/watchlist.yaml, always included). Taken from Wikipedia's
+# "List of NASDAQ-100 companies" (revision 1381716526), which says: as of
+# 2026-10-22 the index held 101 securities from 100 companies. Alphabet's
+# class C share (GOOG) is left out: it is the same company as GOOGL, and two
+# rows would count Alphabet twice. Refresh by hand when the index changes.
+as_of: "2026-10-22"
+nasdaq_100:
+  - ADBE
+  - AMD
+  - ABNB
+  - ALNY
+  - GOOGL
+  - AMZN
+  - AEP
+  - AMGN
+  - ADI
+  - AAPL
+  - AMAT
+  - APP
+  - ARM
+  - ASML
+  - ALAB
+  - ADSK
+  - ADP
+  - AXON
+  - BKR
+  - BKNG
+  - AVGO
+  - CDNS
+  - CTAS
+  - CSCO
+  - CCEP
+  - CMCSA
+  - CEG
+  - CPRT
+  - CRWV
+  - COST
+  - CRWD
+  - CSX
+  - DDOG
+  - DXCM
+  - FANG
+  - DASH
+  - EXC
+  - FAST
+  - FER
+  - FTNT
+  - GEHC
+  - GILD
+  - HONA
+  - HON
+  - IDXX
+  - INTC
+  - INTU
+  - ISRG
+  - KDP
+  - KLAC
+  - LRCX
+  - LIN
+  - LITE
+  - MAR
+  - MRVL
+  - MELI
+  - META
+  - MCHP
+  - MU
+  - MSFT
+  - MSTR
+  - MRNA
+  - MDLZ
+  - MPWR
+  - MNST
+  - NBIS
+  - NFLX
+  - NVDA
+  - NXPI
+  - ORLY
+  - ODFL
+  - PCAR
+  - PLTR
+  - PANW
+  - PAYX
+  - PYPL
+  - PDD
+  - PEP
+  - QCOM
+  - REGN
+  - RKLB
+  - ROP
+  - ROST
+  - SNDK
+  - STX
+  - SHOP
+  - SPCX
+  - SBUX
+  - SNPS
+  - TMUS
+  - TTWO
+  - TER
+  - TSLA
+  - TXN
+  - TRI
+  - VRTX
+  - WMT
+  - WDC
+  - WDAY
+  - XEL
+names:
+  ADBE: "Adobe"
+  AMD: "Advanced Micro Devices"
+  ABNB: "Airbnb"
+  ALNY: "Alnylam Pharmaceuticals"
+  GOOGL: "Alphabet"
+  AMZN: "Amazon"
+  AEP: "American Electric Power"
+  AMGN: "Amgen"
+  ADI: "Analog Devices"
+  AAPL: "Apple"
+  AMAT: "Applied Materials"
+  APP: "AppLovin"
+  ARM: "Arm Holdings"
+  ASML: "ASML"
+  ALAB: "Astera Labs"
+  ADSK: "Autodesk"
+  ADP: "Automatic Data Processing"
+  AXON: "Axon Enterprise"
+  BKR: "Baker Hughes"
+  BKNG: "Booking Holdings"
+  AVGO: "Broadcom"
+  CDNS: "Cadence Design Systems"
+  CTAS: "Cintas"
+  CSCO: "Cisco"
+  CCEP: "Coca-Cola Europacific Partners"
+  CMCSA: "Comcast"
+  CEG: "Constellation Energy"
+  CPRT: "Copart"
+  CRWV: "CoreWeave"
+  COST: "Costco"
+  CRWD: "CrowdStrike"
+  CSX: "CSX"
+  DDOG: "Datadog"
+  DXCM: "DexCom"
+  FANG: "Diamondback Energy"
+  DASH: "DoorDash"
+  EXC: "Exelon"
+  FAST: "Fastenal"
+  FER: "Ferrovial"
+  FTNT: "Fortinet"
+  GEHC: "GE HealthCare"
+  GILD: "Gilead Sciences"
+  HONA: "Honeywell Aerospace"
+  HON: "Honeywell"
+  IDXX: "Idexx Laboratories"
+  INTC: "Intel"
+  INTU: "Intuit"
+  ISRG: "Intuitive Surgical"
+  KDP: "Keurig Dr Pepper"
+  KLAC: "KLA"
+  LRCX: "Lam Research"
+  LIN: "Linde"
+  LITE: "Lumentum"
+  MAR: "Marriott"
+  MRVL: "Marvell Technology"
+  MELI: "MercadoLibre"
+  META: "Meta Platforms"
+  MCHP: "Microchip Technology"
+  MU: "Micron Technology"
+  MSFT: "Microsoft"
+  MSTR: "MicroStrategy"
+  MRNA: "Moderna"
+  MDLZ: "Mondelez"
+  MPWR: "Monolithic Power Systems"
+  MNST: "Monster Beverage"
+  NBIS: "Nebius"
+  NFLX: "Netflix"
+  NVDA: "Nvidia"
+  NXPI: "NXP Semiconductors"
+  ORLY: "O'Reilly Automotive"
+  ODFL: "Old Dominion Freight Line"
+  PCAR: "Paccar"
+  PLTR: "Palantir"
+  PANW: "Palo Alto Networks"
+  PAYX: "Paychex"
+  PYPL: "PayPal"
+  PDD: "PDD Holdings"
+  PEP: "PepsiCo"
+  QCOM: "Qualcomm"
+  REGN: "Regeneron Pharmaceuticals"
+  RKLB: "Rocket Lab"
+  ROP: "Roper Technologies"
+  ROST: "Ross Stores"
+  SNDK: "Sandisk"
+  STX: "Seagate Technology"
+  SHOP: "Shopify"
+  SPCX: "SpaceX"
+  SBUX: "Starbucks"
+  SNPS: "Synopsys"
+  TMUS: "T-Mobile US"
+  TTWO: "Take-Two Interactive"
+  TER: "Teradyne"
+  TSLA: "Tesla"
+  TXN: "Texas Instruments"
+  TRI: "Thomson Reuters"
+  VRTX: "Vertex Pharmaceuticals"
+  WMT: "Walmart"
+  WDC: "Western Digital"
+  WDAY: "Workday"
+  XEL: "Xcel Energy"
