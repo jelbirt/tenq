@@ -122,7 +122,8 @@ up or down against QQQ over the 20 sessions, than those left out that day? Check
 and Opus's calls better on the screen's picks than on the random draw from the same day? Both
 compare stocks screened on the same day, then average over days, and both are judged on the
 newest screen version only: a new screen picks for new reasons, so its days are not pooled with
-an older one's, and the card says how many earlier stock-days it left out.
+an older one's, and the card says how many earlier stock-days it left out (in a week check 1
+could not be made, how many earlier calls check 2 left out).
 
 `uv run python -m tenq.replay` replays the baselines (always Hold, always Buy, last month's
 winners) over the last 3 years of prices ([replay.py](src/tenq/replay.py)), scored exactly as a
