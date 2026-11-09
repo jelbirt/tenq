@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 import random
 from dataclasses import replace
 from datetime import UTC, date, datetime, timedelta
@@ -10,6 +11,7 @@ from typing import Any
 import pytest
 from test_daily import Outbox, _ctx, _no_trace
 
+import tenq.scorecard
 from tenq.daily import main as daily_main
 from tenq.daily_email import render
 from tenq.prices import BENCHMARK, Bar, Prices
@@ -37,6 +39,7 @@ from tenq.scorecard import (
     scorecard,
     screen_groups,
     screen_ledger_path,
+    screen_lines,
     screened_from,
     spearman,
     standard_error,
@@ -1114,6 +1117,7 @@ def test_before_any_screened_stock_finishes_the_card_says_when_the_first_will(
 ) -> None:
     _save(tmp_path, _screened())
     card = scorecard(tmp_path, EXIT - timedelta(days=1), CFG, _fetcher({}), save=False)
+    assert card["screen"]["finished"] == 0
     said = [t for t in lines(card) if t.startswith("Screen")]
     assert said == [
         "Screen checks: no screened stock has finished its 20 sessions yet "
@@ -1162,6 +1166,7 @@ def test_a_stock_day_with_no_price_is_named_and_left_out_of_check_1(tmp_path: Pa
     bars[BENCHMARK] = _bars(_sessions(20 + CFG.no_download_after), 200.0, 201.0, 204.0)
     card = scorecard(tmp_path, late, CFG, _fetcher(bars), save=False)
     assert card["screen"]["unscored"] == 1 and card["screen"]["moves"]["not_passed"] == 2
+    assert card["screen"]["finished"] == 5  # the stock-day with no price finished too
     assert "Screen check 1 leaves out 1 stock-day(s) with no price." in lines(card)
 
 
@@ -1244,7 +1249,7 @@ def test_check_2_sets_each_days_picks_only_against_that_days_draw() -> None:
             "exit_day": next_session(day).isoformat(),
         }
 
-    one, two, three = _sessions(3)
+    one, two, three, four = _sessions(4)
     rows = [
         row(one, "P1", "picked", 0.10),
         row(one, "P2", "picked", 0.06),
@@ -1254,12 +1259,14 @@ def test_check_2_sets_each_days_picks_only_against_that_days_draw() -> None:
         row(two, "R3", "random", 0.02),
         row(two, "R4", "random", 0.04),
         row(three, "P4", "picked", 0.50),  # no draw that day: it sits out
+        row(four, "R5", "random", 0.90),  # nothing passed that day: no picks, it sits out
     ]
     c = on_picks(rows, CFG)
     jev = c["jev"]
     # day one +8.00% against +6.00%, day two -4.00% against +2.00%; pooled,
     # the picks would make +4.00% against +3.00%
-    assert (jev["picks"], jev["draw"], jev["days"], jev["sat_out"]) == (3, 4, 2, 1)
+    assert (jev["picks"], jev["draw"], jev["days"]) == (3, 4, 2)
+    assert (jev["no_draw"], jev["no_picks"]) == (1, 1)
     assert jev["picks_mean"] == pytest.approx(0.02)
     assert jev["draw_mean"] == pytest.approx(0.04)
     assert jev["gap"] == pytest.approx(-0.02)
@@ -1385,8 +1392,126 @@ def test_a_day_with_no_random_draw_sits_out_check_2_and_the_card_says_so(
     _save(tmp_path, _screened(filled=()))
     card = _screen_card(tmp_path, save=False)
     jev = card["screen"]["calls"]["jev"]
-    assert (jev["days"], jev["sat_out"], jev["picks_mean"]) == (0, 1, None)
+    assert (jev["days"], jev["no_draw"], jev["no_picks"], jev["picks_mean"]) == (0, 1, 0, None)
     assert (
         "Screen check 2 for Jev's calls: no finished day had both picks and a random draw "
         "yet. 1 day with no random draw sat out."
     ) in lines(card)
+
+
+def test_check_2s_luck_weighs_each_stock_by_its_own_days_group_size() -> None:
+    # day one: 1 pick against 3 draws; day two: 2 picks against 1 draw. Each
+    # day counts the same, so a stock's weight is 1 / (its group that day x 2),
+    # and the daily moves add up to the gap exactly.
+    one, two = _sessions(2)
+    stocks = (
+        (one, "P1", "picked", "Buy", [0.03, -0.01, 0.02]),
+        (one, "R1", "random", "Buy", [0.01, 0.00, -0.02]),
+        (one, "R2", "random", "Sell", [-0.02, 0.01, 0.00]),
+        (one, "R3", "random", "Buy", [0.00, 0.02, 0.01]),
+        (two, "P2", "picked", "Buy", [0.02, 0.01, -0.03]),
+        (two, "P3", "picked", "Short", [-0.01, -0.02, 0.01]),
+        (two, "R4", "random", "Buy", [0.01, -0.01, 0.00]),
+    )
+    rows = [
+        {
+            "day": d.isoformat(),
+            "ticker": t,
+            "status": "scored",
+            "group": g,
+            "jev": call,
+            "opus": None,
+            "excess": sum(moves),
+            "moves": moves,
+            "move_days": [x.isoformat() for x in _sessions(3, d)],
+        }
+        for d, t, g, call, moves in stocks
+    ]
+    w = CFG.weights
+    size = {(one, "picked"): 1, (one, "random"): 3, (two, "picked"): 2, (two, "random"): 1}
+    parts = [
+        ((1 if g == "picked" else -1) * w[call] / (size[d, g] * 2), r)
+        for (d, _, g, call, _), r in zip(stocks, rows, strict=True)
+    ]
+    totals = list(day_totals(parts).values())
+    c = on_picks(rows, CFG)["jev"]
+    assert math.isclose(sum(totals), c["gap"])  # the parts are the gap, day by day
+    assert c["se"] == pytest.approx(standard_error(totals, 1, CFG.carry_days))
+
+
+def test_the_weeks_count_only_days_both_groups_were_there() -> None:
+    # three weeks screened; in the middle one only a stock that passed was
+    # priced, so that week did not compare anything
+    picked = [True, None, None, None, None, True, None, None, None, None, True]
+    held = [False, None, None, None, None, None, None, None, None, None, False]
+    sizes = {"A": [0.05] * 11, "B": [0.02] * 11}
+    mv = moved(_run_rows(sizes, {"A": picked, "B": held}), CFG)
+    assert (mv["days"], mv["weeks"]) == (2, 2)
+    rows = [
+        {
+            "day": d.isoformat(),
+            "ticker": t,
+            "status": "scored",
+            "group": g,
+            "jev": "Buy",
+            "opus": None,
+            "excess": 0.01,
+            "moves": [0.01],
+            "move_days": [d.isoformat()],
+        }
+        for i, d in enumerate(_sessions(11))
+        for t, g, on in (("P", "picked", (0, 5, 10)), ("R", "random", (0, 10)))
+        if i in on
+    ]
+    c = on_picks(rows, CFG)["jev"]
+    assert (c["days"], c["weeks"]) == (2, 2)
+
+
+def test_check_1s_luck_range_is_the_90th_percentile_of_the_shuffled_gaps(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    seen: list[tuple[float, float, int, int, list[int]] | None] = []
+    real = tenq.scorecard._size_gap
+
+    def spy(*a: Any) -> tuple[float, float, int, int, list[int]] | None:
+        got = real(*a)
+        seen.append(got)
+        return got
+
+    monkeypatch.setattr(tenq.scorecard, "_size_gap", spy)
+    sizes = {f"S{i}": [0.01 * (i + 1), 0.013 * (10 - i), 0.007 * (i + 3)] for i in range(10)}
+    passed: dict[str, list[bool | None]] = {
+        f"S{i}": [i % 3 == 0, i % 4 == 1, i < 4] for i in range(10)
+    }
+    mv = moved(_run_rows(sizes, passed), CFG, shuffles=20)
+    gaps = [g[0] - g[1] for g in seen[1:] if g is not None]
+    wide = sorted(abs(g) for g in gaps)
+    assert len(gaps) == 20 and wide[16] < wide[17] < wide[18]  # the 85th, 90th, 95th differ
+    assert mv["luck"] == pytest.approx(wide[17])
+    assert mv["se"] == pytest.approx(math.sqrt(sum(g * g for g in gaps) / len(gaps)))
+
+
+def test_check_2_says_which_days_sat_out_and_why() -> None:
+    sc = {"calls": {"jev": {"days": 0, "no_draw": 2, "no_picks": 1}}}
+    assert screen_lines(sc, CFG.weeks_first_verdict) == [
+        "Screen check 2 for Jev's calls: no finished day had both picks and a random draw "
+        "yet. 2 days with no random draw and 1 day with no picks sat out."
+    ]
+
+
+def test_finished_stocks_with_no_price_are_not_called_unfinished() -> None:
+    sc = {
+        "moves": {"days": 0},
+        "finished": 2,
+        "open": 5,
+        "waiting": 0,
+        "unscored": 2,
+        "calls": {},
+    }
+    got = screen_lines(sc, CFG.weeks_first_verdict)
+    assert not any("no screened stock has finished" in x for x in got)
+    assert got == [
+        "Screen check 1: no finished day has priced stocks both among those that passed "
+        "and those that did not yet.",
+        "Screen check 1 leaves out 2 stock-day(s) with no price.",
+    ]

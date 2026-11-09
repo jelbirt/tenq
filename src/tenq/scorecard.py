@@ -945,7 +945,8 @@ def moved(rows: Sequence[Row], cfg: ScoreConfig, shuffles: int = SHUFFLES) -> Ro
 def on_picks(rows: Sequence[Row], cfg: ScoreConfig) -> dict[str, Row]:
     """Check 2: each method's mean score a call on the screen's picks against
     its mean on the random draw, each day's picks set only against that day's
-    draw, averaged over the days that had both (a day with no draw sits out).
+    draw, averaged over the days that had both (a day with no draw, or no
+    picks, sits out).
     The luck range comes from the daily moves, as for Jev against Opus."""
     w = cfg.weights
     out: dict[str, Row] = {}
@@ -969,7 +970,8 @@ def on_picks(rows: Sequence[Row], cfg: ScoreConfig) -> dict[str, Row]:
             "picks": sum(len(p) for p, _ in used.values()),
             "draw": sum(len(d) for _, d in used.values()),
             "days": len(used),
-            "sat_out": len(days) - len(used),
+            "no_draw": sum(1 for p, d in days.values() if p and not d),
+            "no_picks": sum(1 for p, d in days.values() if d and not p),
             "picks_mean": statistics.fmean(mean(p) for p, _ in used.values()) if used else None,
             "draw_mean": statistics.fmean(mean(d) for _, d in used.values()) if used else None,
         }
@@ -1011,6 +1013,7 @@ def screen_check(
     held.sort(key=lambda r: (-abs(r["excess"]), r["day"], r["ticker"]))
     return out | {
         "moves": moved(done, cfg),
+        "finished": len(done),
         "open": len(opened),
         "waiting": sum(1 for r in opened if r["exit_day"] <= str(today)),
         "next_due": min(
@@ -1213,6 +1216,11 @@ def screen_lines(sc: Row, first: int) -> list[str]:
             "stocks that pass the screen move more",
             "they move less",
         )
+    elif sc.get("finished"):
+        out.append(
+            "Screen check 1: no finished day has priced stocks both among those that "
+            "passed and those that did not yet."
+        )
     elif sc.get("open") and not wait:
         due = f"; the first finishes on {sc['next_due']}" if sc.get("next_due") else ""
         out.append(
@@ -1223,10 +1231,17 @@ def screen_lines(sc: Row, first: int) -> list[str]:
         out.append(f"Screen check 1: {wait} stock-day(s) finished but are waiting for a price.")
     for m, name in METHODS.items():
         c = (sc.get("calls") or {}).get(m) or {}
-        skipped = c.get("sat_out") or 0
-        sat = f" {_days(skipped)} with no random draw sat out." if skipped else ""
+        why = [
+            f"{_days(n)} with no {side}"
+            for n, side in (
+                (c.get("no_draw") or 0, "random draw"),
+                (c.get("no_picks") or 0, "picks"),
+            )
+            if n
+        ]
+        sat = f" {' and '.join(why)} sat out." if why else ""
         if not c.get("days"):
-            if skipped:
+            if why:
                 out.append(
                     f"Screen check 2 for {name}'s calls: no finished day had both picks and "
                     f"a random draw yet.{sat}"
