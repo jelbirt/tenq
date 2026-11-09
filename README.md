@@ -140,8 +140,9 @@ Before any model is asked, the daily run screens which stocks to send to Jev and
 asks no model anything. From the watchlist plus the Nasdaq-100
 ([config/universe.yaml](config/universe.yaml), 113 stocks) it passes a stock whose next
 earnings release falls in the 5 sessions after the screened one, by Yahoo's earnings list
-([earnings.py](src/tenq/earnings.py), no key needed). A release on the screened day itself does
-not count: it is out before the calls are made. Why earnings: over Dec 2024 to Oct 2026, stocks
+([earnings.py](src/tenq/earnings.py), no key needed). A release already out when the screen runs
+does not count, such as one on the screened day itself; a run late enough to miss the next open
+counts the 5 sessions from the open after it instead. Why earnings: over Dec 2024 to Oct 2026, stocks
 with a release due in 5 sessions moved 1.77 points more against QQQ over the next 20 sessions
 than the day's other stocks, well past luck, while the screen's earlier reasons (a new filing,
 a big move against QQQ) picked stocks that moved no more than the rest.

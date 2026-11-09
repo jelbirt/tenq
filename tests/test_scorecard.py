@@ -1599,3 +1599,51 @@ def test_one_screen_version_leaves_nothing_out(tmp_path: Path) -> None:
     _save(tmp_path, _screened())
     sc = _screen_card(tmp_path, save=False)["screen"]
     assert sc["version"] == "screen-v6" and sc["earlier"] == {}
+
+
+def _two_screens(runs: Path) -> list[date]:
+    """A screen-v6 day (11-05) and a screen-v7 day (11-06), with the sessions
+    through the newer day's 20th."""
+    _save(runs, _screened())
+    newer = _screen(held=("HELD",)) | {"version": "screen-v7", "day": "2026-11-06"}
+    made = datetime(2026, 11, 6, 22, 30, tzinfo=UTC)  # the evening run: entry on 11-09
+    _save(runs, _record("2026-11-06", made, _stock("PICK"), _stock("DRAW"), screen=newer))
+    return _sessions(21)
+
+
+def test_an_earlier_screens_open_days_are_left_out_and_counted(tmp_path: Path) -> None:
+    days = _two_screens(tmp_path)
+    bars = {t: _bars(days, 100.0, 101.0, 100.0 * (1 + r)) for t, r in RETURNS.items()}
+    bars[BENCHMARK] = _bars(days, 200.0, 201.0, 204.0)
+    sc = scorecard(tmp_path, days[5], CFG, _fetcher(bars), save=False)["screen"]
+    assert sc["earlier"] == {"screen-v6": 5}  # all 5 still open
+    assert (sc["finished"], sc["open"], sc["waiting"]) == (0, 4, 0)  # the v7 day only
+    assert sc["next_due"] == days[-1].isoformat()  # the v7 day's exit, not the v6 day's
+
+
+def test_a_failed_check_1_still_says_which_screen_check_2_judges(tmp_path: Path) -> None:
+    _two_screens(tmp_path)
+    fell_back = datetime(2026, 11, 9, 22, 30, tzinfo=UTC)  # no screen version: not "earlier"
+    _save(
+        tmp_path, _record("2026-11-09", fell_back, _stock("WL"), screen=_screen(used="watchlist"))
+    )
+    days = _sessions(22)  # through the fallback day's 20th session, 2026-12-08
+    returns = RETURNS | {"WL": 0.0}
+    bars = {t: _bars(days, 100.0, 101.0, 100.0 * (1 + r)) for t, r in returns.items()}
+    bars[BENCHMARK] = _bars(days, 200.0, 201.0, 204.0)
+
+    def fetch(tickers: list[str], period: str) -> Prices:
+        if "HELD" in tickers:
+            raise RuntimeError("Yahoo is down")
+        return Prices(bars, ())
+
+    card = scorecard(tmp_path, days[-1], CFG, fetch, save=False)
+    sc = card["screen"]
+    assert sc["error"] == "check 1 could not be made (RuntimeError)"
+    assert sc["earlier"] == {"screen-v6": 2}  # the v6 day's two called stocks
+    assert sc["calls"]["jev"]["days"] == 1  # check 2 on the v7 day only
+    assert card["scored"] == 5  # the fallback day's call is scored, but not by the screen
+    assert (
+        "Screen checks are on screen-v7 only; stock-days screened by an earlier screen are "
+        "left out (2 by screen-v6)."
+    ) in lines(card)

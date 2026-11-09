@@ -11,6 +11,7 @@ from typing import Any
 
 import pandas as pd
 import pytest
+from conftest import NoNetwork
 
 from tenq.config import load_watchlist
 from tenq.earnings import RETRY_PAUSE_S, ROWS, YahooEarnings, lookup
@@ -38,10 +39,14 @@ KNOWN_SCREENS = {
     "screen-v7": "05c2566b6a4e48d2a9a83c0318a774880cc7f6d68ab11f9a3174eea0de056a9a",
 }
 LATER = date(2026, 12, 15)  # a release well past the window
+LATER_RELEASE = datetime(2026, 12, 15, 16, tzinfo=MARKET_TZ)
 
 
 def _at(d: date, hour: int = 16) -> datetime:
     return datetime.combine(d, time(hour), tzinfo=MARKET_TZ)
+
+
+RUN = datetime(2026, 11, 6, 22, 30, tzinfo=UTC)  # the evening run: 17:30 in New York
 
 
 class Dates:
@@ -78,7 +83,8 @@ def _screen(
     cfg: Any = CFG,
     **kw: Any,
 ) -> dict[str, Any]:
-    return screen(tickers or list(table), DAY, cfg, Dates(table, **kw), sleep=_no_sleep)
+    now = kw.pop("now", RUN)
+    return screen(tickers or list(table), DAY, cfg, Dates(table, **kw), now=now, sleep=_no_sleep)
 
 
 def _tickers(rows: list[dict[str, Any]]) -> list[str]:
@@ -140,31 +146,61 @@ def test_the_universe_is_the_watchlist_first_then_the_nasdaq_100_once_each() -> 
 
 
 @pytest.mark.parametrize(
-    ("day", "sessions", "first", "last"),
+    ("day", "now", "sessions", "first", "last"),
     [
-        (DAY, 5, date(2026, 11, 9), date(2026, 11, 13)),  # over the weekend
-        (DAY, 1, date(2026, 11, 9), date(2026, 11, 9)),
-        (date(2026, 11, 20), 5, date(2026, 11, 23), date(2026, 11, 30)),  # Thanksgiving
+        (DAY, RUN, 5, date(2026, 11, 9), date(2026, 11, 13)),  # over the weekend
+        (DAY, RUN, 1, date(2026, 11, 9), date(2026, 11, 9)),
+        (
+            date(2026, 11, 20),
+            datetime(2026, 11, 20, 22, 30, tzinfo=UTC),
+            5,
+            date(2026, 11, 23),
+            date(2026, 11, 30),
+        ),  # Thanksgiving
+        (DAY, _at(date(2026, 11, 9), hour=7), 5, date(2026, 11, 9), date(2026, 11, 13)),
+        # never before the session after the screened one, however early the clock
+        (DAY, _at(DAY, hour=7), 5, date(2026, 11, 9), date(2026, 11, 13)),
+        # late enough to miss Monday's open: the calls enter Tuesday
+        (DAY, _at(date(2026, 11, 9), hour=10), 5, date(2026, 11, 10), date(2026, 11, 16)),
     ],
 )
-def test_the_window_is_the_sessions_after_the_screened_one(
-    day: date, sessions: int, first: date, last: date
+def test_the_window_is_the_sessions_from_the_first_open_after_the_run(
+    day: date, now: datetime, sessions: int, first: date, last: date
 ) -> None:
-    assert window(day, sessions) == (first, last)
+    assert window(day, now, sessions) == (first, last)
 
 
-def test_the_next_release_is_the_first_dated_after_the_screened_session() -> None:
+def test_the_next_release_is_the_first_still_to_come_at_the_run() -> None:
     past, today, soon = _at(date(2026, 11, 5)), _at(DAY), _at(date(2026, 11, 10))
-    assert next_release([soon, past, today], DAY) == date(2026, 11, 10)
-    assert next_release([past, today], DAY) is None
-    assert next_release([], DAY) is None
+    assert next_release([soon, past, today], RUN) == date(2026, 11, 10)
+    assert next_release([past, today], RUN) is None
+    assert next_release([], RUN) is None
+    assert next_release([_at(DAY, hour=18)], RUN) == DAY  # after the run: still to come
 
 
 def test_a_release_is_dated_in_new_york_not_utc() -> None:
-    evening = datetime(2026, 11, 7, 2, tzinfo=UTC)  # 21:00 on 11-06 in New York
-    assert next_release([evening], DAY) is None
+    evening = datetime(2026, 11, 14, 3, tzinfo=UTC)  # 22:00 on 11-13 in New York
+    assert next_release([evening], RUN) == date(2026, 11, 13)
     morning = datetime(2026, 11, 9, 12, tzinfo=UTC)  # 07:00 on 11-09 in New York
-    assert next_release([morning], DAY) == date(2026, 11, 9)
+    assert next_release([morning], RUN) == date(2026, 11, 9)
+    out = _screen({"LATE": [evening]}, cfg=replace(CFG, fill_to=0))
+    assert _tickers(out["chosen"]) == ["LATE"]  # due 11-13 in New York, the 5th session
+
+
+def test_a_late_run_counts_from_the_open_it_can_still_make() -> None:
+    late = _at(date(2026, 11, 9), hour=10)  # Monday 10:00: the 11-06 session, entry Tuesday
+    out = _screen(
+        {
+            "OUT": [_at(date(2026, 11, 9), hour=7), LATER_RELEASE],  # out before the run
+            "SIXTH": [_at(date(2026, 11, 16))],  # 5th session from Tuesday
+            "SEVENTH": [_at(date(2026, 11, 17))],
+        },
+        cfg=replace(CFG, fill_to=0),
+        now=late,
+    )
+    assert _tickers(out["chosen"]) == ["SIXTH"]
+    assert out["held"] == ["OUT", "SEVENTH"]
+    assert (out["due_from"], out["due_through"]) == ("2026-11-10", "2026-11-16")
 
 
 # who passes
@@ -328,13 +364,20 @@ def test_the_fill_never_draws_more_than_it_can(left: list[str], slots: int, coun
 def test_the_output_says_the_window_and_why_each_stock_passed() -> None:
     out = _screen({"SOON": [_at(date(2026, 11, 13))]}, cfg=replace(CFG, fill_to=0))
     text = lines(out)
-    assert text[0] == (
-        "Screen screen-v7 for the 2026-11-06 session (earnings due 2026-11-09 to 2026-11-13):"
-    )
+    assert text[0] == ("Screen screen-v7 for the 2026-11-06 session (earnings due by 2026-11-13):")
     assert "   1. SOON: earnings due 2026-11-13" in text
 
 
 # Yahoo's earnings list
+
+
+REAL_DATES = YahooEarnings.dates  # read before the guard in conftest replaces it
+
+
+@pytest.fixture
+def parse_yahoo(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The real reading of Yahoo's table, on a stand-in for yfinance's Ticker."""
+    monkeypatch.setattr(YahooEarnings, "dates", REAL_DATES)
 
 
 class _Ticker:
@@ -347,6 +390,7 @@ class _Ticker:
         return self.frame
 
 
+@pytest.mark.usefixtures("parse_yahoo")
 def test_yahoos_release_times_are_kept_in_new_york_time(monkeypatch: pytest.MonkeyPatch) -> None:
     index = pd.DatetimeIndex(["2026-12-02 16:00", "2026-09-02 16:00"]).tz_localize(MARKET_TZ)
     fake = _Ticker(pd.DataFrame({"EPS Estimate": [1.0, 2.0]}, index=index))
@@ -356,15 +400,31 @@ def test_yahoos_release_times_are_kept_in_new_york_time(monkeypatch: pytest.Monk
     assert fake.limits == [ROWS]
 
 
+@pytest.mark.usefixtures("parse_yahoo")
 def test_yahoos_times_with_no_zone_are_read_as_new_york(monkeypatch: pytest.MonkeyPatch) -> None:
     index = pd.DatetimeIndex(["2026-12-02 07:00"])
     monkeypatch.setattr("yfinance.Ticker", lambda t: _Ticker(pd.DataFrame({"x": [1]}, index=index)))
     assert YahooEarnings().dates("CRWD") == [_at(date(2026, 12, 2), hour=7)]
 
 
-def test_no_list_from_yahoo_is_no_dates(monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.mark.usefixtures("parse_yahoo")
+def test_no_list_from_yahoo_is_a_failed_lookup_and_asked_again(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # yfinance returns no table for a blocked or broken page: not "no date"
     monkeypatch.setattr("yfinance.Ticker", lambda t: _Ticker(None))
-    assert YahooEarnings().dates("CRWD") == []
+    with pytest.raises(LookupError):
+        YahooEarnings().dates("CRWD")
+    pauses: list[float] = []
+    found, failed = lookup(["CRWD"], YahooEarnings(), sleep=pauses.append)
+    assert (found, failed, pauses) == (
+        {}, {"CRWD": "earnings dates unavailable (LookupError)"}, [RETRY_PAUSE_S]
+    )  # fmt: skip
+
+
+def test_the_earnings_lookup_never_reaches_yahoo_in_tests() -> None:
+    with pytest.raises(NoNetwork):
+        YahooEarnings().dates("CRWD")
 
 
 # the whole run

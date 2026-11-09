@@ -9,8 +9,10 @@ was set, while the earnings list had an upcoming date for all 113. On
 2026-11-09 the list's past dates fell on EDGAR's release day (8-K item 2.02)
 for 95% of releases and within a day for all but 2.
 
-A lookup that fails is asked once more after a pause, since Yahoo throttles
-bursts; what still fails is reported, never raised, so the screen can count it.
+A lookup that fails, or gets no earnings table back (yfinance returns none for
+a blocked or broken page), is asked once more after a pause, since Yahoo
+throttles bursts; what still fails is reported, never raised, so the screen can
+count it.
 """
 
 from __future__ import annotations
@@ -37,8 +39,8 @@ class YahooEarnings:
         import yfinance as yf  # heavy import, deferred until a lookup is due
 
         frame = yf.Ticker(ticker).get_earnings_dates(limit=ROWS)
-        if frame is None:
-            return []
+        if frame is None:  # yfinance logs a blocked or broken page and returns None
+            raise LookupError("no earnings table")
         out: list[datetime] = []
         for ts in frame.index:
             when = ts.to_pydatetime()

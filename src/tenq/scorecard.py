@@ -1021,18 +1021,23 @@ def screen_check(
     def mine(rows: Iterable[Row]) -> list[Row]:
         return [r for r in rows if current is None or screen_version(r) == current]
 
+    def older(rows: Iterable[Row]) -> dict[str, int]:
+        count: dict[str, int] = {}
+        for r in rows:
+            v = screen_version(r)
+            if current is not None and v is not None and v != current:
+                count[v] = count.get(v, 0) + 1
+        return dict(sorted(count.items()))
+
     out: Row = {"version": current, "calls": on_picks(mine(calls), cfg)}
     try:
         all_done, all_opened, all_new = screen_update(runs, cfg, today, prices, save=save)
     except Exception as exc:  # the call scorecard must not go down with it
         log.warning("screen check failed (%s)", type(exc).__name__)
-        return out | {"error": f"check 1 could not be made ({type(exc).__name__})"}
+        error = f"check 1 could not be made ({type(exc).__name__})"
+        return out | {"error": error, "earlier": older(calls)}
     done, opened, new = mine(all_done), mine(all_opened), mine(all_new)
-    earlier: dict[str, int] = {}
-    for r in [*all_done, *all_opened]:
-        v = screen_version(r)
-        if current is not None and v != current:
-            earlier[str(v)] = earlier.get(str(v), 0) + 1
+    earlier = older([*all_done, *all_opened])
     held = [r for r in new if r["status"] == "scored" and r["group"] == "held"]
     held.sort(key=lambda r: (-abs(r["excess"]), r["day"], r["ticker"]))
     return out | {
@@ -1047,7 +1052,7 @@ def screen_check(
         "biggest_held": [
             {"day": r["day"], "ticker": r["ticker"], "excess": r["excess"]} for r in held[:3]
         ],
-        "earlier": dict(sorted(earlier.items())),
+        "earlier": earlier,
     }
 
 

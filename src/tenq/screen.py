@@ -1,10 +1,11 @@
 """The daily screen (L6): code alone picks which stocks Jev and Opus see.
 
 A stock passes when its next earnings release, by Yahoo's earnings list
-(tenq.earnings), falls in the `earnings_sessions` sessions after the screened
-session (config/screen.yaml). A release on the screened day itself does not
-count: it is out by the time the calls are made, and the calls' 20 sessions
-start at the next open, after its jump.
+(tenq.earnings), is still to come when the screen runs and falls in the
+`earnings_sessions` sessions (config/screen.yaml) from the first open after
+the run: on the evening run, the sessions after the screened one. A release
+already out does not count, such as one on the screened day itself: it is news
+the calls can read, and its jump comes before the calls' 20 sessions start.
 
 At most `cap` pass; past it, the soonest release comes first, and stocks
 reporting on the same day are taken in an order drawn at random, seeded by the
@@ -45,7 +46,7 @@ import yaml
 from tenq.config import REPO_ROOT, load_watchlist
 from tenq.earnings import EarningsSource, YahooEarnings, lookup
 from tenq.prices import BENCHMARK, MARKET_TZ, Prices, YahooPrices, fetch
-from tenq.scorecard import next_session
+from tenq.scorecard import next_session, planned_entry
 
 log = logging.getLogger(__name__)
 
@@ -107,18 +108,24 @@ class Stock:
         return [f"earnings due {self.earnings}"] if self.due else []
 
 
-def window(day: date, sessions: int) -> tuple[date, date]:
-    """The first and the last of the `sessions` sessions after `day`."""
-    first = last = next_session(day)
+def window(day: date, now: datetime, sessions: int) -> tuple[date, date]:
+    """The first and the last of the `sessions` sessions the calls are scored
+    from: from the first session that opens after the run. On the evening run
+    that is the session after `day`; a run late enough to miss that open moves
+    the window to the next one, so a release counts only if it lands where the
+    calls are scored."""
+    first = max(next_session(day), planned_entry(now))
+    last = first
     for _ in range(sessions - 1):
         last = next_session(last)
     return first, last
 
 
-def next_release(when: Sequence[datetime], day: date) -> date | None:
-    """The first release dated after the `day` session, as a New York date."""
-    later = (w.astimezone(MARKET_TZ).date() for w in when)
-    return min((d for d in later if d > day), default=None)
+def next_release(when: Sequence[datetime], now: datetime) -> date | None:
+    """The first release still to come at `now`, the time of the run, as a New
+    York date. One already out is news the calls can read, not a release due."""
+    later = (w.astimezone(MARKET_TZ).date() for w in when if w > now)
+    return min(later, default=None)
 
 
 def random_fill(left: Sequence[str], slots: int, version: str, day: date) -> list[str]:
@@ -136,16 +143,17 @@ def screen(
     cfg: ScreenConfig,
     source: EarningsSource,
     *,
+    now: datetime,
     sleep: Callable[[float], None] = time.sleep,
 ) -> dict[str, Any]:
     """Who passes for the `day` session. Never raises for one stock: one whose
     dates could not be read is noted, and it is not screened."""
-    first, last = window(day, cfg.earnings_sessions)
+    first, last = window(day, now, cfg.earnings_sessions)
     found, failed = lookup(tickers, source, sleep=sleep)
     stocks: list[Stock] = []
     for t in tickers:
         st = Stock(t)
-        nxt = next_release(found.get(t, []), day)
+        nxt = next_release(found.get(t, []), now)
         if t in failed:
             st.unchecked.append(failed[t])
         elif nxt is None:
@@ -199,7 +207,7 @@ def lines(result: dict[str, Any]) -> list[str]:
     chosen, over = result["chosen"], result["over_cap"]
     out = [
         f"Screen {result['version']} for the {result['day']} session "
-        f"(earnings due {result['due_from']} to {result['due_through']}):",
+        f"(earnings due by {result['due_through']}):",
         f"{len(chosen)} of {result['universe']} stocks pass"
         + (f"; {len(over)} more passed but are over the cap of {result['cap']}" if over else "")
         + (f"; {len(result['filled'])} more drawn at random" if result["filled"] else "")
@@ -256,7 +264,9 @@ def run_screen(
         expected = expected_session(now)
         if bench[-1].day < expected:
             return _failed(f"no QQQ bar for the {expected} session yet (latest: {bench[-1].day})")
-        result = screen(tickers, bench[-1].day, cfg, earnings or YahooEarnings(), sleep=sleep)
+        result = screen(
+            tickers, bench[-1].day, cfg, earnings or YahooEarnings(), now=now, sleep=sleep
+        )
     except Exception as e:  # any failure means fall back to the watchlist, never crash
         log.exception("the screen failed")  # the traceback stays in the log, not the email
         return _failed(f"the screen failed ({type(e).__name__})")
