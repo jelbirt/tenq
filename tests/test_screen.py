@@ -34,6 +34,9 @@ from tenq.screen import (
 
 DAY = date(2026, 11, 6)  # a Friday session; the previous session is 2026-11-05
 CFG = load_config()
+# The routine rule is the same for any form. These tests use the 6-K, which
+# screen-v5 does not count yet, so they run with the foreign forms turned on.
+FOREIGN_ON = replace(CFG, forms=(*CFG.forms, "6-K", "20-F", "40-F"))
 
 
 def _days(n: int, last: date = DAY) -> list[date]:
@@ -85,20 +88,29 @@ class Filings:
 
     def list_recent(self, ticker: str, forms: tuple[str, ...], limit: int) -> list[FilingMeta]:
         self.asked += 1
-        assert forms == CFG.forms  # the settings decide which forms are listed
+        self.forms = forms  # the settings decide which forms are listed
         if ticker in self.broken:
             raise ConnectionError("EDGAR down")
-        return self.listed.get(ticker, [])[:limit]
+        return [m for m in self.listed.get(ticker, []) if m.form in forms][:limit]
 
 
 # settings
 
 
+def test_a_foreign_form_does_not_pass_until_the_facts_pack_reads_it() -> None:
+    """screen-v5: the facts pack reads only 10-Q, 10-K and 8-K, so a stock picked
+    for a 6-K would reach the models without the filing it was picked for."""
+    filings = Filings({"X": [_meta("X", form, DAY) for form in ("6-K", "20-F", "40-F")]})
+    assert not screen(["X"], DAY, DAY, CFG, _prices(X=0.0), filings)["chosen"]
+    assert filings.forms == ("8-K", "10-Q", "10-K")
+    assert screen(["X"], DAY, DAY, FOREIGN_ON, _prices(X=0.0), filings)["chosen"]
+
+
 def test_the_settings_load() -> None:
-    assert CFG.version == "screen-v4"
+    assert CFG.version == "screen-v5"
     assert (CFG.move_sigma, CFG.cap, CFG.fill_to) == (2.5, 25, 20)
     assert (CFG.routine_sessions, CFG.routine_filings) == (10, 2)
-    assert CFG.forms == ("8-K", "10-Q", "10-K", "6-K", "20-F", "40-F")
+    assert CFG.forms == ("8-K", "10-Q", "10-K")
     assert len(CFG.sha256) == 64
 
 
@@ -115,7 +127,7 @@ def test_the_settings_load() -> None:
         (lambda t: t.replace("fill_to: 20", "fill_to: -1"), "fill_to"),
         (lambda t: t.replace("cap: 25", "cap: true"), "cap"),
         (lambda t: t.replace("move_sigma: 2.5", "move_sigma: 0"), "move_sigma"),
-        (lambda t: t.replace("forms: [8-K, 10-Q, 10-K, 6-K, 20-F, 40-F]", "forms: []"), "forms"),
+        (lambda t: t.replace("forms: [8-K, 10-Q, 10-K]", "forms: []"), "forms"),
     ],
 )
 def test_bad_settings_are_refused(tmp_path: Path, edit: object, says: str) -> None:
@@ -462,7 +474,7 @@ SINCE, LOOK_BACK = date(2026, 11, 5), date(2026, 10, 23)
 
 def _new(*listed: tuple[str, date]) -> tuple[list[str], list[str]]:
     metas = [_meta("X", form, filed) for form, filed in listed]
-    return new_filings(metas, CFG, SINCE, LOOK_BACK, DAY)
+    return new_filings(metas, FOREIGN_ON, SINCE, LOOK_BACK, DAY)
 
 
 def test_a_form_the_company_files_every_few_days_is_routine() -> None:
@@ -477,7 +489,7 @@ def test_a_filing_the_session_before_counts_toward_routine() -> None:
 
 
 def test_the_settings_decide_how_many_earlier_days_make_a_form_routine() -> None:
-    one = replace(CFG, routine_filings=1)
+    one = replace(FOREIGN_ON, routine_filings=1)
     metas = [_meta("X", "8-K", d) for d in (DAY, date(2026, 10, 30))]
     assert new_filings(metas, one, SINCE, LOOK_BACK, DAY) == (
         [],
@@ -488,11 +500,11 @@ def test_the_settings_decide_how_many_earlier_days_make_a_form_routine() -> None
 def test_the_settings_decide_how_far_back_the_screen_looks() -> None:
     """With 5 sessions the look back starts 2026-10-30, so a 6-K on 10-29 is
     too old to make the new one routine."""
-    short = replace(CFG, routine_sessions=5)
+    short = replace(FOREIGN_ON, routine_sessions=5)
     days = (DAY, date(2026, 11, 2), date(2026, 10, 29))
     filings = Filings({"X": [_meta("X", "6-K", d) for d in days]})
     assert screen(["X"], DAY, DAY, short, _prices(X=0.0), filings)["chosen"]
-    assert not screen(["X"], DAY, DAY, CFG, _prices(X=0.0), filings)["chosen"]
+    assert not screen(["X"], DAY, DAY, FOREIGN_ON, _prices(X=0.0), filings)["chosen"]
 
 
 def test_a_heavy_filer_is_still_seen_as_routine() -> None:
@@ -501,13 +513,13 @@ def test_a_heavy_filer_is_still_seen_as_routine() -> None:
     busy = [_meta("X", "6-K", DAY)]
     busy += [_meta("X", "6-K", date(2026, 11, 4)) for _ in range(20)]
     busy += [_meta("X", "6-K", date(2026, 10, 26)) for _ in range(3)]
-    out = screen(["X"], DAY, DAY, CFG, _prices(X=0.0), Filings({"X": busy}))
+    out = screen(["X"], DAY, DAY, FOREIGN_ON, _prices(X=0.0), Filings({"X": busy}))
     assert not out["chosen"] and "X" in out["routine"]
 
 
 def _eight_k(*filed: tuple[date, str]) -> tuple[list[str], list[str]]:
     metas = [_meta("X", "8-K", day, items) for day, items in filed]
-    return new_filings(metas, CFG, SINCE, LOOK_BACK, DAY)
+    return new_filings(metas, FOREIGN_ON, SINCE, LOOK_BACK, DAY)
 
 
 WEEKLY = ((date(2026, 11, 2), "8.01"), (date(2026, 10, 26), "8.01"))
@@ -563,7 +575,7 @@ def test_items_are_only_read_for_8ks() -> None:
 def test_a_weekly_filers_earnings_8k_passes_the_screen() -> None:
     listed = [_meta("MSTR", "8-K", DAY, "2.02,9.01")]
     listed += [_meta("MSTR", "8-K", d, i) for d, i in WEEKLY]
-    out = screen(["MSTR"], DAY, DAY, CFG, _prices(MSTR=0.0), Filings({"MSTR": listed}))
+    out = screen(["MSTR"], DAY, DAY, FOREIGN_ON, _prices(MSTR=0.0), Filings({"MSTR": listed}))
     assert [r["ticker"] for r in out["chosen"]] == ["MSTR"]
 
 
@@ -597,14 +609,14 @@ def test_the_screen_looks_back_ten_sessions_before_the_previous_one(
     older: date, passes: bool
 ) -> None:
     filings = Filings({"X": [_meta("X", "6-K", d) for d in (DAY, date(2026, 11, 2), older)]})
-    out = screen(["X"], DAY, DAY, CFG, _prices(X=0.0), filings)
+    out = screen(["X"], DAY, DAY, FOREIGN_ON, _prices(X=0.0), filings)
     assert bool(out["chosen"]) is passes
 
 
 def test_a_routine_filer_still_passes_on_a_big_move_and_the_output_says_why() -> None:
     days = [DAY, date(2026, 11, 2), date(2026, 10, 27)]
     filings = Filings({t: [_meta(t, "6-K", d) for d in days] for t in ("CCEP", "BIG")})
-    out = screen(["CCEP", "BIG"], DAY, DAY, CFG, _prices(CCEP=0.0, BIG=0.08), filings)
+    out = screen(["CCEP", "BIG"], DAY, DAY, FOREIGN_ON, _prices(CCEP=0.0, BIG=0.08), filings)
     assert [r["ticker"] for r in out["chosen"]] == ["BIG"]
     assert "CCEP" in out["held"] + out["filled"]  # left out, so held or drawn at random
     assert set(out["routine"]) == {"CCEP", "BIG"}
@@ -629,7 +641,7 @@ def test_main_prints_the_screen_and_writes_json(
     out = tmp_path / "screen.json"
     assert main(["--json", str(out)], prices_fetch=fetch, filings=filings, now=NOW) == 0
     text = capsys.readouterr().out
-    assert "Screen screen-v4 for the 2026-11-06 session" in text
+    assert "Screen screen-v5 for the 2026-11-06 session" in text
     result = json.loads(out.read_text())
     assert {r["ticker"] for r in result["chosen"]} == {"CRWD", "DDOG"}
     assert len(result["filled"]) == CFG.fill_to - 2

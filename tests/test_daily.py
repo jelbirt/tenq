@@ -956,7 +956,7 @@ def _screen(day: date, chosen: list[str], filled: list[str] = (), **extra: Any) 
     def screener(now: datetime) -> dict[str, Any]:
         return {
             "kind": "screen",
-            "version": "screen-v4",
+            "version": "screen-v5",
             "day": day.isoformat(),
             "universe": 113,
             "chosen": [{"ticker": t, "reasons": [f"{t} moved"]} for t in chosen],
@@ -982,7 +982,7 @@ def test_a_good_screen_decides_which_stocks_the_models_judge(tmp_path: Path) -> 
     [mail] = outbox.sent
     assert not mail.subject.startswith("SCREEN FAILED")
     assert (
-        "Screen screen-v4: 2 of 113 stocks passed, 1 more drawn at random as a check;" in mail.text
+        "Screen screen-v5: 2 of 113 stocks passed, 1 more drawn at random as a check;" in mail.text
     )
     assert "  TEAM: TEAM moved" in mail.text
     assert "Random fill: MSFT" in mail.text

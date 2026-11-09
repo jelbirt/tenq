@@ -132,12 +132,14 @@ Before any model is asked, the daily run screens which stocks to send to Jev and
 ([screen.py](src/tenq/screen.py), settings in [config/screen.yaml](config/screen.yaml)). It
 asks no model anything. From the watchlist plus the Nasdaq-100
 ([config/universe.yaml](config/universe.yaml), 113 stocks) it passes a stock that filed an
-8-K, 10-Q or 10-K (or a foreign company's 6-K, 20-F or 40-F) since the previous session, or
+8-K, 10-Q or 10-K since the previous session, or
 that moved against QQQ by more than 2.5 of its usual daily moves against QQQ over 1 or 5 days.
 A filing does not count when the company filed the same kind on 2 or more other days in the 10
 sessions before (a routine filer, such as weekly buyback notices); for an 8-K the kind includes
-its items, so a weekly filer's earnings 8-K (item 2.02) still counts. A 6-K lists no items, so
-a frequent 6-K filer's results 6-K is still routine. A big move still passes either.
+its items, so a weekly filer's earnings 8-K (item 2.02) still counts. A big move still passes
+either. A foreign company's 6-K, 20-F or 40-F does not count yet: the facts pack reads only
+10-Q, 10-K and 8-K, so such a stock would reach the models without the filing it was picked
+for. Those companies can still pass on a big move or the random fill.
 At most 25 pass; filings come first, then the bigger move.
 When fewer than 20 pass, the rest of the 20 are drawn at random from the stocks left out, the
 same draw on a rerun, as a check on the screen itself. Everyone else would be "Hold by screen",
