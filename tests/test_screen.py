@@ -36,6 +36,8 @@ DAY = date(2026, 11, 6)  # a Friday session; the previous session is 2026-11-05
 CFG = load_config()
 # The routine rule is the same for any form. These tests use the 6-K, which
 # screen-v5 does not count yet, so they run with the foreign forms turned on.
+# Any edit to screen.yaml, even a comment, needs a new version; pin each one.
+KNOWN_SCREENS = {"screen-v5": "dc5b90d9917da54c1aabc3801dc9e353bca2c09514f2e99b82b9c7d5d7663c1d"}
 FOREIGN_ON = replace(CFG, forms=(*CFG.forms, "6-K", "20-F", "40-F"))
 
 
@@ -91,7 +93,7 @@ class Filings:
         self.forms = forms  # the settings decide which forms are listed
         if ticker in self.broken:
             raise ConnectionError("EDGAR down")
-        return [m for m in self.listed.get(ticker, []) if m.form in forms][:limit]
+        return self.listed.get(ticker, [])[:limit]  # the screen must drop other forms itself
 
 
 # settings
@@ -104,6 +106,9 @@ def test_a_foreign_form_does_not_pass_until_the_facts_pack_reads_it() -> None:
     assert not screen(["X"], DAY, DAY, CFG, _prices(X=0.0), filings)["chosen"]
     assert filings.forms == ("8-K", "10-Q", "10-K")
     assert screen(["X"], DAY, DAY, FOREIGN_ON, _prices(X=0.0), filings)["chosen"]
+    assert filings.forms == FOREIGN_ON.forms
+    # even if a listing brings a foreign form back, the screen drops it itself
+    assert new_filings([_meta("X", "6-K", DAY)], CFG, SINCE, LOOK_BACK, DAY) == ([], [])
 
 
 def test_the_settings_load() -> None:
@@ -111,7 +116,7 @@ def test_the_settings_load() -> None:
     assert (CFG.move_sigma, CFG.cap, CFG.fill_to) == (2.5, 25, 20)
     assert (CFG.routine_sessions, CFG.routine_filings) == (10, 2)
     assert CFG.forms == ("8-K", "10-Q", "10-K")
-    assert len(CFG.sha256) == 64
+    assert CFG.sha256 == KNOWN_SCREENS[CFG.version], "screen.yaml changed: bump the version"
 
 
 @pytest.mark.parametrize(
@@ -489,7 +494,7 @@ def test_a_filing_the_session_before_counts_toward_routine() -> None:
 
 
 def test_the_settings_decide_how_many_earlier_days_make_a_form_routine() -> None:
-    one = replace(FOREIGN_ON, routine_filings=1)
+    one = replace(CFG, routine_filings=1)
     metas = [_meta("X", "8-K", d) for d in (DAY, date(2026, 10, 30))]
     assert new_filings(metas, one, SINCE, LOOK_BACK, DAY) == (
         [],
@@ -519,7 +524,7 @@ def test_a_heavy_filer_is_still_seen_as_routine() -> None:
 
 def _eight_k(*filed: tuple[date, str]) -> tuple[list[str], list[str]]:
     metas = [_meta("X", "8-K", day, items) for day, items in filed]
-    return new_filings(metas, FOREIGN_ON, SINCE, LOOK_BACK, DAY)
+    return new_filings(metas, CFG, SINCE, LOOK_BACK, DAY)
 
 
 WEEKLY = ((date(2026, 11, 2), "8.01"), (date(2026, 10, 26), "8.01"))
@@ -575,7 +580,7 @@ def test_items_are_only_read_for_8ks() -> None:
 def test_a_weekly_filers_earnings_8k_passes_the_screen() -> None:
     listed = [_meta("MSTR", "8-K", DAY, "2.02,9.01")]
     listed += [_meta("MSTR", "8-K", d, i) for d, i in WEEKLY]
-    out = screen(["MSTR"], DAY, DAY, FOREIGN_ON, _prices(MSTR=0.0), Filings({"MSTR": listed}))
+    out = screen(["MSTR"], DAY, DAY, CFG, _prices(MSTR=0.0), Filings({"MSTR": listed}))
     assert [r["ticker"] for r in out["chosen"]] == ["MSTR"]
 
 
