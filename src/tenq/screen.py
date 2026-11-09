@@ -15,7 +15,10 @@ day so a rerun draws the same ones. They are a fair sample of what the screen
 skips: the scorecard can then check whether the models find more to act on in
 screened stocks than in random ones. Every other stock is "Hold by screen". A
 stock whose dates could not be read, or that has no upcoming date, is not
-screened: neither passed nor held, and never drawn for the fill.
+screened: neither passed nor held, and never drawn for the fill. The exception
+is a stock that reported in the last `JUST_REPORTED_DAYS` days: Yahoo lists the
+next date only some time after a release, and the next one is months away, so
+it is held.
 
 Until screen-v7 a stock passed on a new filing or a big move against QQQ.
 Neither picked stocks that moved more than the ones left out over two years of
@@ -54,6 +57,10 @@ DEFAULT_SCREEN = REPO_ROOT / "config" / "screen.yaml"
 DEFAULT_UNIVERSE = REPO_ROOT / "config" / "universe.yaml"
 TOP_LEVEL = {"version", "earnings_sessions", "cap", "fill_to"}
 MAX_FAILED_SHARE = 0.1  # more stocks than this with no usable date: the screen is refused
+# Yahoo lists a stock's next release only some time after its last one. A stock
+# that reported this recently with no next date yet is held: on Yahoo's lists of
+# 2026-11-09 no stock's releases came closer than 49 days apart (2,533 gaps).
+JUST_REPORTED_DAYS = 30
 
 
 @dataclass(frozen=True)
@@ -128,6 +135,14 @@ def next_release(when: Sequence[datetime], now: datetime) -> date | None:
     return min(later, default=None)
 
 
+def just_reported(when: Sequence[datetime], now: datetime) -> date | None:
+    """The latest release already out at `now`, if it came in the last
+    `JUST_REPORTED_DAYS` days, as a New York date."""
+    out = max((w.astimezone(MARKET_TZ).date() for w in when if w <= now), default=None)
+    today = now.astimezone(MARKET_TZ).date()
+    return out if out is not None and (today - out).days <= JUST_REPORTED_DAYS else None
+
+
 def random_fill(left: Sequence[str], slots: int, version: str, day: date) -> list[str]:
     """Up to `slots` of the left-out stocks, drawn at random but the same on a
     rerun: the draw is seeded by the screen version and the session day."""
@@ -151,11 +166,14 @@ def screen(
     first, last = window(day, now, cfg.earnings_sessions)
     found, failed = lookup(tickers, source, sleep=sleep)
     stocks: list[Stock] = []
+    reported: dict[str, str] = {}  # held with no next date yet: just reported
     for t in tickers:
         st = Stock(t)
         nxt = next_release(found.get(t, []), now)
         if t in failed:
             st.unchecked.append(failed[t])
+        elif nxt is None and (recent := just_reported(found[t], now)) is not None:
+            reported[t] = recent.isoformat()
         elif nxt is None:
             st.unchecked.append("no upcoming earnings date")
         else:
@@ -186,6 +204,7 @@ def screen(
         "unchecked": {s.ticker: s.unchecked for s in stocks if s.unchecked},
         # every stock's next release, passed or not, so the dates can be checked later
         "next_earnings": {s.ticker: s.earnings for s in stocks if s.earnings},
+        "just_reported": reported,
         "dates_failed": len(unscreened),
     }
 

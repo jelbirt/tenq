@@ -17,6 +17,7 @@ from tenq.config import load_watchlist
 from tenq.earnings import RETRY_PAUSE_S, ROWS, YahooEarnings, lookup
 from tenq.prices import BENCHMARK, MARKET_TZ, Bar, Prices
 from tenq.screen import (
+    just_reported,
     lines,
     load_config,
     load_universe,
@@ -284,6 +285,40 @@ def test_a_stock_with_no_upcoming_date_is_not_screened() -> None:
     assert out["unscreened"] == ["GONE", "NONE"] and out["held"] == []
     assert out["unchecked"]["NONE"] == ["no upcoming earnings date"]
     assert out["dates_failed"] == 2
+
+
+def test_a_stock_that_just_reported_with_no_next_date_yet_is_held() -> None:
+    out = _screen(
+        {
+            "TODAY": [_at(DAY, hour=7)],  # reported this morning; Yahoo has no next date yet
+            "MONTH": [_at(date(2026, 10, 7))],  # 30 days before the run: still held
+            "OLDER": [_at(date(2026, 10, 6))],  # 31 days: no decision
+            "NEXT": [_at(DAY, hour=7), _at(LATER)],  # a next date: the usual way
+        },
+        cfg=replace(CFG, fill_to=0),
+    )
+    assert out["held"] == ["TODAY", "MONTH", "NEXT"] and out["unscreened"] == ["OLDER"]
+    assert out["just_reported"] == {"TODAY": "2026-11-06", "MONTH": "2026-10-07"}
+    assert out["next_earnings"] == {"NEXT": LATER.isoformat()}
+    assert out["dates_failed"] == 1 and not refusals(out | {"universe": 20})
+
+
+def test_a_stock_that_just_reported_can_be_drawn_for_the_fill() -> None:
+    out = _screen({"TODAY": [_at(DAY, hour=7)]}, ["TODAY"])
+    assert out["filled"] == ["TODAY"] and out["unscreened"] == []
+
+
+def test_a_release_after_the_run_is_not_one_just_reported() -> None:
+    assert just_reported([_at(DAY, hour=18)], RUN) is None  # still to come
+    assert just_reported([_at(DAY, hour=16), _at(date(2026, 8, 6))], RUN) == DAY
+    assert just_reported([], RUN) is None
+
+
+def test_just_reported_counts_days_in_new_york_not_utc() -> None:
+    late = datetime(2026, 11, 7, 3, tzinfo=UTC)  # 22:00 on the 6th in New York
+    assert just_reported([_at(date(2026, 10, 7), hour=7)], late) == date(2026, 10, 7)
+    evening = _at(date(2026, 10, 7), hour=21).astimezone(UTC)  # already the 8th in UTC
+    assert just_reported([evening], RUN) == date(2026, 10, 7)
 
 
 def test_a_stock_that_could_not_be_screened_is_never_drawn_for_the_fill() -> None:
