@@ -48,7 +48,7 @@ A GitHub Actions workflow ([brief.yml](.github/workflows/brief.yml)) runs daily:
 
 A second workflow ([daily.yml](.github/workflows/daily.yml), [daily.py](src/tenq/daily.py)) runs
 on weekdays at 22:30 UTC (5:30pm New York in winter, 6:30pm in summer) and makes
-two calls (Buy, Hold, Sell or Short) on every watchlist stock after the close, from the same
+two calls (Buy, Hold, Sell or Short) on each stock the screen picks (below) after the close, from the same
 facts sheet ([pack.py](src/tenq/pack.py)): Jev answers text-only questions and fixed rules
 ([rules.py](src/tenq/rules.py), [config/rules.yaml](config/rules.yaml)) turn the answers into a
 call; Opus makes its own call and writes the why for Jev's ([opus.py](src/tenq/opus.py)). Code
@@ -125,18 +125,21 @@ bar a live method must clear is still the baselines on the same days, on the sco
 luck range here is for 3 years of calls; a few months of live calls have a much wider one. The
 watchlist was chosen in 2026, which flatters every rule that mostly buys, always Buy most.
 
-### The screen (preview only)
+### The screen
 
-`uv run python -m tenq.screen` shows which stocks a wider daily run would send to Jev and Opus
+Before any model is asked, the daily run screens which stocks to send to Jev and Opus
+(`uv run python -m tenq.screen` shows today's screen on its own)
 ([screen.py](src/tenq/screen.py), settings in [config/screen.yaml](config/screen.yaml)). It
 asks no model anything. From the watchlist plus the Nasdaq-100
 ([config/universe.yaml](config/universe.yaml), 113 stocks) it passes a stock that filed an
-8-K, 10-Q or 10-K (or a foreign company's 6-K, 20-F or 40-F) since the previous session, or
+8-K, 10-Q or 10-K since the previous session, or
 that moved against QQQ by more than 2.5 of its usual daily moves against QQQ over 1 or 5 days.
 A filing does not count when the company filed the same kind on 2 or more other days in the 10
 sessions before (a routine filer, such as weekly buyback notices); for an 8-K the kind includes
-its items, so a weekly filer's earnings 8-K (item 2.02) still counts. A 6-K lists no items, so
-a frequent 6-K filer's results 6-K is still routine. A big move still passes either.
+its items, so a weekly filer's earnings 8-K (item 2.02) still counts. A big move still passes
+either. A foreign company's 6-K, 20-F or 40-F does not count yet: the facts pack reads only
+10-Q, 10-K and 8-K, so such a stock would reach the models without the filing it was picked
+for. Those companies can still pass on a big move or the random fill.
 At most 25 pass; filings come first, then the bigger move.
 When fewer than 20 pass, the rest of the 20 are drawn at random from the stocks left out, the
 same draw on a rerun, as a check on the screen itself. Everyone else would be "Hold by screen",
@@ -145,7 +148,13 @@ too little history for both moves, or its EDGAR lookup failed): that is listed a
 screened, and is never drawn for the fill. The run stops, and its JSON says `"ok": false`, if
 QQQ's bar for the session is missing, or more than 1 in 10 stocks' EDGAR lookups or prices
 fail.
-The manual `screen` workflow runs it with the EDGAR check on. The daily run does not use it yet.
+The daily run asks the models about the stocks that passed plus the random fill (20 to 25 a
+day) and keeps the whole screen in its record, so the "Hold by screen" stocks can be scored on
+prices later. If the screen fails or cannot be trusted (any of the stops above, or it screened
+a different session), the daily run asks the 20 watchlist stocks instead, and the email's
+subject starts "SCREEN FAILED" with a red box at the top saying why. A check on named stocks
+(`--ticker`) skips the screen and takes any stock in the universe. The manual `screen`
+workflow runs the screen alone, with the EDGAR check on.
 
 ## Guardrails
 

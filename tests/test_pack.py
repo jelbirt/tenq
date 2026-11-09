@@ -459,6 +459,7 @@ def test_the_cli_prints_a_pack(
     import tenq.fetch
     import tenq.news
     import tenq.prices
+    import tenq.screen
     from tenq.config import Watchlist
     from tenq.current import Synced
     from tenq.news import News
@@ -468,6 +469,7 @@ def test_the_cli_prints_a_pack(
     monkeypatch.setattr(
         tenq.config, "load_watchlist", lambda: Watchlist(("CRWD",), ("CRWD",), {"CRWD": "Crowd"})
     )
+    monkeypatch.setattr(tenq.screen, "universe_names", lambda: {"CRWD": "Crowd"})
     monkeypatch.setattr(tenq.edgar, "EdgarSource", lambda: object())
     monkeypatch.setattr(tenq.fetch, "sync", lambda *_a: [])
     monkeypatch.setattr(tenq.current, "sync_current", lambda *_a: Synced([], [], ["8-K x"]))

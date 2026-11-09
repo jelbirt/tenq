@@ -950,3 +950,165 @@ def test_the_why_trace_shows_the_whole_message_opus_was_sent(tmp_path: Path) -> 
     assert (
         str((spans[-1].attributes or {})["langfuse.observation.input"]) == (stock["why"]["message"])
     )
+
+
+def _screen(day: date, chosen: list[str], filled: list[str] = (), **extra: Any) -> Any:  # type: ignore[assignment]
+    def screener(now: datetime) -> dict[str, Any]:
+        return {
+            "kind": "screen",
+            "version": "screen-v5",
+            "day": day.isoformat(),
+            "universe": 113,
+            "chosen": [{"ticker": t, "reasons": [f"{t} moved"]} for t in chosen],
+            "over_cap": [],
+            "filled": list(filled),
+            "held": ["AAPL", "PEP"],
+            "unscreened": [],
+            "ok": True,
+            "refused": [],
+        } | extra
+
+    return screener
+
+
+def test_a_good_screen_decides_which_stocks_the_models_judge(tmp_path: Path) -> None:
+    outbox = Outbox()
+    screener = _screen(DAY, ["TEAM", "AAPL"], ["MSFT"])
+    assert _run(tmp_path, screener=screener, mailer=outbox) == 0
+    record = _record(tmp_path)
+    assert [s["ticker"] for s in record["stocks"]] == ["TEAM", "AAPL", "MSFT"]
+    assert record["screen"]["used"] == "screen"
+    assert record["screen"]["held"] == ["AAPL", "PEP"]
+    [mail] = outbox.sent
+    assert not mail.subject.startswith("SCREEN FAILED")
+    assert (
+        "Screen screen-v5: 2 of 113 stocks passed, 1 more drawn at random as a check;" in mail.text
+    )
+    assert "  TEAM: TEAM moved" in mail.text
+    assert "Random fill: MSFT" in mail.text
+    assert "SCREEN FAILED" not in mail.text and "#b00" not in mail.html
+
+
+@pytest.mark.parametrize(
+    ("result", "why"),
+    [
+        ({"kind": "screen", "ok": False, "refused": ["no QQQ prices"]}, "no QQQ prices"),
+        (
+            {"kind": "screen", "ok": False, "refused": ["the screen failed (OSError)"]},
+            "the screen failed (OSError)",
+        ),
+        (
+            _screen(date(2026, 11, 3), ["TEAM"])(NOW),
+            "it screened the 2026-11-03 session, not 2026-11-04",
+        ),
+    ],
+)
+def test_a_failed_screen_runs_the_watchlist_and_says_so_first(
+    tmp_path: Path, result: dict[str, Any], why: str, caplog: pytest.LogCaptureFixture
+) -> None:
+    outbox = Outbox()
+    assert _run(tmp_path, screener=lambda now: result, mailer=outbox) == 0
+    record = _record(tmp_path)
+    assert [s["ticker"] for s in record["stocks"]] == list(WATCH.tickers)
+    assert record["screen"]["used"] == "watchlist"
+    assert record["screen"]["ok"] is False
+    [mail] = outbox.sent
+    assert mail.subject.startswith("SCREEN FAILED + tenq daily, session 2026-11-04")
+    assert mail.text.startswith(f"SCREEN FAILED: {why}.\nThe 20 watchlist stocks were asked")
+    assert mail.html.index("#b00") < mail.html.index("tenq daily calls")
+    assert "SCREEN FAILED" in caplog.text
+
+
+def test_a_check_on_named_stocks_skips_the_screen_and_takes_any_universe_stock(
+    tmp_path: Path,
+) -> None:
+    def never(now: datetime) -> dict[str, Any]:
+        raise AssertionError("a check on named stocks must not screen")
+
+    outbox = Outbox()
+    assert _run(tmp_path, "--ticker", "AAPL", screener=never, mailer=outbox) == 0
+    [check] = _checks(tmp_path)
+    assert [s["ticker"] for s in check["stocks"]] == ["AAPL"]
+    assert check["screen"] is None
+    assert "Screen" not in outbox.sent[0].text
+    assert _run(tmp_path, "--ticker", "ZZZZ", screener=never) == 2
+
+
+def test_a_check_without_named_stocks_still_uses_the_screen(tmp_path: Path) -> None:
+    assert _run(tmp_path, "--no-email", screener=_screen(DAY, ["TEAM", "AAPL"])) == 0
+    [check] = _checks(tmp_path)
+    assert check["screen"]["used"] == "screen"
+    assert [s["ticker"] for s in check["stocks"]] == ["TEAM", "AAPL"]
+
+
+def test_a_screened_stock_off_the_watchlist_shows_its_company(tmp_path: Path) -> None:
+    outbox = Outbox()
+    assert _run(tmp_path, screener=_screen(DAY, ["AAPL"]), mailer=outbox) == 0
+    assert _record(tmp_path)["stocks"][0]["company"] == "Apple"
+    assert "AAPL (Apple)" in outbox.sent[0].text
+
+
+def _spy_on_gather(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
+    """Stub everything gather fetches; return what it passed as names."""
+    from tenq import pack as pack_module
+    from tenq.news import News
+
+    seen: dict[str, Any] = {}
+
+    class Source:
+        pass
+
+    def collect(names: dict[str, str | None], since: datetime) -> News:
+        seen["news"] = names
+        return News({}, ())
+
+    def build(ticker: str, company: str, **kw: Any) -> str:
+        seen["pack"] = company
+        return "pack"
+
+    monkeypatch.setattr("tenq.edgar.EdgarSource", Source)
+    monkeypatch.setattr("tenq.fetch.sync", lambda *a, **k: None)
+    monkeypatch.setattr("tenq.current.sync_current", lambda *a, **k: type("S", (), {"notes": ()})())
+    monkeypatch.setattr("tenq.prices.fetch", lambda *a, **k: Prices({}, ()))
+    monkeypatch.setattr("tenq.news.collect", collect)
+    monkeypatch.setattr(pack_module, "build", build)
+    return seen
+
+
+def test_the_facts_pack_and_news_get_the_company_of_any_screened_stock(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from tenq import pack as pack_module
+
+    seen = _spy_on_gather(monkeypatch)
+    assert pack_module.gather("AAPL", NOW) == "pack"  # type: ignore[comparison-overlap]
+    assert seen == {"news": {"AAPL": "Apple"}, "pack": "Apple"}
+
+
+def test_a_broken_universe_file_still_lets_the_watchlist_gather(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from tenq import pack as pack_module
+
+    def broken() -> dict[str, str]:
+        raise ValueError("bad universe")
+
+    seen = _spy_on_gather(monkeypatch)
+    monkeypatch.setattr("tenq.screen.universe_names", broken)
+    assert pack_module.gather("CRWD", NOW) == "pack"  # type: ignore[comparison-overlap]
+    assert seen["pack"] == WATCH.names["CRWD"]
+
+
+def test_the_screens_time_counts_against_the_opus_budget(tmp_path: Path) -> None:
+    ticks = iter(range(10_000))
+    ctx = _ctx()
+    ctx.opus_budget_s = 2.5
+    ctx.clock = lambda: float(next(ticks))
+
+    def slow(now: datetime) -> Any:
+        for _ in range(3):  # the screen uses up the whole budget
+            next(ticks)
+        return _screen(DAY, list(WATCH.tickers))(now)
+
+    assert _run(tmp_path, ctx=ctx, screener=slow) == 0
+    assert "time budget" in _record(tmp_path)["stocks"][0]["opus"]["error"]

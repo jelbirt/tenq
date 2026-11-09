@@ -1,7 +1,8 @@
-"""The daily run: both calls on every watchlist stock after the close, one
-email, one record, and a trace per stock.
+"""The daily run: both calls on each stock the screen picks after the close
+(tenq.screen; the watchlist if the screen fails), one email, one record, and a
+trace per stock.
 
-    python -m tenq.daily                  # every watchlist stock, the latest session
+    python -m tenq.daily                  # the screen's picks, the latest session
     python -m tenq.daily --ticker CRWD    # a check (see below)
     python -m tenq.daily --no-email       # a check that emails nothing
 
@@ -79,6 +80,7 @@ from tenq.prices import BENCHMARK, MARKET_TZ, SESSION_SETTLED, Prices, YahooPric
 from tenq.reasons import ReasonCheck, check_reasons
 from tenq.rules import Call, Rules, decide, load_rules
 from tenq.scorecard import PriceFetch, weekly, yahoo
+from tenq.screen import load_universe, picked, run_screen, universe_names
 from tenq.trace import send_daily_traces
 
 log = logging.getLogger(__name__)
@@ -466,11 +468,14 @@ def run_day(
     ctx: Context,
     *,
     check_id: str | None = None,
+    screen: dict[str, Any] | None = None,
+    started: float | None = None,
     save: Callable[[dict[str, Any]], None] = lambda record: None,
 ) -> dict[str, Any]:
     """Every stock's calls, as the day's record (email and trace not yet sent).
     `save` gets the record after every stock, unfinished until the last."""
-    state = State(deadline=ctx.clock() + ctx.opus_budget_s)
+    # The budget runs from `started` (before the screen), so screen time counts too.
+    state = State(deadline=(ctx.clock() if started is None else started) + ctx.opus_budget_s)
     record: dict[str, Any] = {
         "kind": KIND,
         "run_id": str(uuid.uuid4()),
@@ -494,6 +499,9 @@ def run_day(
         },
         "benchmark": {"ticker": BENCHMARK, "day": day.isoformat(), "close": bench_close},
         "opus_on": ctx.claude is not None,
+        # which stocks were asked and why: the screen's result, or why it failed
+        # and the watchlist ran instead; None for a check run on named stocks
+        "screen": screen,
         "stocks": [],
         "balance": [],
         "jev_cost": 0.0,
@@ -536,16 +544,37 @@ def notice(run_url: str, mailer: Mailer = send) -> int:
     return 0 if sent else 1
 
 
+def choose(
+    result: dict[str, Any], day: date, watchlist: list[str]
+) -> tuple[dict[str, Any], list[str]]:
+    """The stocks to ask today: the screen's picks, or the watchlist when the
+    screen failed or screened a different session. Either way the result is
+    kept for the record, marked with what was used, and a failure is loud: it
+    heads the email and the log."""
+    if result.get("ok") and result.get("day") == day.isoformat():
+        return result | {"used": "screen"}, picked(result)
+    if result.get("ok"):
+        result = result | {
+            "ok": False,
+            "refused": [f"it screened the {result.get('day')} session, not {day}"],
+        }
+    log.error("SCREEN FAILED (%s): running the watchlist", "; ".join(result.get("refused") or []))
+    return result | {"used": "watchlist"}, list(watchlist)
+
+
 def main(
     argv: list[str] | None = None,
     *,
     ctx: Context | None = None,
     prices: Callable[[], Prices] | None = None,
+    screener: Callable[[datetime], dict[str, Any]] | None = None,
     score_prices: PriceFetch = yahoo,
     mailer: Mailer = send,
     tracer: Tracer = send_daily_traces,
 ) -> int:
-    ap = argparse.ArgumentParser(description="Both daily calls on the watchlist, emailed.")
+    ap = argparse.ArgumentParser(
+        description="Both daily calls on the screen's picks (the watchlist if it fails), emailed."
+    )
     ap.add_argument("--ticker", action="append", help="a check on these stocks only")
     ap.add_argument("--no-email", action="store_true", help="a check that emails nothing")
     ap.add_argument("--no-opus", action="store_true", help="a check of Jev's calls only")
@@ -576,10 +605,15 @@ def main(
         return send_claimed(args.record, args.claim, mailer, tracer)
 
     watch = load_watchlist()
+    try:
+        names, universe = universe_names(), set(load_universe())
+    except Exception as e:  # a broken universe file: the screen fails too, so run the watchlist
+        log.error("the universe could not be read (%s): watchlist only", type(e).__name__)
+        names, universe = dict(watch.names), set(watch.tickers)
     tickers = list(dict.fromkeys(t.upper() for t in args.ticker or watch.tickers))
-    bad = [t for t in tickers if not TICKER.fullmatch(t) or t not in watch.tickers]
+    bad = [t for t in tickers if not TICKER.fullmatch(t) or t not in universe]
     if bad:
-        print(f"not watchlist tickers: {bad}")
+        print(f"not on the watchlist or the Nasdaq-100: {bad}")
         return 2
     if ctx is None:
         questions = jev.load_questions()
@@ -628,9 +662,12 @@ def main(
             return 0
         return _finish(deliver(path, done, email=True, mailer=mailer, tracer=tracer), True)
 
+    screened, started = None, ctx.clock()
+    if not args.ticker:
+        screened, tickers = choose((screener or run_screen)(ctx.now), day, list(watch.tickers))
     record = run_day(
-        tickers, watch.names, day, bench_close, ctx, check_id=check_id,
-        save=lambda r: _write(path, r),
+        tickers, names, day, bench_close, ctx, check_id=check_id, screen=screened,
+        started=started, save=lambda r: _write(path, r),
     )  # fmt: skip
     if check_id is None:
         # the week's last session: the scorecard rides at the top of the email

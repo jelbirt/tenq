@@ -606,15 +606,23 @@ def gather(ticker: str, now: datetime) -> Pack | None:
     Syncs its 10-Q/10-Ks and recent 8-Ks from EDGAR (needs EDGAR_IDENTITY),
     downloads its prices and reads the news feeds. None when it has no prices.
     """
-    from tenq.config import load_watchlist
     from tenq.current import CURRENT_TAG, sync_current
     from tenq.current import DEFAULT_ROOT as CURRENT_ROOT
     from tenq.edgar import EdgarSource
     from tenq.fetch import DEFAULT_DEPTH, sync
     from tenq.news import collect
     from tenq.prices import YahooPrices, fetch
+    from tenq.screen import universe_names
 
-    names = load_watchlist().names
+    # Any stock the screen can pick, not only the watchlist: without its company
+    # name the news match falls back to the bare symbol and finds little.
+    try:
+        names = universe_names()
+    except Exception:  # a broken universe file must not stop the watchlist fallback
+        from tenq.config import load_watchlist
+
+        log.exception("the universe names could not be read; watchlist names only")
+        names = load_watchlist().names
     source = EdgarSource()
     filings, current = FilingStore(Path("data/filings")), FilingStore(CURRENT_ROOT, tag=CURRENT_TAG)
     sync(source, filings, ticker, DEFAULT_DEPTH)

@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import os
 import shutil
+from datetime import datetime
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -41,6 +43,34 @@ def no_real_prices(monkeypatch: pytest.MonkeyPatch) -> None:
         raise NoNetwork("tests must not download prices")
 
     monkeypatch.setattr("tenq.prices.YahooPrices.history", refuse)
+
+
+def watchlist_screen(now: datetime) -> dict[str, Any]:
+    """A good screen that picks the 20 watchlist stocks, for tests of the daily
+    run that are not about the screen."""
+    from tenq.config import load_watchlist
+    from tenq.daily import expected_session
+
+    tickers = load_watchlist().tickers
+    return {
+        "kind": "screen",
+        "version": "screen-test",
+        "day": expected_session(now).isoformat(),
+        "universe": len(tickers),
+        "chosen": [{"ticker": t, "reasons": ["picked by the test"]} for t in tickers],
+        "over_cap": [],
+        "filled": [],
+        "held": [],
+        "unscreened": [],
+        "ok": True,
+        "refused": [],
+    }
+
+
+@pytest.fixture(autouse=True)
+def no_real_screen(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The daily run never screens the real universe in a test."""
+    monkeypatch.setattr("tenq.daily.run_screen", watchlist_screen)
 
 
 @pytest.fixture
