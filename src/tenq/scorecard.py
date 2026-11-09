@@ -27,16 +27,20 @@ last month's winners and a shuffled version of each method's own calls would
 have scored.
 
 The screen gets two checks of its own, on days it chose the stocks (not on a
-watchlist day or a day it failed). Check 1, do the stocks that pass it move
+watchlist day or a day it failed). Both set each day's stocks only against the
+same day's, then average over the days, so a busy day (many stocks pass, all
+moving a lot) cannot pass for skill. Check 1, do the stocks that pass it move
 more: every screened stock gets the same 20-session excess as a call made that
 day, kept in a second ledger, runs/daily/scores/<version>-screen.json, and the
-average size of the move (up or down) of the stocks that passed is set against
-that of the stocks that did not (the random draw and those Hold by screen).
-Its luck range puts each move on its exit day and allows for 19 days of
-carry-over, since one stock's windows on neighbouring days share up to 19
-sessions (Newey and West 1987). Check 2, are the calls better on the screen's
-picks: each method's mean score on the picks against its mean on the random
-draw, with the same daily-move luck range as Jev against Opus. Stocks that
+size of the move (up or down) of the stocks that passed is set against that of
+the stocks that did not (the random draw and those Hold by screen). Its luck
+range comes from shuffling: each stock's run of screen results is handed to
+another stock at random and the gap measured again, many times. A stock keeps
+its own moves (neighbouring days share 19 of their 20 sessions) and each run
+of results keeps its own shape, so only the link between the two is broken.
+Check 2, are the calls better on the screen's picks: each method's mean score
+on the picks against its mean on the random draw, with the same daily-move
+luck range as Jev against Opus; a day with no random draw sits out. Stocks that
 could not be screened belong to neither side.
 
 Only full daily records count: `YYYY-MM-DD.json`, kind daily, no check id,
@@ -56,6 +60,7 @@ import itertools
 import json
 import logging
 import math
+import random
 import re
 import statistics
 from collections.abc import Callable, Iterable, Sequence
@@ -85,6 +90,7 @@ METHODS = {"jev": "Jev", "opus": "Opus"}
 SCREEN_GROUPS = {"chosen": "picked", "over_cap": "over_cap", "filled": "random", "held": "held"}
 PASSED = ("picked", "over_cap")
 NOT_PASSED = ("random", "held")
+SHUFFLES = 1000  # check 1's luck range: the screen's results reshuffled this many times
 MIN_RANKED = 5  # fewer stocks than this on a day: no rank correlation for that day
 # Opus is ranked by lean on a day only when this share of its calls kept one: a
 # lean is lost mostly when it points against its call, a borderline stock that
@@ -288,7 +294,8 @@ def screen_groups(record: dict[str, Any]) -> dict[str, str]:
         return {}
     out: dict[str, str] = {}
     for key, group in SCREEN_GROUPS.items():
-        for x in screen.get(key) or []:
+        listed = screen.get(key)
+        for x in listed if isinstance(listed, list) else []:
             t = x.get("ticker") if isinstance(x, dict) else x
             if isinstance(t, str) and t not in out:
                 out[t] = group
@@ -839,73 +846,146 @@ def baselines(rows: Sequence[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
-def _gap(gap: float, totals: Sequence[float], carry: int, weeks: int, cfg: ScoreConfig) -> Row:
-    """A gap between two groups, the gap luck alone could give (a 90% range
-    around zero) and whether it is settled, as for Jev against Opus. `totals`
-    are the gap's parts added up by day, so they sum to the gap."""
-    se = standard_error(totals, 1, carry)
+def _verdict(gap: float, se: float | None, luck: float | None, weeks: int, cfg: ScoreConfig) -> Row:
+    """Whether a gap between two groups is settled, as for Jev against Opus:
+    `luck` is the gap luck alone stays within 9 times in 10, `se` its standard
+    error. A gap that rounds to 0.00% on the card never settles."""
     level = round(abs(gap) * 100, 2) == 0
-    settled = bool(
-        se and not level and weeks >= cfg.weeks_first_verdict and abs(gap) >= cfg.settled_bar * se
-    )
-    return {
-        "gap": gap,
-        "weeks": weeks,
-        "days": len(totals),
-        "se": se,
-        "luck": None if not se else t95(len(totals) - 1) * se,
-        "settled": settled,
-    }
+    bar = cfg.settled_bar * se if se else None
+    settled = bool(bar and not level and weeks >= cfg.weeks_first_verdict and abs(gap) >= bar)
+    return {"gap": gap, "weeks": weeks, "se": se, "luck": luck, "bar": bar, "settled": settled}
 
 
-def _weeks(rows: Iterable[Row]) -> int:
-    return len({_week(r["day"]) for r in rows})
+def _weeks(days: Iterable[str]) -> int:
+    return len({_week(d) for d in days})
 
 
-def moved(rows: Sequence[Row], cfg: ScoreConfig) -> Row:
-    """Check 1: the average size of the move against QQQ, up or down, of the
-    stocks that passed the screen and of those that did not. Each move's part
-    of the gap sits on its exit day; windows a day apart share 19 sessions, so
-    the luck range allows for that much carry-over."""
-    scored = [r for r in rows if r["status"] == "scored"]
-    yes = [r for r in scored if r.get("group") in PASSED]
-    no = [r for r in scored if r.get("group") in NOT_PASSED]
+def _size_gap(
+    sizes: Sequence[Sequence[tuple[int, float]]],
+    passed: Sequence[Sequence[bool | None]],
+    order: Sequence[int],
+) -> tuple[float, float, int, int, list[int]] | None:
+    """Check 1 on one way of handing out the screen's results: stock s takes
+    the results of stock order[s]. Each day, the mean size of the stocks that
+    passed less that of those that did not; (mean passed, mean not passed,
+    stock-days passed, stock-days not passed, days used), averaged over the
+    days that had both. None if no day had both."""
+    yes_means: list[float] = []
+    no_means: list[float] = []
+    n_yes = n_no = 0
+    used: list[int] = []
+    for d, day in enumerate(sizes):
+        yes = no = 0.0
+        cy = cn = 0
+        for s, x in day:
+            got = passed[order[s]][d]
+            if got is None:
+                continue
+            if got:
+                yes, cy = yes + x, cy + 1
+            else:
+                no, cn = no + x, cn + 1
+        if cy and cn:
+            yes_means.append(yes / cy)
+            no_means.append(no / cn)
+            n_yes, n_no = n_yes + cy, n_no + cn
+            used.append(d)
+    if not used:
+        return None
+    return statistics.fmean(yes_means), statistics.fmean(no_means), n_yes, n_no, used
+
+
+def moved(rows: Sequence[Row], cfg: ScoreConfig, shuffles: int = SHUFFLES) -> Row:
+    """Check 1: the size of the move against QQQ, up or down, of the stocks
+    that passed the screen against those that did not, each day's stocks set
+    only against that day's, averaged over the days. The luck range is the gap
+    9 shuffles in 10 stay within, when each stock's run of screen results is
+    handed to another stock at random (seeded, so a card is the same when made
+    again); the standard error is the shuffled gaps' spread around zero."""
+    scored = [r for r in rows if r["status"] == "scored" and r.get("group") in PASSED + NOT_PASSED]
+    tickers = sorted({r["ticker"] for r in scored})
+    days = sorted({r["day"] for r in scored})
+    at = {t: i for i, t in enumerate(tickers)}
+    on = {d: i for i, d in enumerate(days)}
+    passed: list[list[bool | None]] = [[None] * len(days) for _ in tickers]
+    sizes: list[list[tuple[int, float]]] = [[] for _ in days]
+    for r in scored:
+        s, d = at[r["ticker"]], on[r["day"]]
+        passed[s][d] = r["group"] in PASSED
+        sizes[d].append((s, abs(r["excess"])))
     out: Row = {
-        "passed": len(yes),
-        "not_passed": len(no),
-        "passed_mean": _mean([abs(r["excess"]) for r in yes]),
-        "not_passed_mean": _mean([abs(r["excess"]) for r in no]),
+        "passed": 0,
+        "not_passed": 0,
+        "days": 0,
+        "passed_mean": None,
+        "not_passed_mean": None,
     }
-    if not yes or not no:
+    real = _size_gap(sizes, passed, range(len(tickers)))
+    if real is None:
         return out
-    parts = [(1 / len(yes), r) for r in yes] + [(-1 / len(no), r) for r in no]
-    sizes = [(w, {"excess": abs(r["excess"]), "exit_day": r["exit_day"]}) for w, r in parts]
-    totals = list(day_totals(sizes).values())
-    gap = out["passed_mean"] - out["not_passed_mean"]
-    return out | _gap(gap, totals, cfg.sessions - 1, _weeks(yes + no), cfg)
+    yes, no, n_yes, n_no, used = real
+    out |= {"passed": n_yes, "not_passed": n_no, "days": len(used)}
+    out |= {"passed_mean": yes, "not_passed_mean": no}
+    rng = random.Random(f"{cfg.version}:check-1")
+    gaps: list[float] = []
+    order = list(range(len(tickers)))
+    for _ in range(shuffles):
+        rng.shuffle(order)
+        got = _size_gap(sizes, passed, order)
+        if got is not None:
+            gaps.append(got[0] - got[1])
+    se = math.sqrt(statistics.fmean(g * g for g in gaps)) if gaps else None
+    luck = None
+    if se:
+        wide = sorted(abs(g) for g in gaps)
+        luck = wide[math.ceil(0.9 * len(wide)) - 1]
+    return out | _verdict(yes - no, se, luck, _weeks(days[d] for d in used), cfg)
 
 
 def on_picks(rows: Sequence[Row], cfg: ScoreConfig) -> dict[str, Row]:
-    """Check 2: each method's mean score a call on the screen's picks and on
-    the random draw, with the luck range of the gap from the daily moves."""
+    """Check 2: each method's mean score a call on the screen's picks against
+    its mean on the random draw, each day's picks set only against that day's
+    draw, averaged over the days that had both (a day with no draw sits out).
+    The luck range comes from the daily moves, as for Jev against Opus."""
+    w = cfg.weights
     out: dict[str, Row] = {}
     for m in METHODS:
-        mine = [r for r in rows if r["status"] == "scored" and r.get(m)]
-        picks = [r for r in mine if r.get("group") == "picked"]
-        draw = [r for r in mine if r.get("group") == "random"]
-        w = cfg.weights
+        days: dict[str, tuple[list[Row], list[Row]]] = {}
+        for r in rows:
+            if (
+                r["status"] != "scored"
+                or not r.get(m)
+                or r.get("group") not in ("picked", "random")
+            ):
+                continue
+            picks, draw = days.setdefault(r["day"], ([], []))
+            (picks if r["group"] == "picked" else draw).append(r)
+        used = {d: pd for d, pd in sorted(days.items()) if pd[0] and pd[1]}
+
+        def mean(rs: list[Row], m: str = m) -> float:
+            return statistics.fmean(w[r[m]] * r["excess"] for r in rs)
+
         got: Row = {
-            "picks": len(picks),
-            "draw": len(draw),
-            "picks_mean": _mean([w[r[m]] * r["excess"] for r in picks]),
-            "draw_mean": _mean([w[r[m]] * r["excess"] for r in draw]),
+            "picks": sum(len(p) for p, _ in used.values()),
+            "draw": sum(len(d) for _, d in used.values()),
+            "days": len(used),
+            "sat_out": len(days) - len(used),
+            "picks_mean": statistics.fmean(mean(p) for p, _ in used.values()) if used else None,
+            "draw_mean": statistics.fmean(mean(d) for _, d in used.values()) if used else None,
         }
-        if picks and draw:
-            parts = [(w[r[m]] / len(picks), r) for r in picks]
-            parts += [(-w[r[m]] / len(draw), r) for r in draw]
+        if used:
+            n = len(used)
+            parts = [
+                (sign * w[r[m]] / (len(rs) * n), r)
+                for pd in used.values()
+                for sign, rs in ((1, pd[0]), (-1, pd[1]))
+                for r in rs
+            ]
             totals = list(day_totals(parts).values())
+            se = standard_error(totals, 1, cfg.carry_days)
+            luck = None if not se else t95(len(totals) - 1) * se
             gap = got["picks_mean"] - got["draw_mean"]
-            got |= _gap(gap, totals, cfg.carry_days, _weeks(picks + draw), cfg)
+            got |= _verdict(gap, se, luck, _weeks(used), cfg)
         out[m] = got
     return out
 
@@ -932,6 +1012,7 @@ def screen_check(
     return out | {
         "moves": moved(done, cfg),
         "open": len(opened),
+        "waiting": sum(1 for r in opened if r["exit_day"] <= str(today)),
         "next_due": min(
             (r["exit_day"] for r in opened if r["exit_day"] > str(today)), default=None
         ),
@@ -1071,62 +1152,106 @@ def _size(x: Any) -> str:
     return "n/a" if not isinstance(x, int | float) else f"{x * 100:.2f}%"
 
 
-def _luck_line(g: Row, first: int, more: str, less: str) -> str:
-    """The gap, then whether it can be luck; `more` and `less` name what a
-    settled gap above or below zero would mean."""
-    head = f"Gap {_pct(g['gap'])}."
+def _luck_lines(g: Row, first: int, name: str, more: str, less: str) -> list[str]:
+    """The gap (`name` says which way round), whether it is settled and, if
+    not, the range luck alone gives, as for Jev against Opus; `more` and `less`
+    say what a settled gap above or below zero means."""
+    head = f"Gap ({name}): {_pct(g['gap'])}."
     if g["settled"]:
-        return (
+        return [
             f"{head} Settled: {more if g['gap'] > 0 else less} (a gap this size is unlikely "
             "to be luck, even counting every weekly check)."
-        )
+        ]
     early = f" (too early: {g['weeks']} of {first} weeks scored)" if g["weeks"] < first else ""
     if g["luck"] is None:
-        return f"{head} Can be luck{early}: too few days scored to size luck yet."
+        return [f"{head} Not settled{early}: too few days scored to size luck yet."]
     luck = g["luck"] * 100
-    return (
-        f"{head} Can be luck{early}: 9 times in 10, luck alone gives a gap between "
+    out = [
+        f"{head} Not settled{early}: 9 times in 10, luck alone gives a gap between "
         f"-{luck:.2f}% and +{luck:.2f}%."
-    )
+    ]
+    gap, bar = abs(g["gap"]), g.get("bar")
+    if not bar or round(gap * 100, 2) == 0:
+        return out
+    if early and gap >= bar:
+        out.append(
+            f"The gap already clears the settle bar of {bar * 100:.2f}%; a gap can settle "
+            f"only once {first} weeks are scored."
+        )
+    elif gap > g["luck"]:
+        wait = f", and only once {first} weeks are scored" if early else ""
+        out.append(
+            f"The gap is outside that range, but since the card is read every week a gap "
+            f"settles only at {bar * 100:.2f}%{wait}."
+        )
+    return out
+
+
+def _days(n: int) -> str:
+    return f"{n} day" if n == 1 else f"{n} days"
 
 
 def screen_lines(sc: Row, first: int) -> list[str]:
     """The two screen checks in plain words; nothing before the first screened day."""
     out: list[str] = []
     mv = sc.get("moves") or {}
+    wait = sc.get("waiting") or 0
     if sc.get("error"):
         out.append(f"Screen check 1 was not made this week: {sc['error']}.")
-    elif mv.get("passed") and mv.get("not_passed"):
+    elif mv.get("days"):
         out.append(
             "Screen check 1, do the stocks that pass move more: over 20 sessions, up or "
             f"down against QQQ, those that passed moved {_size(mv['passed_mean'])} on "
             f"average ({mv['passed']} stock-days), those that did not "
-            f"{_size(mv['not_passed_mean'])} ({mv['not_passed']})."
+            f"{_size(mv['not_passed_mean'])} ({mv['not_passed']}), comparing stocks "
+            f"screened the same day ({_days(mv['days'])})."
         )
-        out.append(_luck_line(mv, first, "stocks that pass the screen move more", "they move less"))
-    elif sc.get("open"):
+        out += _luck_lines(
+            mv,
+            first,
+            "passed less not passed",
+            "stocks that pass the screen move more",
+            "they move less",
+        )
+    elif sc.get("open") and not wait:
         due = f"; the first finishes on {sc['next_due']}" if sc.get("next_due") else ""
         out.append(
             f"Screen checks: no screened stock has finished its 20 sessions yet "
             f"({sc['open']} stock-days open{due})."
         )
+    if wait:
+        out.append(f"Screen check 1: {wait} stock-day(s) finished but are waiting for a price.")
     for m, name in METHODS.items():
         c = (sc.get("calls") or {}).get(m) or {}
-        if not (c.get("picks") and c.get("draw")):
+        skipped = c.get("sat_out") or 0
+        sat = f" {_days(skipped)} with no random draw sat out." if skipped else ""
+        if not c.get("days"):
+            if skipped:
+                out.append(
+                    f"Screen check 2 for {name}'s calls: no finished day had both picks and "
+                    f"a random draw yet.{sat}"
+                )
             continue
         out.append(
             f"Screen check 2, are {name}'s calls better on the screen's picks: "
             f"{_pct(c['picks_mean'])} a call on the picks ({c['picks']}), "
-            f"{_pct(c['draw_mean'])} on the random draw ({c['draw']})."
+            f"{_pct(c['draw_mean'])} on the random draw ({c['draw']}), comparing picks "
+            f"and draws from the same day ({_days(c['days'])}).{sat}"
         )
-        out.append(_luck_line(c, first, f"{name}'s calls do better on the picks", "they do worse"))
+        out += _luck_lines(
+            c,
+            first,
+            "picks less random draw",
+            f"{name}'s calls do better on the picks",
+            "they do worse",
+        )
     if sc.get("unscored"):
         out.append(f"Screen check 1 leaves out {sc['unscored']} stock-day(s) with no price.")
     if sc.get("biggest_held"):
         big = ", ".join(
-            f"{x['ticker']} {_pct(x['excess'])} (from {x['day']})" for x in sc["biggest_held"]
+            f"{x['ticker']} {_pct(x['excess'])} (screened {x['day']})" for x in sc["biggest_held"]
         )
-        out.append(f"Biggest moves among stocks Hold by screen, finished this week: {big}.")
+        out.append(f"Biggest moves against QQQ among stocks Hold by screen, newly scored: {big}.")
     return out
 
 

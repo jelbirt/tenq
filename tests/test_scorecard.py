@@ -14,9 +14,9 @@ from tenq.daily import main as daily_main
 from tenq.daily_email import render
 from tenq.prices import BENCHMARK, Bar, Prices
 from tenq.scorecard import (
-    _gap,
     _lead_lines,
-    _luck_line,
+    _luck_lines,
+    _verdict,
     calls_from,
     daily_records,
     day_totals,
@@ -1006,7 +1006,9 @@ def test_check_1_sets_the_size_of_moves_that_passed_against_those_that_did_not(
     assert mv["passed_mean"] == pytest.approx(0.10)
     assert mv["not_passed_mean"] == pytest.approx(0.02)
     assert mv["gap"] == pytest.approx(0.08)
-    assert mv["days"] == 1 and mv["luck"] is None  # one exit day: luck cannot be sized
+    assert mv["days"] == 1
+    # the luck range: any 2 of the 5 could have passed; 1 pair in 10 gives +8.00%, 1 gives -7.00%
+    assert round(mv["luck"], 4) in (0.07, 0.08)
 
 
 def test_check_2_sets_each_methods_calls_on_the_picks_against_the_draw(tmp_path: Path) -> None:
@@ -1026,6 +1028,7 @@ def test_a_watchlist_day_counts_in_neither_check(tmp_path: Path) -> None:
     assert sc["moves"] == {
         "passed": 0,
         "not_passed": 0,
+        "days": 0,
         "passed_mean": None,
         "not_passed_mean": None,
     }
@@ -1131,19 +1134,23 @@ def test_the_card_words_both_checks(tmp_path: Path) -> None:
     assert said == [
         "Screen check 1, do the stocks that pass move more: over 20 sessions, up or down "
         "against QQQ, those that passed moved 10.00% on average (2 stock-days), those that "
-        "did not 2.00% (3).",
-        "Gap +8.00%. Can be luck (too early: 1 of 13 weeks scored): too few days scored to "
-        "size luck yet.",
+        "did not 2.00% (3), comparing stocks screened the same day (1 day).",
+        "Gap (passed less not passed): +8.00%. Not settled (too early: 1 of 13 weeks "
+        "scored): 9 times in 10, luck alone gives a gap between -7.00% and +7.00%.",
+        "The gap is outside that range, but since the card is read every week a gap settles "
+        "only at 10.31%, and only once 13 weeks are scored.",
         "Screen check 2, are Jev's calls better on the screen's picks: +10.00% a call on the "
-        "picks (1), +2.00% on the random draw (1).",
-        "Gap +8.00%. Can be luck (too early: 1 of 13 weeks scored): 9 times in 10, luck alone "
-        "gives a gap between -13.79% and +13.79%.",
+        "picks (1), +2.00% on the random draw (1), comparing picks and draws from the same "
+        "day (1 day).",
+        "Gap (picks less random draw): +8.00%. Not settled (too early: 1 of 13 weeks "
+        "scored): 9 times in 10, luck alone gives a gap between -13.79% and +13.79%.",
         "Screen check 2, are Opus's calls better on the screen's picks: -10.00% a call on the "
-        "picks (1), -2.00% on the random draw (1).",
-        "Gap -8.00%. Can be luck (too early: 1 of 13 weeks scored): 9 times in 10, luck alone "
-        "gives a gap between -13.79% and +13.79%.",
-        "Biggest moves among stocks Hold by screen, finished this week: HELD -4.00% (from "
-        "2026-11-05), CALM +0.00% (from 2026-11-05).",
+        "picks (1), -2.00% on the random draw (1), comparing picks and draws from the same "
+        "day (1 day).",
+        "Gap (picks less random draw): -8.00%. Not settled (too early: 1 of 13 weeks "
+        "scored): 9 times in 10, luck alone gives a gap between -13.79% and +13.79%.",
+        "Biggest moves against QQQ among stocks Hold by screen, newly scored: HELD -4.00% "
+        "(screened 2026-11-05), CALM +0.00% (screened 2026-11-05).",
     ]
 
 
@@ -1158,48 +1165,115 @@ def test_a_stock_day_with_no_price_is_named_and_left_out_of_check_1(tmp_path: Pa
     assert "Screen check 1 leaves out 1 stock-day(s) with no price." in lines(card)
 
 
-def _sized_rows(n: int, seed: int = 7) -> list[dict[str, Any]]:
-    """Screened rows over n exit days: a picked and two held each day."""
-    rng = random.Random(seed)
-    out = []
-    days = _sessions(n)
-    for i, d in enumerate(days):
-        for group in ("picked", "held", "held"):
-            out.append(
-                {
-                    "day": (d - timedelta(days=28)).isoformat(),
-                    "status": "scored",
-                    "group": group,
-                    "exit_day": d.isoformat(),
-                    "excess": rng.gauss(0.0, 0.08 + 0.01 * (i % 5)),
-                }
-            )
-    return out
+def _run_rows(
+    sizes: dict[str, list[float]], passed: dict[str, list[bool | None]]
+) -> list[dict[str, Any]]:
+    """Check 1 rows: each stock's move day by day (every other one downward,
+    since only the size counts) and whether it passed the screen that day."""
+    days = [d.isoformat() for d in _sessions(len(next(iter(sizes.values()))))]
+    return [
+        {
+            "day": day,
+            "ticker": t,
+            "status": "scored",
+            "group": "picked" if ok else "held",
+            "excess": -x if i % 2 else x,
+        }
+        for t, xs in sizes.items()
+        for i, (day, x, ok) in enumerate(zip(days, xs, passed[t], strict=True))
+        if ok is not None
+    ]
 
 
-def test_check_1s_luck_range_allows_for_19_days_of_carry_over() -> None:
-    rows = _sized_rows(40)
+def test_check_1_sets_each_days_stocks_only_against_that_days() -> None:
+    # no skill: on the busy day every stock moves 10% and five of seven pass;
+    # on the quiet day every stock moves 4% and one passes. Pooled, the stocks
+    # that passed would look 3.5 points wilder, only because of the busy day.
+    sizes = {f"S{i}": [0.10, 0.04] for i in range(7)}
+    passed: dict[str, list[bool | None]] = {f"S{i}": [i < 5, i < 1] for i in range(7)}
+    mv = moved(_run_rows(sizes, passed), CFG)
+    assert (mv["passed"], mv["not_passed"], mv["days"]) == (6, 8, 2)
+    assert mv["passed_mean"] == pytest.approx(0.07)
+    assert mv["not_passed_mean"] == pytest.approx(0.07)
+    assert mv["gap"] == pytest.approx(0.0)
+
+
+def test_a_day_with_no_stock_on_one_side_sits_out_check_1() -> None:
+    sizes = {"A": [0.10, 0.30], "B": [0.02, 0.01]}
+    passed: dict[str, list[bool | None]] = {"A": [True, True], "B": [False, None]}
+    mv = moved(_run_rows(sizes, passed), CFG)
+    assert (mv["passed"], mv["not_passed"], mv["days"]) == (1, 1, 1)
+    assert mv["gap"] == pytest.approx(0.08)
+
+
+def test_check_1s_luck_hands_each_stocks_whole_run_of_results_to_another_stock() -> None:
+    # A passes every day and B never does, so a shuffle either keeps them or
+    # swaps them: the gap luck gives is this gap, one way round or the other.
+    # Shuffling single days instead would mix the days and widen the range.
+    sizes = {"A": [0.30, 0.02, 0.10, 0.06], "B": [0.01, 0.05, 0.02, 0.04]}
+    passed: dict[str, list[bool | None]] = {"A": [True] * 4, "B": [False] * 4}
+    mv = moved(_run_rows(sizes, passed), CFG)
+    assert mv["gap"] == pytest.approx(0.09)  # (0.29 - 0.03 + 0.08 + 0.02) / 4
+    assert mv["luck"] == pytest.approx(0.09) and mv["se"] == pytest.approx(0.09)
+
+
+def test_check_1s_luck_is_the_gap_9_shuffles_in_10_stay_within() -> None:
+    # one day, one stock passed: A or B passing gives +4.50%, C passing -9.00%,
+    # so 1 shuffle in 3 goes past 4.50% and the range reaches 9.00%
+    rows = _run_rows(
+        {"A": [0.10], "B": [0.10], "C": [0.01]}, {"A": [True], "B": [False], "C": [False]}
+    )
     mv = moved(rows, CFG)
-    yes = [r for r in rows if r["group"] == "picked"]
-    no = [r for r in rows if r["group"] == "held"]
-    by_day: dict[str, float] = {}
-    for r in yes:
-        by_day[r["exit_day"]] = by_day.get(r["exit_day"], 0.0) + abs(r["excess"]) / len(yes)
-    for r in no:
-        by_day[r["exit_day"]] = by_day.get(r["exit_day"], 0.0) - abs(r["excess"]) / len(no)
-    totals = [by_day[k] for k in sorted(by_day)]
-    se = standard_error(totals, 1, CFG.sessions - 1)
-    assert se is not None and se != standard_error(totals, 1, CFG.carry_days)
-    assert mv["days"] == 40 and mv["se"] == pytest.approx(se)
-    assert mv["luck"] == pytest.approx(t95(39) * se)
-    assert mv["gap"] == pytest.approx(sum(totals))
+    assert mv["gap"] == pytest.approx(0.045)
+    assert mv["luck"] == pytest.approx(0.09)
+    se = (2 / 3 * 0.045**2 + 1 / 3 * 0.09**2) ** 0.5
+    assert mv["se"] == pytest.approx(se, rel=0.05)
+    assert moved(rows, CFG) == mv  # seeded: the same card when made again
+
+
+def test_check_2_sets_each_days_picks_only_against_that_days_draw() -> None:
+    def row(day: date, t: str, group: str, excess: float) -> dict[str, Any]:
+        return {
+            "day": day.isoformat(),
+            "ticker": t,
+            "status": "scored",
+            "group": group,
+            "jev": "Buy",
+            "opus": None,
+            "excess": excess,
+            "exit_day": next_session(day).isoformat(),
+        }
+
+    one, two, three = _sessions(3)
+    rows = [
+        row(one, "P1", "picked", 0.10),
+        row(one, "P2", "picked", 0.06),
+        row(one, "R1", "random", 0.06),
+        row(two, "P3", "picked", -0.04),
+        row(two, "R2", "random", 0.00),
+        row(two, "R3", "random", 0.02),
+        row(two, "R4", "random", 0.04),
+        row(three, "P4", "picked", 0.50),  # no draw that day: it sits out
+    ]
+    c = on_picks(rows, CFG)
+    jev = c["jev"]
+    # day one +8.00% against +6.00%, day two -4.00% against +2.00%; pooled,
+    # the picks would make +4.00% against +3.00%
+    assert (jev["picks"], jev["draw"], jev["days"], jev["sat_out"]) == (3, 4, 2, 1)
+    assert jev["picks_mean"] == pytest.approx(0.02)
+    assert jev["draw_mean"] == pytest.approx(0.04)
+    assert jev["gap"] == pytest.approx(-0.02)
+    assert c["opus"]["days"] == 0 and c["opus"]["picks_mean"] is None
 
 
 def test_check_2s_luck_range_comes_from_the_daily_moves() -> None:
     rows: list[dict[str, Any]] = []
     for i, d in enumerate(_sessions(12)):
-        for t, group, call, size in (("A", "picked", "Buy", 1), ("B", "random", "Short", -1)):
-            moves = [0.01 * size * ((i + j) % 3 - 1) for j in range(3)]
+        for t, group, call, size, shift in (
+            ("A", "picked", "Buy", 1.0, 0),
+            ("B", "random", "Short", -0.5, 1),  # not a mirror of A: the gap varies by day
+        ):
+            moves = [0.01 * size * ((i + j + shift) % 3 - 1) for j in range(3)]
             rows.append(
                 {
                     "day": d.isoformat(),
@@ -1215,14 +1289,12 @@ def test_check_2s_luck_range_comes_from_the_daily_moves() -> None:
             )
     c = on_picks(rows, CFG)["jev"]
     w = CFG.weights
-    picks = [r for r in rows if r["group"] == "picked"]
-    draw = [r for r in rows if r["group"] == "random"]
-    parts = [(w[r["jev"]] / len(picks), r) for r in picks]
-    parts += [(-w[r["jev"]] / len(draw), r) for r in draw]
+    # one pick and one draw a day: each weighs 1 / 12 of the gap
+    parts = [((1 if r["group"] == "picked" else -1) * w[r["jev"]] / 12, r) for r in rows]
     totals = list(day_totals(parts).values())
     se = standard_error(totals, 1, CFG.carry_days)
-    assert se is not None
-    assert c["days"] == len(totals) == 14  # spread over the move days, not the call days
+    assert se  # a real spread, not zero
+    assert c["days"] == 12 and len(totals) == 14  # spread over the move days
     assert c["se"] == pytest.approx(se) and c["luck"] == pytest.approx(t95(13) * se)
     assert c["gap"] == pytest.approx(c["picks_mean"] - c["draw_mean"])
     assert on_picks(rows, CFG)["opus"]["gap"] == pytest.approx(0.0)  # Hold scores 0
@@ -1235,37 +1307,86 @@ def test_check_2s_luck_range_comes_from_the_daily_moves() -> None:
         (-0.05, 13, True),
         (0.05, 12, False),  # too early, however big
         (0.01, 13, False),  # under the settle bar
-        (0.00001, 13, False),  # rounds to 0.00%: no gap to settle
     ],
 )
 def test_a_screen_gap_settles_only_after_13_weeks_and_past_the_bar(
     gap: float, weeks: int, settled: bool
 ) -> None:
-    totals = [0.01, -0.01, 0.012, -0.008]  # a standard error near 0.01
-    se = standard_error(totals, 1, 2)
-    assert se is not None and CFG.settled_bar * se < 0.05 and CFG.settled_bar * se > 0.01
-    g = _gap(gap, totals, 2, weeks, CFG)
+    g = _verdict(gap, 0.01, 0.0165, weeks, CFG)
+    assert g["bar"] == pytest.approx(CFG.settled_bar * 0.01)  # 2.40%
     assert g["settled"] is settled
 
 
 def test_a_screen_gap_that_rounds_to_zero_never_settles_however_steady() -> None:
-    totals = [1e-7, -1e-7, 1.2e-7, -0.8e-7]  # a tiny standard error
-    se = standard_error(totals, 1, 2)
-    assert se is not None and CFG.settled_bar * se < 0.00004
-    assert _gap(0.00004, totals, 2, 13, CFG)["settled"] is False  # shows as +0.00%
-    assert _gap(0.0001, totals, 2, 13, CFG)["settled"] is True  # shows as +0.01%
+    assert _verdict(0.00004, 1e-7, 1.6e-7, 13, CFG)["settled"] is False  # shows as +0.00%
+    assert _verdict(0.0001, 1e-7, 1.6e-7, 13, CFG)["settled"] is True  # shows as +0.01%
+    assert _verdict(0.05, None, None, 13, CFG)["settled"] is False  # luck not sized
 
 
 def test_the_settled_line_says_which_way() -> None:
-    g = {"gap": 0.03, "weeks": 13, "luck": 0.01, "settled": True}
-    up = _luck_line(g, 13, "they move more", "they move less")
-    assert up == (
-        "Gap +3.00%. Settled: they move more (a gap this size is unlikely to be luck, "
-        "even counting every weekly check)."
+    g = {"gap": 0.03, "weeks": 13, "luck": 0.01, "bar": 0.015, "settled": True}
+    up = _luck_lines(g, 13, "a less b", "they move more", "they move less")
+    assert up == [
+        "Gap (a less b): +3.00%. Settled: they move more (a gap this size is unlikely to be "
+        "luck, even counting every weekly check)."
+    ]
+    down = _luck_lines(g | {"gap": -0.03}, 13, "a less b", "they move more", "they move less")
+    assert "Settled: they move less" in down[0]
+
+
+def test_a_gap_outside_the_luck_range_that_has_not_settled_says_why() -> None:
+    g = {"gap": 0.03, "weeks": 13, "luck": 0.01, "bar": 0.04, "settled": False}
+    head = (
+        "Gap (a less b): +3.00%. Not settled: 9 times in 10, luck alone gives a gap between "
+        "-1.00% and +1.00%."
     )
-    down = _luck_line(g | {"gap": -0.03}, 13, "they move more", "they move less")
-    assert "Settled: they move less" in down
-    late = _luck_line(g | {"settled": False}, 13, "x", "y")
-    assert late == (
-        "Gap +3.00%. Can be luck: 9 times in 10, luck alone gives a gap between -1.00% and +1.00%."
+    assert _luck_lines(g, 13, "a less b", "x", "y") == [
+        head,
+        "The gap is outside that range, but since the card is read every week a gap settles "
+        "only at 4.00%.",
+    ]
+    early = _luck_lines(g | {"weeks": 2}, 13, "a less b", "x", "y")
+    assert early[1].endswith("settles only at 4.00%, and only once 13 weeks are scored.")
+    clears = _luck_lines(g | {"weeks": 2, "bar": 0.02}, 13, "a less b", "x", "y")
+    assert clears[1] == (
+        "The gap already clears the settle bar of 2.00%; a gap can settle only once 13 weeks "
+        "are scored."
     )
+    assert _luck_lines(g | {"gap": 0.005}, 13, "a less b", "x", "y") == [
+        head.replace("+3.00%", "+0.50%")
+    ]
+
+
+def test_screened_stocks_waiting_for_a_price_are_counted_not_called_unfinished(
+    tmp_path: Path,
+) -> None:
+    _save(tmp_path, _screened())
+    qqq = {BENCHMARK: _many()[BENCHMARK]}  # QQQ's prices came, the stocks' did not
+
+    def fetch(tickers: list[str], period: str) -> Prices:
+        return Prices(qqq, ("price download failed (timeout)",))
+
+    card = _screen_card(tmp_path, fetch, save=False)
+    assert card["screen"]["waiting"] == 5 and card["screen"]["moves"]["days"] == 0
+    said = [t for t in lines(card) if t.startswith("Screen")]
+    assert said == ["Screen check 1: 5 stock-day(s) finished but are waiting for a price."]
+
+
+def test_a_screen_list_that_is_not_a_list_is_skipped() -> None:
+    record = _screened()
+    record["screen"]["held"] = 5
+    record["screen"]["filled"] = "DRAW"  # not read letter by letter
+    assert screen_groups(record) == {"PICK": "picked", "CUT": "over_cap"}
+
+
+def test_a_day_with_no_random_draw_sits_out_check_2_and_the_card_says_so(
+    tmp_path: Path,
+) -> None:
+    _save(tmp_path, _screened(filled=()))
+    card = _screen_card(tmp_path, save=False)
+    jev = card["screen"]["calls"]["jev"]
+    assert (jev["days"], jev["sat_out"], jev["picks_mean"]) == (0, 1, None)
+    assert (
+        "Screen check 2 for Jev's calls: no finished day had both picks and a random draw "
+        "yet. 1 day with no random draw sat out."
+    ) in lines(card)
