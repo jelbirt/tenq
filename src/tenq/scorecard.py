@@ -27,7 +27,11 @@ last month's winners and a shuffled version of each method's own calls would
 have scored.
 
 Only full daily records count: `YYYY-MM-DD.json`, kind daily, no check id,
-complete. Check runs and consistency runs are never scored.
+complete. Check runs and consistency runs are never scored. One kind of call
+is left out, and the card names each one: an Opus Short asked under a call
+prompt before call-v10, which defined Short as "will fall outright" rather
+than "will lag QQQ by a wide margin", so it was never a bet on the gap this
+scores.
 """
 
 from __future__ import annotations
@@ -67,6 +71,11 @@ MIN_RANKED = 5  # fewer stocks than this on a day: no rank correlation for that 
 # lean is lost mostly when it points against its call, a borderline stock that
 # belongs mid-ranking, so ranking the rest alone would flatter Opus
 LEAN_SHARE = 0.8
+# Opus's call prompts before this version defined Short as "will fall outright",
+# not "will lag QQQ by a wide margin" (PR #24), so those Shorts are left out. Only
+# Short changed meaning; Jev's rules kept the same settings (rules-v7 to v8).
+SHORT_LAGS_QQQ_FROM = 10
+CALL_PROMPT = re.compile(r"call-v(\d+)")
 TOP_LEVEL = {
     "version",
     "sessions",
@@ -225,15 +234,42 @@ def _call(raw: Any) -> str | None:
     return raw if raw in CALLS else None
 
 
+def short_meant_fall(record: dict[str, Any]) -> bool:
+    """Whether an Opus Short in this record was asked to mean "will fall
+    outright". A prompt version that cannot be read is taken as current."""
+    found = CALL_PROMPT.fullmatch(str((record.get("versions") or {}).get("call_prompt", "")))
+    return found is not None and int(found.group(1)) < SHORT_LAGS_QQQ_FROM
+
+
+def left_out(record: dict[str, Any]) -> list[dict[str, Any]]:
+    """The Opus calls in this record that are never scored, and why."""
+    if not short_meant_fall(record):
+        return []
+    return [
+        {
+            "day": record["day"],
+            "ticker": s["ticker"],
+            "method": "opus",
+            "call": "Short",
+            "prompt": str(record["versions"]["call_prompt"]),
+        }
+        for s in record.get("stocks") or []
+        if _call((s.get("opus") or {}).get("call")) == "Short"
+    ]
+
+
 def calls_from(record: dict[str, Any]) -> list[Made]:
     day = date.fromisoformat(record["day"])
     made_at = datetime.fromisoformat(record["made_at"])
     versions = {k: str(v) for k, v in (record.get("versions") or {}).items()}
+    old_short = short_meant_fall(record)
     out = []
     for s in record.get("stocks") or []:
         call = s.get("call") or {}
         opus = s.get("opus") or {}
         jev, own = _call(call.get("call")), _call(opus.get("call"))
+        if own == "Short" and old_short:
+            own = None  # see left_out: the card names it
         if jev is None and own is None:
             continue
         t = s["ticker"]
@@ -720,13 +756,16 @@ def scorecard(
     cfg = cfg or load_config()
     done, opened, new = update(runs, cfg, today, prices, save=save)
     scored = [r for r in done if r["status"] == "scored"]
+    records = daily_records(runs)
     week_records = [
         r
-        for r in daily_records(runs)
+        for r in records
         if date.fromisoformat(r["day"]).isocalendar()[:2] == today.isocalendar()[:2]
     ]
     versions: dict[str, int] = {}
     for r in scored:
+        if not r.get("opus"):
+            continue  # no Opus call scored on this stock-day
         v = (r.get("versions") or {}).get("call_prompt", "?")
         versions[v] = versions.get(v, 0) + 1
     return {
@@ -751,6 +790,7 @@ def scorecard(
         "disagreements": disagreements(scored, cfg),
         "baselines": baselines(scored),
         "call_prompts": versions,
+        "left_out": [x for r in records for x in left_out(r)],
         "this_week": _costs(week_records),
     }
 
@@ -867,6 +907,12 @@ def lines(card: dict[str, Any]) -> list[str]:
     for (ticker, reason), days in sorted(groups.items()):
         span = days[0] if len(days) == 1 else f"{min(days)} to {max(days)}"
         out.append(f"Not scored: {ticker}, {len(days)} call(s) from {span} ({reason}).")
+    for x in card.get("left_out") or []:
+        out.append(
+            f"Left out: Opus's {x['call']} on {x['ticker']} from {x['day']}, made when "
+            f"its prompt ({x['prompt']}) said a Short meant the stock would fall "
+            "outright, not lag QQQ."
+        )
     w = card["this_week"]
     out.append(
         f"This week's cost: Jev ${w['jev_usd']:.2f} over {w['days']} day(s); Opus "

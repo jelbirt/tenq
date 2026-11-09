@@ -19,6 +19,7 @@ from tenq.scorecard import (
     daily_records,
     day_totals,
     last_session_of_week,
+    left_out,
     lines,
     load_config,
     next_session,
@@ -792,3 +793,98 @@ def test_a_failed_screen_comes_before_even_the_weekly_scorecard(tmp_path: Path) 
     assert email.text.startswith("SCREEN FAILED: no QQQ prices.")
     assert email.text.index("SCREEN FAILED") < email.text.index("WEEKLY SCORECARD")
     assert email.html.index("#b00") < email.html.index("Weekly scorecard")
+
+
+# --- Opus Shorts from before call-v10 (PR #24: Short meant "will fall outright") ----
+
+
+def _old(*stocks: dict[str, Any], prompt: str = "call-v9") -> dict[str, Any]:
+    return _record("2026-11-05", MADE, *stocks, versions={"call_prompt": prompt})
+
+
+def test_an_old_opus_short_is_left_out_and_jevs_call_on_that_stock_kept() -> None:
+    stock = _stock("TEAM", jev="Sell", opus="Short")
+    stock["opus"]["lean"] = -0.5
+    record = _old(stock)
+    [made] = calls_from(record)
+    assert made.jev == "Sell" and made.jev_score == pytest.approx(0.3)
+    assert made.opus is None and made.opus_confidence is None and made.opus_lean is None
+    assert left_out(record) == [
+        {"day": "2026-11-05", "ticker": "TEAM", "method": "opus", "call": "Short",
+         "prompt": "call-v9"}
+    ]  # fmt: skip
+
+
+@pytest.mark.parametrize(
+    ("prompt", "opus", "kept"),
+    [
+        ("call-v9", "Short", False),
+        ("call-v1", "Short", False),
+        ("call-v9", "Sell", True),  # only Short changed meaning
+        ("call-v9", "Buy", True),
+        ("call-v9", "Hold", True),
+        ("call-v10", "Short", True),  # from call-v10 on, Short means "lag QQQ by a wide margin"
+        ("call-v12", "Short", True),
+        ("", "Short", True),  # a version that cannot be read is taken as current
+        ("call-v9b", "Short", True),
+    ],
+)
+def test_only_opus_shorts_from_before_call_v10_are_left_out(
+    prompt: str, opus: str, kept: bool
+) -> None:
+    record = _old(_stock(opus=opus), prompt=prompt)
+    [made] = calls_from(record)
+    assert made.jev == "Buy"
+    assert (made.opus == opus) is kept and (made.opus is None) is not kept
+    assert (left_out(record) == []) is kept
+
+
+def test_a_record_with_no_versions_keeps_its_shorts() -> None:
+    record = _record(versions=None)
+    [made] = calls_from(record)
+    assert made.opus == "Short" and left_out(record) == []
+
+
+def test_jevs_short_in_an_old_record_is_kept() -> None:
+    # Jev's rules kept the same settings from rules-v7 to v8: its Short never changed
+    record = _old(_stock("HUBS", jev="Short", opus="Sell"))
+    [made] = calls_from(record)
+    assert made.jev == "Short" and made.opus == "Sell" and left_out(record) == []
+
+
+def test_a_stock_whose_only_call_was_an_old_short_is_not_scored() -> None:
+    record = _old(_stock(jev=None, opus="Short"))
+    assert calls_from(record) == []
+    assert [x["ticker"] for x in left_out(record)] == ["CRWD"]
+
+
+def test_the_card_scores_without_the_old_short_and_names_it(tmp_path: Path) -> None:
+    bars = _prices() | {"DDOG": _prices()["CRWD"]}
+    _save(tmp_path, _old(_stock(jev="Sell", opus="Short"), _stock("DDOG", jev="Buy", opus="Sell")))
+    card = scorecard(tmp_path, EXIT, CFG, _fetcher(bars), save=False)
+    assert card["scored"] == 2
+    assert card["methods"]["jev"]["calls"] == 2
+    assert card["methods"]["opus"]["calls"] == 1
+    assert card["methods"]["opus"]["counts"] == {"Buy": 0, "Hold": 0, "Sell": 1, "Short": 0}
+    assert card["paired"]["pairs"] == 1  # CRWD drops out of Jev against Opus
+    assert card["call_prompts"] == {"call-v9": 1}  # only the Opus call that was scored
+    assert card["left_out"] == left_out(_old(_stock(jev="Sell", opus="Short")))
+    assert (
+        "Left out: Opus's Short on CRWD from 2026-11-05, made when its prompt (call-v9) "
+        "said a Short meant the stock would fall outright, not lag QQQ."
+    ) in lines(card)
+
+
+def test_a_card_with_nothing_left_out_says_nothing_about_it(tmp_path: Path) -> None:
+    card = _card(tmp_path, _record())
+    assert card["left_out"] == []
+    assert not any(t.startswith("Left out:") for t in lines(card))
+
+
+def test_the_old_short_line_rides_in_the_weekly_email_before_anything_scores(
+    tmp_path: Path,
+) -> None:
+    _save(tmp_path, _old(_stock("TEAM", jev="Sell", opus="Short")))
+    card = scorecard(tmp_path, ENTRY, CFG, _fetcher({}), save=False)
+    assert card["scored"] == 0 and card["open"] == 1
+    assert any(t.startswith("Left out: Opus's Short on TEAM from 2026-11-05") for t in lines(card))
