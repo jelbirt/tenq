@@ -117,6 +117,14 @@ never do. The scorecard never holds back the email: if it fails, the email says 
 out. `uv run python -m tenq.scorecard` prints the current card without saving anything: only
 the daily workflow writes the ledger.
 
+The card also checks the screen, on prices alone. Check 1: do the stocks that pass move more,
+up or down against QQQ over the 20 sessions, than those left out that day? Check 2: are Jev's
+and Opus's calls better on the screen's picks than on the random draw from the same day? Both
+compare stocks screened on the same day, then average over days, and both are judged on the
+newest screen version only: a new screen picks for new reasons, so its days are not pooled with
+an older one's, and the card says how many earlier stock-days it left out (in a week check 1
+could not be made, how many earlier calls check 2 left out).
+
 `uv run python -m tenq.replay` replays the baselines (always Hold, always Buy, last month's
 winners) over the last 3 years of prices ([replay.py](src/tenq/replay.py)), scored exactly as a
 live call is. Jev and Opus cannot be replayed, since the news they read is gone. This shows how
@@ -131,32 +139,35 @@ Before any model is asked, the daily run screens which stocks to send to Jev and
 (`uv run python -m tenq.screen` shows today's screen on its own)
 ([screen.py](src/tenq/screen.py), settings in [config/screen.yaml](config/screen.yaml)). It
 asks no model anything. From the watchlist plus the Nasdaq-100
-([config/universe.yaml](config/universe.yaml), 113 stocks) it passes a stock that filed an
-8-K, 6-K, 10-Q or 10-K since the previous session, or
-that moved against QQQ by more than 2.5 of its usual daily moves against QQQ over 1 or 5 days.
-A filing does not count when the company filed the same kind on 2 or more other days in the 10
-sessions before (a routine filer, such as weekly buyback notices); for an 8-K the kind includes
-its items, so a weekly filer's earnings 8-K (item 2.02) still counts. A big move still passes
-either. A foreign company's 6-K counts, and the facts pack reads it the way it reads an 8-K
-(its text and press-release exhibits; a 6-K lists no items, so a frequent 6-K filer's results
-6-K can still be routine). A 20-F or 40-F does not count yet: they are annual reports the facts
-pack does not read. The pack's numbers are in dollars: a figure a filing tags in another
-currency (euros, yuan) is left out rather than mixed in.
-At most 25 pass; filings come first, then the bigger move.
+([config/universe.yaml](config/universe.yaml), 113 stocks) it passes a stock whose next
+earnings release falls in the 5 sessions after the screened one, by Yahoo's earnings list
+([earnings.py](src/tenq/earnings.py), no key needed). A release already out when the screen runs
+does not count, such as one on the screened day itself; a run late enough to miss the next open
+counts the 5 sessions from the open after it instead. Why earnings: over Dec 2024 to Oct 2026, stocks
+with a release due in 5 sessions moved 1.77 points more against QQQ over the next 20 sessions
+than the day's other stocks, well past luck, while the screen's earlier reasons (a new filing,
+a big move against QQQ) picked stocks that moved no more than the rest.
+At most 25 pass; past that, the soonest release comes first, and stocks reporting on the same
+day are taken in an order drawn at random, the same on a rerun.
 When fewer than 20 pass, the rest of the 20 are drawn at random from the stocks left out, the
 same draw on a rerun, as a check on the screen itself. Everyone else would be "Hold by screen",
-except a stock that could not be fully checked (prices behind the session, a gap in its prices,
-too little history for both moves, or its EDGAR lookup failed): that is listed as not
-screened, and is never drawn for the fill. The run stops, and its JSON says `"ok": false`, if
-QQQ's bar for the session is missing, or more than 1 in 10 stocks' EDGAR lookups or prices
-fail.
+except a stock whose dates could not be read, or that has no upcoming date: that is listed as
+not screened, and is never drawn for the fill. A stock that reported in the last 7 days but has
+no next date yet is held: Yahoo posts the next date a few days after a release, and that release
+is months away. A stock still without a date after a week points to a fault in Yahoo's list, so it
+counts as not screened. The run stops, and its JSON says `"ok": false`,
+if QQQ's bar for the session is missing, or more than 1 in 10 stocks have no usable date.
 The daily run asks the models about the stocks that passed plus the random fill (20 to 25 a
-day) and keeps the whole screen in its record, so the "Hold by screen" stocks can be scored on
-prices later. If the screen fails or cannot be trusted (any of the stops above, or it screened
-a different session), the daily run asks the 20 watchlist stocks instead, and the email's
-subject starts "SCREEN FAILED" with a red box at the top saying why. A check on named stocks
-(`--ticker`) skips the screen and takes any stock in the universe. The manual `screen`
-workflow runs the screen alone, with the EDGAR check on.
+day) and keeps the whole screen in its record, every stock's next release date included, so
+the "Hold by screen" stocks can be scored on prices later. If the screen fails or cannot be
+trusted (any of the stops above, or it screened a different session), the daily run asks the 20
+watchlist stocks instead, and the email's subject starts "SCREEN FAILED" with a red box at the
+top saying why. A check on named stocks (`--ticker`) skips the screen and takes any stock in
+the universe. The manual `screen` workflow runs the screen alone.
+
+The facts pack reads a foreign company's 6-K the way it reads an 8-K (its text and
+press-release exhibits). A 20-F or 40-F is not read yet. The pack's numbers are in dollars: a
+figure a filing tags in another currency (euros, yuan) is left out rather than mixed in.
 
 ## Guardrails
 

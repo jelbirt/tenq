@@ -23,7 +23,7 @@ concurrency:
 jobs:
   daily:
     runs-on: ubuntu-latest
-    timeout-minutes: 180 # the screen (~10 min), then 20 to 25 stocks: Jev and two claude runs each
+    timeout-minutes: 180 # the screen (~1 min), then 20 to 25 stocks: Jev and two claude runs each
     # a scheduled run has no inputs: tickers is empty (the screen's picks)
     # and email is not "false", so it emails
     steps:

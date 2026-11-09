@@ -980,6 +980,15 @@ def _screen(day: date, chosen: list[str], filled: list[str] = (), **extra: Any) 
     return screener
 
 
+def test_the_email_counts_stocks_held_because_they_just_reported(tmp_path: Path) -> None:
+    outbox = Outbox()
+    reported = {"PEP": "2026-11-06", "MSFT": "2026-11-05"}  # MSFT drawn, so not held
+    screener = _screen(DAY, ["TEAM"], ["MSFT"], just_reported=reported)
+    assert _run(tmp_path, screener=screener, mailer=outbox) == 0
+    [mail] = outbox.sent
+    assert "; 2 Hold by screen (1 just reported, no next date yet)." in mail.text
+
+
 def test_a_good_screen_decides_which_stocks_the_models_judge(tmp_path: Path) -> None:
     outbox = Outbox()
     screener = _screen(DAY, ["TEAM", "AAPL"], ["MSFT"])
@@ -996,6 +1005,7 @@ def test_a_good_screen_decides_which_stocks_the_models_judge(tmp_path: Path) -> 
     assert "  TEAM: TEAM moved" in mail.text
     assert "Random fill: MSFT" in mail.text
     assert "SCREEN FAILED" not in mail.text and "#b00" not in mail.html
+    assert "just reported" not in mail.text
 
 
 @pytest.mark.parametrize(

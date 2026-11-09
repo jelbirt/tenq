@@ -1,7 +1,7 @@
 name: screen
-# Manual only (L6, before any shadow trial): print which stocks the daily
-# screen would pass today, with the EDGAR filing check on. Code only: no
-# model is asked anything, nothing is emailed and nothing is committed.
+# Manual only: print which stocks the daily screen would pass today, from
+# Yahoo's earnings dates. Code only: no model is asked anything, nothing is
+# emailed and nothing is committed.
 on:
   workflow_dispatch:
 
@@ -11,7 +11,7 @@ permissions:
 jobs:
   screen:
     runs-on: ubuntu-latest
-    timeout-minutes: 20  # 113 EDGAR lookups at edgartools' 9 requests a second
+    timeout-minutes: 10  # 113 Yahoo lookups, about a minute
     steps:
       - uses: actions/checkout@v4
         with: {persist-credentials: false}
@@ -20,7 +20,6 @@ jobs:
       - run: uv sync --locked
       - name: screen
         env:
-          EDGAR_IDENTITY: ${{ secrets.EDGAR_IDENTITY }}
           PYTHONUNBUFFERED: "1"
         run: uv run --locked python -m tenq.screen --json screen.json
       - name: keep the result

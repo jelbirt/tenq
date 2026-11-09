@@ -1,138 +1,120 @@
-"""The daily screen: which stocks go to Jev and Opus, decided by code alone."""
+"""The daily screen (screen-v7): a stock passes when its earnings are due soon."""
 
 from __future__ import annotations
 
-import itertools
 import json
-import math
-import random
-import statistics
+from collections.abc import Sequence
 from dataclasses import replace
-from datetime import UTC, date, datetime, timedelta
+from datetime import UTC, date, datetime, time, timedelta
 from pathlib import Path
+from typing import Any
 
+import pandas as pd
 import pytest
+from conftest import NoNetwork
 
 from tenq.config import load_watchlist
-from tenq.filings import FilingMeta
-from tenq.prices import BENCHMARK, Bar, Prices
+from tenq.earnings import RETRY_PAUSE_S, ROWS, YahooEarnings, lookup
+from tenq.prices import BENCHMARK, MARKET_TZ, Bar, Prices
 from tenq.screen import (
-    kind_of,
+    just_reported,
     lines,
     load_config,
     load_universe,
     main,
-    moves,
-    new_filings,
+    next_release,
     picked,
-    previous_session,
     random_fill,
+    refusals,
     run_screen,
     screen,
     universe_names,
+    window,
 )
 
-DAY = date(2026, 11, 6)  # a Friday session; the previous session is 2026-11-05
+DAY = date(2026, 11, 6)  # a Friday session: the 5 sessions after it run 11-09 to 11-13
 CFG = load_config()
 # Any edit to screen.yaml, even a comment, needs a new version; pin each one.
-KNOWN_SCREENS = {"screen-v6": "0b529aacebbb522a78f00cffcb1911d79f86600802788f9499d0b7623eb6ab5d"}
+KNOWN_SCREENS = {
+    "screen-v6": "0b529aacebbb522a78f00cffcb1911d79f86600802788f9499d0b7623eb6ab5d",
+    "screen-v7": "05c2566b6a4e48d2a9a83c0318a774880cc7f6d68ab11f9a3174eea0de056a9a",
+}
+LATER = date(2026, 12, 15)  # a release well past the window
+LATER_RELEASE = datetime(2026, 12, 15, 16, tzinfo=MARKET_TZ)
 
 
-def _days(n: int, last: date = DAY) -> list[date]:
-    out: list[date] = []
-    d = last
-    while len(out) < n:
-        if d.weekday() < 5:
-            out.append(d)
-        d -= timedelta(days=1)
-    return out[::-1]
+def _at(d: date, hour: int = 16) -> datetime:
+    return datetime.combine(d, time(hour), tzinfo=MARKET_TZ)
 
 
-def _bars(jump: float = 0.0, n: int = 40) -> tuple[Bar, ...]:
-    """Closes that swing 1% up and down each day, then move `jump` on the last."""
-    days = _days(n)
-    closes = [100.0 if i % 2 == 0 else 101.0 for i in range(n - 1)]
-    closes.append(closes[-1] * (1 + jump))
-    return tuple(Bar(d, c, 1e6) for d, c in zip(days, closes, strict=True))
+RUN = datetime(2026, 11, 6, 22, 30, tzinfo=UTC)  # the evening run: 17:30 in New York
 
 
-def _flat(n: int = 40) -> tuple[Bar, ...]:
-    return tuple(Bar(d, 500.0, 1e6) for d in _days(n))
+class Dates:
+    """A stand-in for Yahoo's earnings list."""
 
-
-def _prices(**jumps: float) -> Prices:
-    bars = {BENCHMARK: _flat()} | {t: _bars(j) for t, j in jumps.items()}
-    return Prices(bars, ())
-
-
-def _meta(ticker: str, form: str, filed: date, items: str = "") -> FilingMeta:
-    return FilingMeta(
-        ticker=ticker,
-        cik=1,
-        company=ticker,
-        form=form,
-        accession=f"0000000001-26-{abs(hash((ticker, form, filed))) % 999999:06d}",
-        filed=filed.isoformat(),
-        period=filed.isoformat(),
-        url="https://www.sec.gov/",
-        items=items,
-    )
-
-
-class Filings:
     def __init__(
-        self, listed: dict[str, list[FilingMeta]], broken: frozenset[str] = frozenset()
+        self,
+        table: dict[str, list[datetime]] | None = None,
+        *,
+        broken: frozenset[str] = frozenset(),
+        flaky: frozenset[str] = frozenset(),
     ) -> None:
-        self.listed, self.broken, self.asked = listed, broken, 0
+        self.table = table or {}
+        self.broken, self.flaky = broken, set(flaky)
+        self.asked: list[str] = []
 
-    def list_recent(self, ticker: str, forms: tuple[str, ...], limit: int) -> list[FilingMeta]:
-        self.asked += 1
-        self.forms = forms  # the settings decide which forms are listed
+    def dates(self, ticker: str) -> list[datetime]:
+        self.asked.append(ticker)
         if ticker in self.broken:
-            raise ConnectionError("EDGAR down")
-        return self.listed.get(ticker, [])[:limit]  # the screen must drop other forms itself
+            raise ConnectionError("Yahoo down")
+        if ticker in self.flaky:
+            self.flaky.discard(ticker)  # fails once, then answers
+            raise ConnectionError("throttled")
+        return self.table.get(ticker, [_at(LATER)])
+
+
+def _no_sleep(seconds: float) -> None:
+    pass
+
+
+def _screen(
+    table: dict[str, list[datetime]],
+    tickers: list[str] | None = None,
+    cfg: Any = CFG,
+    **kw: Any,
+) -> dict[str, Any]:
+    now = kw.pop("now", RUN)
+    return screen(tickers or list(table), DAY, cfg, Dates(table, **kw), now=now, sleep=_no_sleep)
+
+
+def _tickers(rows: list[dict[str, Any]]) -> list[str]:
+    return [r["ticker"] for r in rows]
 
 
 # settings
 
 
-def test_a_6k_counts_but_an_annual_foreign_form_does_not_yet() -> None:
-    """screen-v6: the facts pack reads a 6-K like an 8-K, so it counts; it does not
-    read a 20-F or 40-F yet, so a stock picked for one would reach the models
-    without the filing it was picked for."""
-    six_k = Filings({"X": [_meta("X", "6-K", DAY)]})
-    assert screen(["X"], DAY, DAY, CFG, _prices(X=0.0), six_k)["chosen"]
-    assert six_k.forms == ("8-K", "6-K", "10-Q", "10-K")
-    annual = Filings({"X": [_meta("X", form, DAY) for form in ("20-F", "40-F")]})
-    assert not screen(["X"], DAY, DAY, CFG, _prices(X=0.0), annual)["chosen"]
-    annual_on = replace(CFG, forms=(*CFG.forms, "20-F", "40-F"))
-    assert screen(["X"], DAY, DAY, annual_on, _prices(X=0.0), annual)["chosen"]
-    # even if a listing brings a 20-F back, the screen drops it itself
-    assert new_filings([_meta("X", "20-F", DAY)], CFG, SINCE, LOOK_BACK, DAY) == ([], [])
-
-
 def test_the_settings_load() -> None:
-    assert CFG.version == "screen-v6"
-    assert (CFG.move_sigma, CFG.cap, CFG.fill_to) == (2.5, 25, 20)
-    assert (CFG.routine_sessions, CFG.routine_filings) == (10, 2)
-    assert CFG.forms == ("8-K", "6-K", "10-Q", "10-K")
+    assert CFG.version == "screen-v7"
+    assert (CFG.earnings_sessions, CFG.cap, CFG.fill_to) == (5, 25, 20)
     assert CFG.sha256 == KNOWN_SCREENS[CFG.version], "screen.yaml changed: bump the version"
 
 
 @pytest.mark.parametrize(
     ("edit", "says"),
     [
-        (lambda t: t.replace("cap: 25", "cap: 25\nrecent_sessions: 20"), "expected exactly"),
+        (lambda t: t.replace("cap: 25", "cap: 25\nmove_sigma: 2.5"), "expected exactly"),
+        (lambda t: t.replace("earnings_sessions: 5\n", ""), "expected exactly"),
+        (lambda t: t.replace("earnings_sessions: 5", "earnings_sessions: 0"), "earnings_sessions"),
+        (lambda t: t.replace("earnings_sessions: 5", "earnings_sessions: 21"), "earnings_sessions"),
+        (lambda t: t.replace("earnings_sessions: 5", "earnings_sessions: true"), "earnings_"),
+        (lambda t: t.replace("earnings_sessions: 5", "earnings_sessions: 2.5"), "earnings_"),
         (lambda t: t.replace("fill_to: 20", "fill_to: 30"), "fill_to"),
-        (lambda t: t.replace("  filings: 2", "  filings: 0"), "routine.filings"),
-        (lambda t: t.replace("  sessions: 10", "  sessions: 61"), "routine.sessions"),
-        (lambda t: t.replace("  filings: 2", "  filings: 2\n  forms: x"), "routine"),
-        (lambda t: t.replace("  filings: 2\n", ""), "routine"),
-        (lambda t: t.replace("  sessions: 10", "  sessions: true"), "routine.sessions"),
         (lambda t: t.replace("fill_to: 20", "fill_to: -1"), "fill_to"),
         (lambda t: t.replace("cap: 25", "cap: true"), "cap"),
-        (lambda t: t.replace("move_sigma: 2.5", "move_sigma: 0"), "move_sigma"),
-        (lambda t: t.replace("forms: [8-K, 6-K, 10-Q, 10-K]", "forms: []"), "forms"),
+        (lambda t: t.replace("cap: 25", "cap: 0"), "cap"),
+        (lambda t: t.replace("version: screen-v7", "version: ''"), "version"),
     ],
 )
 def test_bad_settings_are_refused(tmp_path: Path, edit: object, says: str) -> None:
@@ -143,14 +125,14 @@ def test_bad_settings_are_refused(tmp_path: Path, edit: object, says: str) -> No
         load_config(path)
 
 
-def test_the_routine_settings_are_read_from_the_file(tmp_path: Path) -> None:
+def test_the_window_is_read_from_the_file(tmp_path: Path) -> None:
     text = (Path(__file__).parents[1] / "config" / "screen.yaml").read_text()
     path = tmp_path / "screen.yaml"
-    path.write_text(
-        text.replace("  sessions: 10", "  sessions: 7").replace("  filings: 2", "  filings: 3")
-    )
+    path.write_text(text.replace("earnings_sessions: 5", "earnings_sessions: 3"))
     cfg = load_config(path)
-    assert (cfg.routine_sessions, cfg.routine_filings) == (7, 3)
+    assert cfg.earnings_sessions == 3
+    assert _screen({"WED": [_at(date(2026, 11, 11))], "THU": [_at(date(2026, 11, 12))]},
+                   cfg=replace(cfg, fill_to=0))["held"] == ["THU"]  # fmt: skip
 
 
 def test_the_universe_is_the_watchlist_first_then_the_nasdaq_100_once_each() -> None:
@@ -161,274 +143,223 @@ def test_the_universe_is_the_watchlist_first_then_the_nasdaq_100_once_each() -> 
     assert "GOOGL" in tickers and "GOOG" not in tickers
 
 
-@pytest.mark.parametrize(
-    ("day", "before"),
-    [
-        (date(2026, 11, 6), date(2026, 11, 5)),
-        (date(2026, 11, 9), date(2026, 11, 6)),  # Monday: back over the weekend
-        (date(2026, 11, 27), date(2026, 11, 25)),  # after Thanksgiving
-    ],
-)
-def test_the_previous_session_skips_weekends_and_holidays(day: date, before: date) -> None:
-    assert previous_session(day) == before
-
-
-# the big-move reason
-
-
-def test_a_big_move_is_measured_in_the_stocks_own_usual_moves() -> None:
-    prices = _prices(BIG=0.08, DOWN=-0.08, QUIET=0.002)
-    z, window, note = moves("BIG", prices, DAY)
-    assert z is not None and z >= CFG.move_sigma and note is None
-    assert window in (1, 5)
-    z_down, _, _ = moves("DOWN", prices, DAY)
-    assert z_down is not None and z_down <= -CFG.move_sigma
-    z_quiet, _, _ = moves("QUIET", prices, DAY)
-    assert z_quiet is not None and abs(z_quiet) < CFG.move_sigma
-
-
-def test_a_stock_without_prices_is_noted_not_dropped_silently() -> None:
-    assert moves("NONE", _prices(), DAY) == (None, None, "no prices")
-
-
-def test_prices_that_end_before_the_session_are_not_used() -> None:
-    """A lagging feed would otherwise pass a stock today on yesterday's move."""
-    yesterday = date(2026, 11, 5)
-    late = tuple(
-        Bar(d, b.close, 1e6) for d, b in zip(_days(40, yesterday), _bars(0.08), strict=True)
-    )
-    prices = Prices({BENCHMARK: _flat(), "LATE": late}, ())
-    assert moves("LATE", prices, DAY) == (None, None, "prices end 2026-11-05, not 2026-11-06")
-    out = screen(["LATE"], DAY, DAY, CFG, prices, None)
-    assert out["chosen"] == [] and out["unscreened"] == ["LATE"]
-
-
-def test_a_steady_five_session_move_is_scaled_by_root_five() -> None:
-    days = _days(40)
-    closes = [100.0 if i % 2 == 0 else 101.0 for i in range(35)]
-    for _ in range(5):
-        closes.append(closes[-1] * 1.025)
-    bars = tuple(Bar(d, c, 1e6) for d, c in zip(days, closes, strict=True))
-    prices = Prices({BENCHMARK: _flat(), "STEADY": bars}, ())
-    z, window, _ = moves("STEADY", prices, DAY)
-    # QQQ is flat, so the daily moves against it are the stock's own; the
-    # yardstick is the 20 sessions before the 5 tested, all the 1% swing.
-    before = closes[-26:-5]
-    usual = statistics.stdev(b / a - 1 for a, b in itertools.pairwise(before))
-    assert window == 5
-    assert z == pytest.approx((closes[-1] / closes[-6] - 1) / (usual * math.sqrt(5)))
-    assert z is not None and z >= CFG.move_sigma
-
-
-def _tracking(gap: float, n: int = 40) -> Prices:
-    """QQQ swings 2% a day; TRACK follows it with a 0.3% wobble of its own,
-    then on the last day moves `gap` more than QQQ."""
-    days = _days(n)
-    q, s = [500.0], [100.0]
-    for i in range(1, n):
-        r = 0.02 if i % 2 else -0.02
-        own = (0.003 if i % 3 else -0.003) + (gap if i == n - 1 else 0.0)
-        q.append(q[-1] * (1 + r))
-        s.append(s[-1] * (1 + r + own))
-    return Prices(
-        {
-            BENCHMARK: tuple(Bar(d, c, 1e6) for d, c in zip(days, q, strict=True)),
-            "TRACK": tuple(Bar(d, c, 1e6) for d, c in zip(days, s, strict=True)),
-        },
-        (),
-    )
-
-
-def test_the_yardstick_is_the_usual_move_against_qqq_not_the_stocks_own_swings() -> None:
-    """A stock that moves with QQQ: a 2% gap is small next to its own 2% swings
-    but large next to its usual 0.3% gap from QQQ, so it passes."""
-    z, _, _ = moves("TRACK", _tracking(0.02), DAY)
-    assert z is not None and z >= CFG.move_sigma
-    z_none, _, _ = moves("TRACK", _tracking(0.0), DAY)
-    assert z_none is not None and abs(z_none) < CFG.move_sigma
-
-
-def test_the_move_tested_is_not_part_of_its_own_yardstick() -> None:
-    """With the move inside its yardstick, a 1-session z can never pass about
-    4.25 however large the move; outside it, a huge move reads as huge."""
-    z, window, _ = moves("BIG", _prices(BIG=0.5), DAY)
-    assert window == 1 and z is not None and z > 20
-
-
-def _random_walk(n: int, seed: int) -> tuple[list[float], list[float]]:
-    """Irregular closes for a stock and QQQ, with the stock's own volatility
-    ramping up, so a yardstick one return short or one session off differs."""
-    rng = random.Random(seed)
-    s, q = [100.0], [500.0]
-    for i in range(1, n):
-        m = rng.gauss(0, 0.01)
-        q.append(q[-1] * (1 + m))
-        s.append(s[-1] * (1 + m + rng.gauss(0, 0.002 + 0.0004 * i)))
-    return s, q
-
-
-def _expected_z(s: list[float], q: list[float], n: int) -> float:
-    """The rule written out from return indices: the move over the last n
-    sessions, over the 20 daily gaps from QQQ that end where the move begins."""
-    last = len(s) - 1
-    x = (s[last] / s[last - n] - 1) - (q[last] / q[last - n] - 1)
-    gaps = [
-        (s[t] / s[t - 1] - 1) - (q[t] / q[t - 1] - 1) for t in range(last - n - 19, last - n + 1)
-    ]
-    assert len(gaps) == 20
-    return x / (statistics.stdev(gaps) * math.sqrt(n))
-
-
-@pytest.mark.parametrize(("length", "seed"), [(26, 1), (27, 2), (40, 3), (60, 4)])
-def test_the_move_matches_the_rule_written_out_by_hand(length: int, seed: int) -> None:
-    s, q = _random_walk(length, seed)
-    days = _days(length)
-    prices = Prices(
-        {
-            BENCHMARK: tuple(Bar(d, c, 1e6) for d, c in zip(days, q, strict=True)),
-            "W": tuple(Bar(d, c, 1e6) for d, c in zip(days, s, strict=True)),
-        },
-        (),
-    )
-    z, window, note = moves("W", prices, DAY)
-    by_window = {n: _expected_z(s, q, n) for n in (1, 5)}
-    best = max(by_window, key=lambda n: abs(by_window[n]))
-    assert note is None and window == best
-    assert z == pytest.approx(by_window[best])
+# the window and the release date
 
 
 @pytest.mark.parametrize(
-    ("length", "window", "note"),
+    ("day", "now", "sessions", "first", "last"),
     [
-        (21, None, "too little price history for the 1-session move"),
-        (22, 1, "too little price history for the 5-session move"),
-        (25, 1, "too little price history for the 5-session move"),
-        (26, None, None),
+        (DAY, RUN, 5, date(2026, 11, 9), date(2026, 11, 13)),  # over the weekend
+        (DAY, RUN, 1, date(2026, 11, 9), date(2026, 11, 9)),
+        (
+            date(2026, 11, 20),
+            datetime(2026, 11, 20, 22, 30, tzinfo=UTC),
+            5,
+            date(2026, 11, 23),
+            date(2026, 11, 30),
+        ),  # Thanksgiving
+        (DAY, _at(date(2026, 11, 9), hour=7), 5, date(2026, 11, 9), date(2026, 11, 13)),
+        # never before the session after the screened one, however early the clock
+        (DAY, _at(DAY, hour=7), 5, date(2026, 11, 9), date(2026, 11, 13)),
+        # late enough to miss Monday's open: the calls enter Tuesday
+        (DAY, _at(date(2026, 11, 9), hour=10), 5, date(2026, 11, 10), date(2026, 11, 16)),
     ],
 )
-def test_short_histories_say_which_move_could_not_be_tested(
-    length: int, window: int | None, note: str | None
+def test_the_window_is_the_sessions_from_the_first_open_after_the_run(
+    day: date, now: datetime, sessions: int, first: date, last: date
 ) -> None:
-    prices = Prices({BENCHMARK: _flat(length), "NEW": _bars(0.0, length)}, ())
-    z, got_window, got_note = moves("NEW", prices, DAY)
-    if length == 21:
-        assert z is None and got_note == (
-            "too little price history for the 1-session move; "
-            "too little price history for the 5-session move"
-        )
-    else:
-        assert got_note == note
-        if window is not None:
-            assert got_window == window
-    out = screen(["NEW"], DAY, DAY, CFG, prices, None)
-    # Only a stock with both moves tested is a screen decision.
-    assert (out["unscreened"] == ["NEW"]) is (length < 26)
+    assert window(day, now, sessions) == (first, last)
 
 
-def test_a_missing_bar_is_not_read_as_a_one_session_move() -> None:
-    """Without the day before the session, the '1-session' move would span two
-    sessions but be measured against a one-session yardstick."""
-    bars = _bars(0.03)
-    holed = bars[:-2] + bars[-1:]
-    prices = Prices({BENCHMARK: _flat(), "HOLE": holed}, ())
-    z, window, note = moves("HOLE", prices, DAY)
-    assert z is None and window is None
-    assert note == "gap in prices for the 1-session move; gap in prices for the 5-session move"
-    old = bars[:-30] + bars[-29:]  # a hole long before the windows tested
-    z, window, note = moves("OLD", Prices({BENCHMARK: _flat(), "OLD": old}, ()), DAY)
-    assert note is None and window in (1, 5)
+def test_the_next_release_is_the_first_still_to_come_at_the_run() -> None:
+    past, today, soon = _at(date(2026, 11, 5)), _at(DAY), _at(date(2026, 11, 10))
+    assert next_release([soon, past, today], RUN) == date(2026, 11, 10)
+    assert next_release([past, today], RUN) is None
+    assert next_release([], RUN) is None
+    assert next_release([_at(DAY, hour=18)], RUN) == DAY  # after the run: still to come
 
 
-def test_a_stock_with_no_usual_move_says_so() -> None:
-    prices = Prices({BENCHMARK: _flat(), "STILL": _flat()}, ())
-    assert moves("STILL", prices, DAY) == (
-        None,
-        None,
-        "no usual move for the 1-session move; no usual move for the 5-session move",
+def test_a_release_is_dated_in_new_york_not_utc() -> None:
+    evening = datetime(2026, 11, 14, 3, tzinfo=UTC)  # 22:00 on 11-13 in New York
+    assert next_release([evening], RUN) == date(2026, 11, 13)
+    morning = datetime(2026, 11, 9, 12, tzinfo=UTC)  # 07:00 on 11-09 in New York
+    assert next_release([morning], RUN) == date(2026, 11, 9)
+    out = _screen({"LATE": [evening]}, cfg=replace(CFG, fill_to=0))
+    assert _tickers(out["chosen"]) == ["LATE"]  # due 11-13 in New York, the 5th session
+
+
+def test_a_late_run_counts_from_the_open_it_can_still_make() -> None:
+    late = _at(date(2026, 11, 9), hour=10)  # Monday 10:00: the 11-06 session, entry Tuesday
+    out = _screen(
+        {
+            "OUT": [_at(date(2026, 11, 9), hour=7), LATER_RELEASE],  # out before the run
+            "NOON": [_at(date(2026, 11, 9), hour=12)],  # to come, but before Tuesday's open
+            "MONDAY": [_at(date(2026, 11, 9))],  # 16:00 Monday: before Tuesday's open too
+            "SIXTH": [_at(date(2026, 11, 16))],  # 5th session from Tuesday
+            "SEVENTH": [_at(date(2026, 11, 17))],
+        },
+        cfg=replace(CFG, fill_to=0),
+        now=late,
     )
+    assert _tickers(out["chosen"]) == ["SIXTH"]
+    assert out["held"] == ["OUT", "NOON", "MONDAY", "SEVENTH"]
+    assert (out["due_from"], out["due_through"]) == ("2026-11-10", "2026-11-16")
 
 
 # who passes
 
 
-def test_a_new_filing_or_a_big_move_passes_and_nothing_else_does() -> None:
-    filings = Filings(
+def test_a_release_due_in_the_window_passes_and_nothing_else_does() -> None:
+    out = _screen(
         {
-            "FILED": [_meta("FILED", "8-K", DAY)],
-            "OLD": [_meta("OLD", "10-Q", date(2026, 11, 5))],  # on the previous session: old
-            "OTHER": [_meta("OTHER", "S-1", DAY)],  # not a form the screen counts
-        }
+            "SOON": [_at(date(2026, 11, 13))],  # the 5th session after
+            "LATER": [_at(date(2026, 11, 16))],  # the 6th
+            "TODAY": [_at(DAY), _at(date(2027, 2, 5))],  # out before the calls are made
+        },
+        cfg=replace(CFG, fill_to=0),
     )
-    prices = _prices(FILED=0.0, OLD=0.0, OTHER=0.0, BIG=0.08, QUIET=0.002)
-    cfg = replace(CFG, fill_to=0)
-    out = screen(["FILED", "OLD", "OTHER", "BIG", "QUIET"], DAY, DAY, cfg, prices, filings)
-    assert [r["ticker"] for r in out["chosen"]] == ["FILED", "BIG"]
-    assert out["chosen"][0]["reasons"] == [f"8-K filed {DAY.isoformat()}"]
-    assert out["chosen"][1]["reasons"][0].startswith("moved ")
-    assert out["held"] == ["OLD", "OTHER", "QUIET"]
-    assert out["filled"] == [] and out["over_cap"] == []
-    assert out["filings_checked"] is True and out["since"] == "2026-11-05"
+    assert out["chosen"] == [
+        {"ticker": "SOON", "earnings": "2026-11-13", "due": True, "unchecked": [],
+         "reasons": ["earnings due 2026-11-13"]},
+    ]  # fmt: skip
+    assert out["held"] == ["LATER", "TODAY"]
+    assert out["next_earnings"] == {"SOON": "2026-11-13", "LATER": "2026-11-16",
+                                    "TODAY": "2027-02-05"}  # fmt: skip
+    assert (out["due_from"], out["due_through"]) == ("2026-11-09", "2026-11-13")
 
 
-def test_a_big_down_move_passes_too() -> None:
-    out = screen(["DOWN"], DAY, DAY, replace(CFG, fill_to=0), _prices(DOWN=-0.08), None)
-    assert [r["ticker"] for r in out["chosen"]] == ["DOWN"]
-    assert "below QQQ" in out["chosen"][0]["reasons"][0]
+def test_a_release_after_the_evening_run_on_the_screened_day_is_not_due() -> None:
+    out = _screen({"EVE": [_at(DAY, hour=18)]}, cfg=replace(CFG, fill_to=0))  # run at 17:30
+    assert out["chosen"] == [] and out["held"] == ["EVE"]  # its jump comes before the entry
+    assert out["next_earnings"] == {"EVE": "2026-11-06"}
 
 
-def test_on_monday_a_weekend_filing_counts_and_fridays_does_not() -> None:
-    monday = date(2026, 11, 9)
-    days = _days(40, monday)
-    swing = [100.0 if i % 2 == 0 else 101.0 for i in range(40)]
-    bars = {
-        t: tuple(Bar(d, c, 1e6) for d, c in zip(days, swing, strict=True)) for t in ("SAT", "FRI")
-    }
-    bars[BENCHMARK] = tuple(Bar(d, 500.0, 1e6) for d in days)
-    filings = Filings(
-        {"SAT": [_meta("SAT", "8-K", date(2026, 11, 7))], "FRI": [_meta("FRI", "8-K", DAY)]}
-    )
-    out = screen(["SAT", "FRI"], monday, monday, replace(CFG, fill_to=0), Prices(bars, ()), filings)
-    assert [r["ticker"] for r in out["chosen"]] == ["SAT"]
-    assert out["since"] == "2026-11-06" and out["held"] == ["FRI"]
+def test_a_release_before_the_next_open_passes() -> None:
+    out = _screen({"EARLY": [_at(date(2026, 11, 9), hour=7)]}, cfg=replace(CFG, fill_to=0))
+    assert _tickers(out["chosen"]) == ["EARLY"]
 
 
-def test_past_the_cap_filings_come_first_then_the_bigger_move() -> None:
-    filings = Filings({"FILED": [_meta("FILED", "10-K", DAY)]})
-    prices = _prices(SMALL=0.06, HUGE=0.15, FILED=0.0)
-    cfg = replace(CFG, cap=2, fill_to=0)
-    out = screen(["SMALL", "HUGE", "FILED"], DAY, DAY, cfg, prices, filings)
-    assert [r["ticker"] for r in out["chosen"]] == ["FILED", "HUGE"]
-    assert [r["ticker"] for r in out["over_cap"]] == ["SMALL"]
+SPREAD = {
+    "A": date(2026, 11, 12),
+    "B": date(2026, 11, 9),
+    "C": date(2026, 11, 10),
+    "D": date(2026, 11, 10),
+    "E": date(2026, 11, 10),
+    "F": date(2026, 11, 11),
+}
 
 
-def test_a_recent_call_is_no_reason_to_pass(tmp_path: Path) -> None:
+def test_past_the_cap_the_soonest_release_comes_first() -> None:
+    cfg = replace(CFG, cap=3, fill_to=0)
+    out = _screen({t: [_at(d)] for t, d in SPREAD.items()}, cfg=cfg)
+    chosen, over = _tickers(out["chosen"]), _tickers(out["over_cap"])
+    assert chosen[0] == "B" and set(chosen[1:]) < {"C", "D", "E"}
+    assert len(over) == 3 and over[0] in {"C", "D", "E"} and over[1:] == ["F", "A"]
+    again = _screen({t: [_at(d)] for t, d in reversed(SPREAD.items())}, cfg=cfg)
+    assert _tickers(again["chosen"]) == chosen  # the same on a rerun, in any order
+
+
+def test_stocks_reporting_the_same_day_are_taken_in_a_drawn_order() -> None:
+    table = {t: [_at(d)] for t, d in SPREAD.items()}
+    orders = set()
+    for i in range(20):
+        cfg = replace(CFG, cap=2, fill_to=0, version=f"v{i}")
+        orders.add(tuple(_tickers(_screen(table, cfg=cfg)["chosen"])))
+    assert {o[0] for o in orders} == {"B"}
+    assert len(orders) == 3  # each of C, D and E gets the second place sometimes
+
+
+def test_a_recent_call_is_no_reason_to_pass() -> None:
     """Dropped 2026-11-08 (see config/screen.yaml): the screen reads no records."""
-    out = screen(["QUIET"], DAY, DAY, replace(CFG, fill_to=0), _prices(QUIET=0.0), None)
+    out = _screen({"QUIET": [_at(LATER)]}, cfg=replace(CFG, fill_to=0))
     assert out["held"] == ["QUIET"]
     assert "recent" not in json.dumps(out)
 
 
-def test_an_edgar_failure_for_one_stock_is_noted_and_the_rest_still_screen() -> None:
-    filings = Filings({"FILED": [_meta("FILED", "8-K", DAY)]}, broken=frozenset({"DOWN"}))
-    prices = _prices(FILED=0.0, DOWN=0.0)
-    out = screen(["DOWN", "FILED"], DAY, DAY, replace(CFG, fill_to=0), prices, filings)
-    assert [r["ticker"] for r in out["chosen"]] == ["FILED"]
-    assert out["unchecked"] == {"DOWN": ["filings unavailable (ConnectionError)"]}
+# stocks that could not be screened
+
+
+def test_a_failed_lookup_is_noted_and_the_rest_still_screen() -> None:
+    out = _screen({"SOON": [_at(date(2026, 11, 10))]}, ["DOWN", "SOON"],
+                  cfg=replace(CFG, fill_to=0), broken=frozenset({"DOWN"}))  # fmt: skip
+    assert _tickers(out["chosen"]) == ["SOON"]
+    assert out["unchecked"] == {"DOWN": ["earnings dates unavailable (ConnectionError)"]}
     assert out["unscreened"] == ["DOWN"] and out["held"] == []  # no decision, so not a Hold
-    assert out["filings_failed"] == 1
+    assert out["dates_failed"] == 1 and "DOWN" not in out["next_earnings"]
 
 
-def test_a_stock_that_could_not_be_checked_is_never_drawn_for_the_fill() -> None:
-    filings = Filings({}, broken=frozenset({"DOWN"}))
-    out = screen(["DOWN", "OK"], DAY, DAY, CFG, _prices(DOWN=0.0, OK=0.0), filings)
+def test_a_stock_with_no_upcoming_date_is_not_screened() -> None:
+    out = _screen({"GONE": [_at(date(2026, 8, 1))], "NONE": []}, cfg=replace(CFG, fill_to=0))
+    assert out["unscreened"] == ["GONE", "NONE"] and out["held"] == []
+    assert out["unchecked"]["NONE"] == ["no upcoming earnings date"]
+    assert out["dates_failed"] == 2
+
+
+def test_a_stock_that_just_reported_with_no_next_date_yet_is_held() -> None:
+    out = _screen(
+        {
+            "TODAY": [_at(DAY, hour=7)],  # reported this morning; Yahoo has no next date yet
+            "WEEK": [_at(date(2026, 10, 30))],  # 7 days before the run: still held
+            "OLDER": [_at(date(2026, 10, 29))],  # 8 days: a fault in the list, no decision
+            "NEXT": [_at(DAY, hour=7), _at(LATER)],  # a next date: the usual way
+        },
+        cfg=replace(CFG, fill_to=0),
+    )
+    assert out["held"] == ["TODAY", "WEEK", "NEXT"] and out["unscreened"] == ["OLDER"]
+    assert out["just_reported"] == {"TODAY": "2026-11-06", "WEEK": "2026-10-30"}
+    assert out["next_earnings"] == {"NEXT": LATER.isoformat()}
+    assert out["dates_failed"] == 1 and not refusals(out | {"universe": 20})
+    assert "3 are Hold by screen (2 just reported, no next date yet)" in "\n".join(lines(out))
+
+
+def test_a_stock_that_just_reported_can_be_drawn_for_the_fill() -> None:
+    out = _screen({"TODAY": [_at(DAY, hour=7)]}, ["TODAY"])
+    assert out["filled"] == ["TODAY"] and out["unscreened"] == []
+    assert "just reported" not in "\n".join(lines(out))  # drawn, so not among the held
+
+
+def test_a_release_after_the_run_is_not_one_just_reported() -> None:
+    assert just_reported([_at(DAY, hour=18)], RUN) is None  # still to come
+    assert just_reported([_at(DAY, hour=16), _at(date(2026, 8, 6))], RUN) == DAY
+    assert just_reported([], RUN) is None
+
+
+def test_just_reported_counts_days_in_new_york_not_utc() -> None:
+    late = datetime(2026, 11, 7, 3, tzinfo=UTC)  # 22:00 on the 6th in New York
+    assert just_reported([_at(date(2026, 10, 30), hour=7)], late) == date(2026, 10, 30)
+    evening = _at(date(2026, 10, 30), hour=21).astimezone(UTC)  # already the 31st in UTC
+    assert just_reported([evening], RUN) == date(2026, 10, 30)
+
+
+def test_a_stock_that_could_not_be_screened_is_never_drawn_for_the_fill() -> None:
+    out = _screen({}, ["DOWN", "OK"], broken=frozenset({"DOWN"}))
     assert out["filled"] == ["OK"] and out["unscreened"] == ["DOWN"]
-    assert "Could not be screened (no decision): DOWN" in "\n".join(lines(out))
+    text = "\n".join(lines(out))
+    assert "Could not be screened (no decision):\n  DOWN: earnings dates unavailable" in text
 
 
-def test_without_filings_only_moves_count_and_the_output_says_so() -> None:
-    out = screen(["BIG"], DAY, DAY, replace(CFG, fill_to=0), _prices(BIG=0.08), None)
-    assert out["filings_checked"] is False
-    assert "Filings were not checked" in "\n".join(lines(out))
+def test_a_lookup_that_fails_is_asked_once_more_after_a_pause() -> None:
+    pauses: list[float] = []
+    source = Dates({"OK": [_at(LATER)]}, flaky=frozenset({"SLOW"}))
+    found, failed = lookup(["SLOW", "OK"], source, sleep=pauses.append)
+    assert set(found) == {"SLOW", "OK"} and failed == {}
+    assert source.asked == ["SLOW", "OK", "SLOW"] and pauses == [RETRY_PAUSE_S]
+
+
+def test_a_lookup_that_fails_twice_is_reported_not_raised() -> None:
+    pauses: list[float] = []
+    source = Dates(broken=frozenset({"DOWN"}))
+    found, failed = lookup(["DOWN", "OK"], source, sleep=pauses.append)
+    assert list(found) == ["OK"] and failed == {
+        "DOWN": "earnings dates unavailable (ConnectionError)"
+    }
+    assert source.asked == ["DOWN", "OK", "DOWN"] and pauses == [RETRY_PAUSE_S]
+
+
+def test_no_pause_when_every_lookup_answers() -> None:
+    pauses: list[float] = []
+    lookup(["A", "B"], Dates(), sleep=pauses.append)
+    assert pauses == []
 
 
 # the random fill
@@ -436,23 +367,28 @@ def test_without_filings_only_moves_count_and_the_output_says_so() -> None:
 
 def test_spare_slots_are_filled_at_random_from_the_stocks_left_out() -> None:
     quiet = [f"Q{i:02d}" for i in range(30)]
-    prices = _prices(BIG=0.08, **dict.fromkeys(quiet, 0.0))
-    out = screen(["BIG", *quiet], DAY, DAY, CFG, prices, None)
-    assert [r["ticker"] for r in out["chosen"]] == ["BIG"]
+    out = _screen({"SOON": [_at(date(2026, 11, 10))]}, ["SOON", *quiet])
+    assert _tickers(out["chosen"]) == ["SOON"]
     assert len(out["filled"]) == CFG.fill_to - 1
     assert set(out["filled"]) <= set(quiet)
     assert set(out["filled"]).isdisjoint(out["held"])
     assert len(out["held"]) == 30 - len(out["filled"])
     text = "\n".join(lines(out))
-    assert "19 more drawn at random" in text
+    assert "1 of 31 stocks pass; 19 more drawn at random; 11 are Hold by screen." in text
     assert "Random fill (a check on the screen): " in text
 
 
 def test_no_fill_when_the_screen_already_reaches_fill_to() -> None:
-    movers = {f"M{i:02d}": 0.08 for i in range(3)}
-    prices = _prices(QUIET=0.0, **movers)
-    out = screen([*movers, "QUIET"], DAY, DAY, replace(CFG, fill_to=3), prices, None)
+    due = {f"D{i}": [_at(date(2026, 11, 10))] for i in range(3)}
+    out = _screen(due, [*due, "QUIET"], cfg=replace(CFG, fill_to=3))
     assert len(out["chosen"]) == 3 and out["filled"] == [] and out["held"] == ["QUIET"]
+
+
+def test_no_fill_past_the_cap() -> None:
+    due = {f"D{i}": [_at(date(2026, 11, 10))] for i in range(6)}
+    out = _screen(due, [*due, "QUIET"], cfg=replace(CFG, cap=3, fill_to=3))
+    assert len(out["chosen"]) == 3 and len(out["over_cap"]) == 3
+    assert out["filled"] == [] and out["held"] == ["QUIET"]
 
 
 def test_the_fill_is_the_same_on_a_rerun_and_changes_by_day() -> None:
@@ -470,243 +406,137 @@ def test_the_fill_never_draws_more_than_it_can(left: list[str], slots: int, coun
     assert len(random_fill(left, slots, "screen-v2", DAY)) == count
 
 
-# routine filers
-
-# DAY is Friday 2026-11-06: the previous session is 11-05, and the 10 sessions
-# before it run from 2026-10-23 to 11-05.
-SINCE, LOOK_BACK = date(2026, 11, 5), date(2026, 10, 23)
-
-
-def _new(*listed: tuple[str, date]) -> tuple[list[str], list[str]]:
-    metas = [_meta("X", form, filed) for form, filed in listed]
-    return new_filings(metas, CFG, SINCE, LOOK_BACK, DAY)
-
-
-def test_a_form_the_company_files_every_few_days_is_routine() -> None:
-    counted, routine = _new(("6-K", DAY), ("6-K", date(2026, 11, 2)), ("6-K", date(2026, 10, 27)))
-    assert counted == []
-    assert routine == ["6-K filed 2026-11-06 (routine: filed on 2 days in the 10 sessions before)"]
-
-
-def test_a_filing_the_session_before_counts_toward_routine() -> None:
-    counted, routine = _new(("6-K", DAY), ("6-K", SINCE), ("6-K", date(2026, 10, 30)))
-    assert counted == [] and len(routine) == 1
-
-
-def test_the_settings_decide_how_many_earlier_days_make_a_form_routine() -> None:
-    one = replace(CFG, routine_filings=1)
-    metas = [_meta("X", "8-K", d) for d in (DAY, date(2026, 10, 30))]
-    assert new_filings(metas, one, SINCE, LOOK_BACK, DAY) == (
-        [],
-        ["8-K filed 2026-11-06 (routine: filed on 1 days in the 10 sessions before)"],
+def test_the_output_says_the_window_and_why_each_stock_passed() -> None:
+    out = _screen({"SOON": [_at(date(2026, 11, 13))]}, cfg=replace(CFG, fill_to=0))
+    text = lines(out)
+    assert text[0] == (
+        "Screen screen-v7 for the 2026-11-06 session (earnings due 2026-11-09 to 2026-11-13):"
     )
+    assert "   1. SOON: earnings due 2026-11-13" in text
 
 
-def test_the_settings_decide_how_far_back_the_screen_looks() -> None:
-    """With 5 sessions the look back starts 2026-10-30, so a 6-K on 10-29 is
-    too old to make the new one routine."""
-    short = replace(CFG, routine_sessions=5)
-    days = (DAY, date(2026, 11, 2), date(2026, 10, 29))
-    filings = Filings({"X": [_meta("X", "6-K", d) for d in days]})
-    assert screen(["X"], DAY, DAY, short, _prices(X=0.0), filings)["chosen"]
-    assert not screen(["X"], DAY, DAY, CFG, _prices(X=0.0), filings)["chosen"]
+# Yahoo's earnings list
 
 
-def test_a_heavy_filer_is_still_seen_as_routine() -> None:
-    """A company that files many 6-Ks a day still has its earlier days in view:
-    the list is deep enough to reach back past a busy few weeks."""
-    busy = [_meta("X", "6-K", DAY)]
-    busy += [_meta("X", "6-K", date(2026, 11, 4)) for _ in range(20)]
-    busy += [_meta("X", "6-K", date(2026, 10, 26)) for _ in range(3)]
-    out = screen(["X"], DAY, DAY, CFG, _prices(X=0.0), Filings({"X": busy}))
-    assert not out["chosen"] and "X" in out["routine"]
+REAL_DATES = YahooEarnings.dates  # read before the guard in conftest replaces it
 
 
-def _eight_k(*filed: tuple[date, str]) -> tuple[list[str], list[str]]:
-    metas = [_meta("X", "8-K", day, items) for day, items in filed]
-    return new_filings(metas, CFG, SINCE, LOOK_BACK, DAY)
+@pytest.fixture
+def parse_yahoo(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The real reading of Yahoo's table, on a stand-in for yfinance's Ticker."""
+    monkeypatch.setattr(YahooEarnings, "dates", REAL_DATES)
 
 
-WEEKLY = ((date(2026, 11, 2), "8.01"), (date(2026, 10, 26), "8.01"))
+class _Ticker:
+    def __init__(self, frame: pd.DataFrame | None) -> None:
+        self.frame = frame
+        self.limits: list[int] = []
+
+    def get_earnings_dates(self, limit: int) -> pd.DataFrame | None:
+        self.limits.append(limit)
+        return self.frame
 
 
-def test_a_weekly_8k_filers_purchase_report_is_routine() -> None:
-    counted, routine = _eight_k((DAY, "8.01"), *WEEKLY)
-    assert counted == []
-    assert routine == [
-        "8-K item 8.01 filed 2026-11-06 (routine: filed on 2 days in the 10 sessions before)"
-    ]
+@pytest.mark.usefixtures("parse_yahoo")
+def test_yahoos_release_times_are_kept_in_new_york_time(monkeypatch: pytest.MonkeyPatch) -> None:
+    index = pd.DatetimeIndex(["2026-12-02 16:00", "2026-09-02 16:00"]).tz_localize(MARKET_TZ)
+    fake = _Ticker(pd.DataFrame({"EPS Estimate": [1.0, 2.0]}, index=index))
+    monkeypatch.setattr("yfinance.Ticker", lambda t: fake)
+    got = YahooEarnings().dates("CRWD")
+    assert got == [_at(date(2026, 12, 2)), _at(date(2026, 9, 2))]
+    assert fake.limits == [ROWS]
 
 
-@pytest.mark.parametrize("items", ["2.02,9.01", "1.01", "5.02,9.01", "2.02,8.01,9.01"])
-def test_a_weekly_8k_filers_earnings_or_major_event_still_counts(items: str) -> None:
-    counted, routine = _eight_k((DAY, items), *WEEKLY)
-    assert routine == [] and len(counted) == 1
-    assert counted[0].startswith("8-K item")
+@pytest.mark.usefixtures("parse_yahoo")
+def test_yahoos_times_with_no_zone_are_read_as_new_york(monkeypatch: pytest.MonkeyPatch) -> None:
+    index = pd.DatetimeIndex(["2026-12-02 07:00"])
+    monkeypatch.setattr("yfinance.Ticker", lambda t: _Ticker(pd.DataFrame({"x": [1]}, index=index)))
+    assert YahooEarnings().dates("CRWD") == [_at(date(2026, 12, 2), hour=7)]
 
 
-def test_the_note_lists_an_8ks_items_in_order() -> None:
-    counted, _ = _eight_k((DAY, "9.01,5.02,2.02"), *WEEKLY)
-    assert counted == ["8-K items 2.02, 5.02 filed 2026-11-06"]
-
-
-def test_an_8k_is_routine_only_when_its_exact_items_repeat() -> None:
-    """A deliberate choice (v4): items are matched as a set, so a weekly filer
-    whose item list changes one week passes that week. That fails toward more
-    passes; matching item by item would be the stricter rule."""
-    counted, routine = _eight_k((DAY, "7.01,8.01"), *WEEKLY)
-    assert counted == ["8-K items 7.01, 8.01 filed 2026-11-06"] and routine == []
-
-
-def test_the_exhibit_item_does_not_change_what_an_8k_reports() -> None:
-    counted, routine = _eight_k(
-        (DAY, "8.01,9.01"), (date(2026, 11, 2), "8.01"), (date(2026, 10, 26), " 9.01 , 8.01")
-    )
-    assert counted == [] and len(routine) == 1
-
-
-def test_an_8k_with_only_exhibits_or_no_items_matches_its_own_kind() -> None:
-    counted, _ = _eight_k((DAY, ""), *WEEKLY)
-    assert counted == ["8-K filed 2026-11-06"]
-    _, routine = _eight_k((DAY, "9.01"), (date(2026, 11, 2), ""), (date(2026, 10, 26), "9.01"))
-    assert routine == ["8-K filed 2026-11-06 (routine: filed on 2 days in the 10 sessions before)"]
-
-
-def test_items_are_only_read_for_8ks() -> None:
-    assert kind_of(_meta("X", "6-K", DAY, "8.01")) == ("6-K", frozenset())
-    assert kind_of(_meta("X", "8-K", DAY, "9.01,2.02")) == ("8-K", frozenset({"2.02"}))
-
-
-def test_a_weekly_filers_earnings_8k_passes_the_screen() -> None:
-    listed = [_meta("MSTR", "8-K", DAY, "2.02,9.01")]
-    listed += [_meta("MSTR", "8-K", d, i) for d, i in WEEKLY]
-    out = screen(["MSTR"], DAY, DAY, CFG, _prices(MSTR=0.0), Filings({"MSTR": listed}))
-    assert [r["ticker"] for r in out["chosen"]] == ["MSTR"]
-
-
-def test_one_earlier_filing_of_the_form_is_not_routine() -> None:
-    """An earnings 8-K a week after another 8-K still counts."""
-    counted, routine = _new(("8-K", DAY), ("8-K", date(2026, 10, 30)))
-    assert counted == ["8-K filed 2026-11-06"] and routine == []
-
-
-def test_only_the_same_form_makes_a_filing_routine() -> None:
-    counted, _ = _new(("10-Q", DAY), ("8-K", date(2026, 11, 2)), ("8-K", date(2026, 10, 27)))
-    assert counted == ["10-Q filed 2026-11-06"]
-
-
-def test_two_filings_on_one_day_count_as_one_day() -> None:
-    counted, _ = _new(("8-K", DAY), ("8-K", date(2026, 11, 2)), ("8-K", date(2026, 11, 2)))
-    assert counted == ["8-K filed 2026-11-06"]
-
-
-@pytest.mark.parametrize(
-    ("older", "routine"),
-    [(date(2026, 10, 23), True), (date(2026, 10, 22), False)],
-)
-def test_the_look_back_is_the_ten_sessions_before(older: date, routine: bool) -> None:
-    counted, skipped = _new(("6-K", DAY), ("6-K", date(2026, 11, 2)), ("6-K", older))
-    assert bool(skipped) is routine and bool(counted) is not routine
-
-
-@pytest.mark.parametrize(("older", "passes"), [(LOOK_BACK, False), (date(2026, 10, 22), True)])
-def test_the_screen_looks_back_ten_sessions_before_the_previous_one(
-    older: date, passes: bool
+@pytest.mark.usefixtures("parse_yahoo")
+def test_no_list_from_yahoo_is_a_failed_lookup_and_asked_again(
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    filings = Filings({"X": [_meta("X", "6-K", d) for d in (DAY, date(2026, 11, 2), older)]})
-    out = screen(["X"], DAY, DAY, CFG, _prices(X=0.0), filings)
-    assert bool(out["chosen"]) is passes
+    # yfinance returns no table for a blocked or broken page: not "no date"
+    monkeypatch.setattr("yfinance.Ticker", lambda t: _Ticker(None))
+    with pytest.raises(LookupError):
+        YahooEarnings().dates("CRWD")
+    pauses: list[float] = []
+    found, failed = lookup(["CRWD"], YahooEarnings(), sleep=pauses.append)
+    assert (found, failed, pauses) == (
+        {}, {"CRWD": "earnings dates unavailable (LookupError)"}, [RETRY_PAUSE_S]
+    )  # fmt: skip
 
 
-def test_a_routine_filer_still_passes_on_a_big_move_and_the_output_says_why() -> None:
-    days = [DAY, date(2026, 11, 2), date(2026, 10, 27)]
-    filings = Filings({t: [_meta(t, "6-K", d) for d in days] for t in ("CCEP", "BIG")})
-    out = screen(["CCEP", "BIG"], DAY, DAY, CFG, _prices(CCEP=0.0, BIG=0.08), filings)
-    assert [r["ticker"] for r in out["chosen"]] == ["BIG"]
-    assert "CCEP" in out["held"] + out["filled"]  # left out, so held or drawn at random
-    assert set(out["routine"]) == {"CCEP", "BIG"}
-    text = "\n".join(lines(out))
-    assert "New filings not counted, routine for the company:" in text
-    assert "CCEP: 6-K filed 2026-11-06 (routine" in text
+def test_the_earnings_lookup_never_reaches_yahoo_in_tests() -> None:
+    with pytest.raises(NoNetwork):
+        YahooEarnings().dates("CRWD")
 
 
-# the command
-
+# the whole run
 
 NOW = datetime(2026, 11, 7, 15, tzinfo=UTC)  # Saturday: the 11-06 session is the latest
+
+
+def _qqq(last: date = DAY) -> tuple[Bar, ...]:
+    return tuple(Bar(last - timedelta(days=i), 500.0, 1e6) for i in range(5, -1, -1))
+
+
+def _qqq_only(tickers: Sequence[str], source: object, *, now: datetime) -> Prices:
+    assert tuple(tickers) == ()  # QQQ alone: fetch adds it itself
+    return Prices({BENCHMARK: _qqq()}, ())
 
 
 def test_main_prints_the_screen_and_writes_json(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    def fetch(tickers: object, source: object, *, now: datetime) -> Prices:
-        return _prices(**dict.fromkeys(load_universe(), 0.0) | {"CRWD": 0.08})
-
-    filings = Filings({"DDOG": [_meta("DDOG", "8-K", date(2026, 11, 6))]})
+    dates = Dates({"DDOG": [_at(date(2026, 11, 12))], "CRWD": [_at(date(2026, 11, 10))]})
     out = tmp_path / "screen.json"
-    assert main(["--json", str(out)], prices_fetch=fetch, filings=filings, now=NOW) == 0
+    code = main(["--json", str(out)], prices_fetch=_qqq_only, earnings=dates, now=NOW,
+                sleep=_no_sleep)  # fmt: skip
+    assert code == 0
     text = capsys.readouterr().out
-    assert "Screen screen-v6 for the 2026-11-06 session" in text
+    assert "Screen screen-v7 for the 2026-11-06 session" in text
     result = json.loads(out.read_text())
-    assert {r["ticker"] for r in result["chosen"]} == {"CRWD", "DDOG"}
+    assert _tickers(result["chosen"]) == ["CRWD", "DDOG"]  # the sooner release first
     assert len(result["filled"]) == CFG.fill_to - 2
-    assert filings.asked == 113  # every stock in the universe is looked up once
+    assert sorted(dates.asked) == sorted(load_universe())  # every stock looked up once
 
 
 def test_main_refuses_a_qqq_bar_that_is_a_session_behind(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    def fetch(tickers: object, source: object, *, now: datetime) -> Prices:
-        return _prices(CRWD=0.0)  # QQQ's last bar is 2026-11-06
-
     monday_evening = datetime(2026, 11, 9, 23, tzinfo=UTC)
-    assert main(["--no-filings"], prices_fetch=fetch, now=monday_evening) == 1
+    assert main([], prices_fetch=_qqq_only, earnings=Dates(), now=monday_evening) == 1
     assert "no QQQ bar for the 2026-11-09 session yet" in capsys.readouterr().out
 
 
-def _all_priced(tickers: object, source: object, *, now: datetime) -> Prices:
-    return _prices(**dict.fromkeys(load_universe(), 0.0))
-
-
-def test_main_fails_when_too_many_edgar_lookups_fail(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+@pytest.mark.parametrize(("failing", "code"), [(12, 1), (11, 0)])
+def test_main_fails_when_too_many_stocks_have_no_usable_date(
+    failing: int, code: int, tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    out = tmp_path / "screen.json"
-    filings = Filings({}, broken=frozenset(load_universe()[:12]))
-    assert main(["--json", str(out)], prices_fetch=_all_priced, filings=filings, now=NOW) == 1
-    assert "12 EDGAR lookups failed" in capsys.readouterr().out
-    refused = json.loads(out.read_text())
-    assert refused["ok"] is False and refused["refused"] == ["12 EDGAR lookups failed"]
-    few = Filings({}, broken=frozenset(load_universe()[:11]))
-    assert main(["--json", str(out)], prices_fetch=_all_priced, filings=few, now=NOW) == 0
-    kept = json.loads(out.read_text())
-    assert kept["ok"] is True and kept["refused"] == []
-
-
-@pytest.mark.parametrize(("missing", "code"), [(12, 1), (11, 0)])
-def test_main_fails_when_too_many_stocks_have_no_prices(
-    missing: int, code: int, tmp_path: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
-    """Yahoo can serve QQQ and drop many stocks: those would all be
+    """Yahoo can answer for some stocks and not others: those would all be
     'could not be screened', and the run must not call that a screen."""
-    gone = set(load_universe()[:missing])
-
-    def fetch(tickers: object, source: object, *, now: datetime) -> Prices:
-        return _prices(**{t: 0.0 for t in load_universe() if t not in gone})
-
+    gone = load_universe()[:failing]
+    broken = frozenset(gone[::2])
+    empty: dict[str, list[datetime]] = {t: [] for t in gone[1::2]}  # both kinds count
     out = tmp_path / "screen.json"
-    assert main(["--no-filings", "--json", str(out)], prices_fetch=fetch, now=NOW) == code
+    dates = Dates(empty, broken=broken)
+    assert main(["--json", str(out)], prices_fetch=_qqq_only, earnings=dates, now=NOW,
+                sleep=_no_sleep) == code  # fmt: skip
     result = json.loads(out.read_text())
-    assert result["prices_failed"] == missing and result["ok"] is (code == 0)
+    assert result["dates_failed"] == failing and result["ok"] is (code == 0)
     if code:
-        assert f"{missing} stocks' prices could not be fully checked" in capsys.readouterr().out
+        assert result["refused"] == [f"{failing} stocks' earnings dates could not be read"]
+        assert "could not be read: too many to trust this screen" in capsys.readouterr().out
 
 
 def test_main_without_qqq_screens_nothing(capsys: pytest.CaptureFixture[str]) -> None:
     def fetch(tickers: object, source: object, *, now: datetime) -> Prices:
         return Prices({}, ())
 
-    assert main(["--no-filings"], prices_fetch=fetch, now=NOW) == 1
+    assert main([], prices_fetch=fetch, earnings=Dates(), now=NOW) == 1
     assert "no QQQ prices" in capsys.readouterr().out
 
 
@@ -717,34 +547,32 @@ def test_run_screen_never_raises_and_says_why_it_failed(caplog: pytest.LogCaptur
     def no_qqq(tickers: object, source: object, *, now: datetime) -> Prices:
         return Prices({}, ())
 
-    assert run_screen(NOW, prices_fetch=broken, check_filings=False) == {
+    assert run_screen(NOW, prices_fetch=broken, earnings=Dates()) == {
         "kind": "screen",
         "ok": False,
         "refused": ["the screen failed (OSError)"],
     }
     assert "OSError: disk" in caplog.text  # the traceback is logged, the email gets the type only
-    assert run_screen(NOW, prices_fetch=no_qqq, check_filings=False)["refused"] == ["no QQQ prices"]
-    late = run_screen(datetime(2026, 11, 9, 23, tzinfo=UTC), prices_fetch=_all_priced,
-                      check_filings=False)  # fmt: skip
+    assert run_screen(NOW, prices_fetch=no_qqq, earnings=Dates())["refused"] == ["no QQQ prices"]
+    late = run_screen(datetime(2026, 11, 9, 23, tzinfo=UTC), prices_fetch=_qqq_only,
+                      earnings=Dates())  # fmt: skip
     assert late["ok"] is False and "2026-11-09 session" in late["refused"][0]
 
 
 def test_run_screen_marks_a_result_too_broken_to_trust() -> None:
-    filings = Filings({}, broken=frozenset(load_universe()[:12]))
-    result = run_screen(NOW, prices_fetch=_all_priced, filings=filings)
-    assert result["ok"] is False and result["refused"] == ["12 EDGAR lookups failed"]
+    dates = Dates(broken=frozenset(load_universe()[:12]))
+    result = run_screen(NOW, prices_fetch=_qqq_only, earnings=dates, sleep=_no_sleep)
+    assert result["ok"] is False
+    assert result["refused"] == ["12 stocks' earnings dates could not be read"]
     assert "chosen" in result  # the detail is kept for the record
 
 
 def test_the_models_get_the_stocks_that_passed_then_the_random_fill() -> None:
-    def fetch(tickers: object, source: object, *, now: datetime) -> Prices:
-        return _prices(**dict.fromkeys(load_universe(), 0.0) | {"CRWD": 0.08})
-
-    filings = Filings({"DDOG": [_meta("DDOG", "8-K", date(2026, 11, 6))]})
-    result = run_screen(NOW, prices_fetch=fetch, filings=filings)
+    dates = Dates({"DDOG": [_at(date(2026, 11, 12))], "CRWD": [_at(date(2026, 11, 10))]})
+    result = run_screen(NOW, prices_fetch=_qqq_only, earnings=dates, sleep=_no_sleep)
     assert result["ok"] is True and result["day"] == "2026-11-06"
     got = picked(result)
-    assert got[:2] == ["DDOG", "CRWD"]  # a filing ranks before a move
+    assert got[:2] == ["CRWD", "DDOG"]
     assert got[2:] == result["filled"] and len(got) == CFG.fill_to
 
 
@@ -752,3 +580,10 @@ def test_every_stock_the_screen_can_pick_has_a_name() -> None:
     names = universe_names()
     assert set(load_universe()) <= set(names)
     assert names["CRWD"] == load_watchlist().names["CRWD"]
+
+
+@pytest.mark.parametrize(("failed", "refused"), [(2, False), (3, True)])
+def test_exactly_one_stock_in_ten_without_a_date_is_still_trusted(
+    failed: int, refused: bool
+) -> None:
+    assert bool(refusals({"dates_failed": failed, "universe": 20})) is refused

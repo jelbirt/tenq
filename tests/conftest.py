@@ -45,6 +45,16 @@ def no_real_prices(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("tenq.prices.YahooPrices.history", refuse)
 
 
+@pytest.fixture(autouse=True)
+def no_real_earnings(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A test that asks Yahoo for earnings dates by mistake fails instead."""
+
+    def refuse(self: object, *args: object, **kw: object) -> list[object]:
+        raise NoNetwork("tests must not download earnings dates")
+
+    monkeypatch.setattr("tenq.earnings.YahooEarnings.dates", refuse)
+
+
 def watchlist_screen(now: datetime) -> dict[str, Any]:
     """A good screen that picks the 20 watchlist stocks, for tests of the daily
     run that are not about the screen."""
