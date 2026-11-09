@@ -97,7 +97,7 @@ def _ask(questions: QuestionSet, server: Server, **kw: Any) -> jev.Result:
 
 def test_the_committed_question_file_loads() -> None:
     q = load_questions()
-    assert q.version == "jev-q8"
+    assert q.version == "jev-q9"
     assert len(q.questions) == 5
     assert {x.type for x in q.questions} == {"noul", "choice"}
     assert "\u2014" not in jev.QUESTIONS_PATH.read_text(encoding="utf-8")

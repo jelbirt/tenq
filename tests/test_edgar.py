@@ -4,7 +4,7 @@ from typing import Any, ClassVar
 import edgar
 import pytest
 
-from tenq.edgar import EdgarSource
+from tenq.edgar import EdgarSource, currencies_of, facts_from_frame
 
 
 @dataclass
@@ -131,3 +131,45 @@ def test_the_acceptance_time_comes_from_the_header_in_eastern_time(
         "2026-07-03T16:05:00-04:00",
         "",
     ]
+
+
+def test_a_foreign_filers_6k_lists_and_reads_like_an_8k(source: EdgarSource) -> None:
+    """L11: a 6-K is a foreign company's current report. It lists with the 8-Ks
+    (no items: a 6-K has none) and reads the same way, text plus EX-99."""
+    FakeCompany.filings = [
+        FakeFiling(
+            "6-K",
+            "0000937966-26-000050",
+            items="",
+            attachments=[Att("EX-99.1", "Q3 results"), Att("EX-101.INS", "<xbrl/>")],
+        ),
+        FakeFiling("20-F", "0000937966-26-000010", items=""),
+    ]
+    (meta,) = source.list_current("ASML", 5)
+    assert (meta.form, meta.items) == ("6-K", "")
+    assert source.fetch_current(meta) == "FORM 8-K\n\nEXHIBIT 99.1\n\nQ3 results"
+
+
+def test_a_facts_currency_comes_from_the_filings_unit_definition() -> None:
+    """A filer names its own unit ids, so "usd" or "U_EUR" says nothing for sure;
+    the unit's iso4217 measure does. Shares and per-share units get none."""
+    units = {
+        "usd": {"type": "simple", "measure": "iso4217:USD"},
+        "U1": {"type": "simple", "measure": "iso4217:EUR"},
+        "shares": {"type": "simple", "measure": "xbrli:shares"},
+        "usdPerShare": {
+            "type": "divide",
+            "numerator": ["iso4217:USD"],
+            "denominator": ["xbrli:shares"],
+        },
+    }
+    assert currencies_of(units) == {"usd": "USD", "U1": "EUR"}
+    row = {"concept": "us-gaap:Revenues", "period_start": "2026-07-01", "period_end": "2026-09-30"}
+    rows = [
+        row | {"numeric_value": 10.0, "unit_ref": "usd"},
+        row | {"numeric_value": 9.0, "unit_ref": "U1"},
+        row | {"concept": "us-gaap:SharesOutstanding", "numeric_value": 5.0, "unit_ref": "shares"},
+    ]
+    got = {(f.unit, f.currency) for f in facts_from_frame(iter(rows), currencies_of(units))}
+    assert got == {("usd", "USD"), ("U1", "EUR"), ("shares", None)}
+    assert {f.currency for f in facts_from_frame(iter(rows))} == {None}

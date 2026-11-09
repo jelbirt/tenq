@@ -55,6 +55,10 @@ class Fact:
     end: str | None
     instant: str | None  # instant (balance sheet) facts carry only this
     decimals: int | None
+    # ISO 4217 code of a plain money unit ("USD", "EUR"), from the filing's own
+    # unit definition; None for shares, ratios, per-share units, or facts saved
+    # before this field existed.
+    currency: str | None = None
 
 
 @dataclass(frozen=True)

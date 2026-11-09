@@ -278,3 +278,18 @@ def test_the_growth_reading_matches_the_shown_figure(
 ) -> None:
     change = _rates(now, prior).growth_change
     assert change is not None and growth_reading(change) == reading
+
+
+def test_a_figure_in_another_currency_is_left_out() -> None:
+    """L11: every base metric is in dollars. A euro or yuan figure is left out,
+    not added to dollars; a fact saved before currencies were read (None) counts."""
+    from dataclasses import replace
+
+    q = ("2026-04-01", "2026-06-30")
+    euros = replace(_flow(REV, *q, 80.0), currency="EUR")
+    assert build_table([(_meta("a-26-2", q[1]), [euros])]).number("revenue", "current") is None
+    dollars = replace(_flow(REV, *q, 90.0), currency="USD")
+    both = build_table([(_meta("a-26-2", q[1]), [euros, dollars])])
+    assert both.number("revenue", "current") == 90.0
+    old = build_table([(_meta("a-26-2", q[1]), [_flow(REV, *q, 70.0)])])
+    assert old.number("revenue", "current") == 70.0

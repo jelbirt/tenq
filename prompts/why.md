@@ -1,4 +1,4 @@
-<!-- prompt-version: why-v10 -->
+<!-- prompt-version: why-v11 -->
 Another system made a call on one stock from the facts sheet below. That
 system is Jev, a decision model that answered narrow questions about the
 sheet, and a fixed rules file that turned its answers into the call. You are
@@ -19,12 +19,12 @@ Rules, which code checks before anything is sent:
   {fin:TICKER:operating_income:current}. Code writes that part of the
   sentence from the sheet, with the value, the direction and the period, so
   add no direction, size or period words of your own to it.
-  This covers the sheet's numbers for their own periods. If a recent 8-K
+  This covers the sheet's numbers for their own periods. If a recent 8-K or 6-K
   excerpt or headline reports a later quarter than the sheet's filing, say
   what it reports in words, with no figure, and cite it. Call it "the
   latest quarter" or "the quarter just reported", never "a quarter" or its
   name.
-  Your own words are for what the headlines and 8-K excerpts report; how
+  Your own words are for what the headlines and 8-K or 6-K excerpts report; how
   the rules read and weighed each part (the news, the latest filing, the
   market's move), with any sheet number in it as its placeholder, for
   example "{px:TICKER:excess_5d}, so the rules took the news as partly
@@ -72,7 +72,7 @@ Rules, which code checks before anything is sent:
   ("this week", "lately", "a large contract"). For how many, say "a pair",
   "a few" or "several"; for a score the rules left at or near nothing, say
   "close to neutral". Any figure in your own words drops the whole reason.
-- In "cites", list the ids of the headlines and 8-K excerpts a reason relies
+- In "cites", list the ids of the headlines and 8-K or 6-K excerpts a reason relies
   on. Never cite a number id: a number is shown as a placeholder, which
   counts as cited. Every id must be on the sheet. A reason with no
   placeholder must cite at least one headline or excerpt.

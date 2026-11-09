@@ -565,7 +565,7 @@ def test_eightks_and_headlines_are_rendered_with_their_age(
     current.save(_eightk("0001535527-26-000040", "2026-10-20"), EIGHTK_TEXT, [])
     news = [_news("CRWD", "CrowdStrike wins a deal", AS_OF - timedelta(days=2))]
     lines = _build(store, current, news=news).render().splitlines()
-    assert "- CRWD-0001535527-26-000040 filed 2026-10-20 (5 days old): " in "\n".join(lines)
+    assert "- 8-K CRWD-0001535527-26-000040 filed 2026-10-20 (5 days old): " in "\n".join(lines)
     headline = next(line for line in lines if "CrowdStrike wins a deal" in line)
     assert ", 2 days old) CrowdStrike wins a deal" in headline
 
@@ -604,3 +604,21 @@ def test_a_growth_line_shows_codes_reading_and_never_minus_zero(value: float, sh
     assert pack._shown(n) == shown
     other = pack.Number("px:ACME:excess_5d", "ACME return less QQQ", -0.00001, "points")
     assert pack._shown(other) == "+0.00 points"
+
+
+def test_a_6k_is_shown_with_its_form_and_why_it_lists_no_items(
+    store: FilingStore, current: FilingStore
+) -> None:
+    """L11: a foreign company's 6-K sits with the 8-Ks, named as a 6-K, and the
+    line says why no items are listed rather than leaving the models to guess."""
+    six_k = replace(_eightk("0001535527-26-000060", "2026-10-21", items=""), form="6-K")
+    current.save(six_k, EIGHTK_TEXT, [])
+    pack = _build(store, current)
+    text = pack.render()
+    assert (
+        "- 6-K CRWD-0001535527-26-000060 filed 2026-10-21 (4 days old): "
+        "a foreign company's report; 6-Ks list no items" in text
+    )
+    assert "Recent 8-K or 6-K current reports" in text
+    assert pack.reports[0].form == "6-K"
+    assert type(pack).from_dict(pack.to_dict()).reports[0].form == "6-K"

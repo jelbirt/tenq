@@ -675,6 +675,15 @@ def test_only_http_links_are_shown() -> None:
     assert "px:A:close" not in got
 
 
+def test_a_6k_excerpt_is_labelled_as_a_6k() -> None:
+    """L11: the record keeps each report's form, so the email names a 6-K as one;
+    a record from before L11 has no form and held only 8-Ks."""
+    report = {"filed": "2026-10-01", "url": "https://www.sec.gov/r", "excerpts": [{"id": "e1"}]}
+    six_k = sources({"reports": [report | {"form": "6-K"}]})
+    assert six_k["e1"] == ("6-K filed 2026-10-01", "https://www.sec.gov/r")
+    assert sources({"reports": [report]})["e1"][0] == "8-K filed 2026-10-01"
+
+
 # the traces
 
 
@@ -956,7 +965,7 @@ def _screen(day: date, chosen: list[str], filled: list[str] = (), **extra: Any) 
     def screener(now: datetime) -> dict[str, Any]:
         return {
             "kind": "screen",
-            "version": "screen-v5",
+            "version": "screen-v6",
             "day": day.isoformat(),
             "universe": 113,
             "chosen": [{"ticker": t, "reasons": [f"{t} moved"]} for t in chosen],
@@ -982,7 +991,7 @@ def test_a_good_screen_decides_which_stocks_the_models_judge(tmp_path: Path) -> 
     [mail] = outbox.sent
     assert not mail.subject.startswith("SCREEN FAILED")
     assert (
-        "Screen screen-v5: 2 of 113 stocks passed, 1 more drawn at random as a check;" in mail.text
+        "Screen screen-v6: 2 of 113 stocks passed, 1 more drawn at random as a check;" in mail.text
     )
     assert "  TEAM: TEAM moved" in mail.text
     assert "Random fill: MSFT" in mail.text

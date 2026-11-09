@@ -46,7 +46,8 @@ def sources(pack: dict[str, Any] | None) -> dict[str, tuple[str, str | None]]:
         out[h["id"]] = (f"{h.get('title', 'headline')}{site}", _link(h.get("link")))
     for r in pack.get("reports") or []:
         for e in r.get("excerpts") or []:
-            out[e["id"]] = (f"8-K filed {r.get('filed', '')}".strip(), _link(r.get("url")))
+            label = f"{r.get('form') or '8-K'} filed {r.get('filed', '')}".strip()
+            out[e["id"]] = (label, _link(r.get("url")))
     filing = pack.get("filing")
     if filing:
         label = f"the {filing.get('form', 'filing')} for the quarter ended {filing.get('period')}"

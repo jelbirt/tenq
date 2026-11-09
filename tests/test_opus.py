@@ -214,8 +214,8 @@ def test_a_failed_why_run_says_why() -> None:
 
 
 def test_prompts_are_versioned() -> None:
-    assert opus.load_call_prompt().version == "call-v11"
-    assert opus.load_why_prompt().version == "why-v10"
+    assert opus.load_call_prompt().version == "call-v12"
+    assert opus.load_why_prompt().version == "why-v11"
 
 
 def test_a_short_is_judged_against_qqq_like_every_call() -> None:

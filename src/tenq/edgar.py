@@ -22,16 +22,19 @@ EASTERN = ZoneInfo("America/New_York")  # where EDGAR stamps acceptance times
 
 FORMS = ("10-Q", "10-K")
 CURRENT = "8-K"
-EXHIBIT_PREFIX = "EX-99"  # press releases and other material an 8-K furnishes
+# A foreign company files a 6-K where a US one files an 8-K (results, news,
+# notices). A 6-K lists no items; its text and EX-99 exhibits are read the same way.
+CURRENT_FORMS = (CURRENT, "6-K")
+EXHIBIT_PREFIX = "EX-99"  # press releases and other material a current report furnishes
 
 
 class CurrentSource(Protocol):
     def list_current(self, ticker: str, limit: int) -> list[FilingMeta]:
-        """Most recent 8-K filings for a ticker, newest first."""
+        """Most recent current reports (8-K or 6-K) for a ticker, newest first."""
         ...
 
     def fetch_current(self, meta: FilingMeta) -> str:
-        """The 8-K's text followed by its EX-99 exhibits' text."""
+        """The report's text followed by its EX-99 exhibits' text."""
         ...
 
     def accepted_at(self, meta: FilingMeta) -> str:
@@ -90,7 +93,22 @@ def _more_precise(new: int | None, old: int | None) -> bool:
     return new is None or new > old
 
 
-def facts_from_frame(rows: Iterator[dict[str, Any]]) -> list[Fact]:
+def currencies_of(units: dict[str, Any]) -> dict[str, str]:
+    """Map each plain money unit id to its ISO 4217 code. A filer names its own
+    unit ids ("usd", "U_USD", "EUR"), so the id alone does not say the currency;
+    the unit's iso4217 measure does."""
+    out: dict[str, str] = {}
+    for uid, info in units.items():
+        if isinstance(info, dict) and info.get("type") == "simple":
+            measure = str(info.get("measure") or "")
+            if measure.startswith("iso4217:"):
+                out[str(uid)] = measure.removeprefix("iso4217:")
+    return out
+
+
+def facts_from_frame(
+    rows: Iterator[dict[str, Any]], currencies: dict[str, str] | None = None
+) -> list[Fact]:
     """Keep undimensioned numeric facts: the face-statement numbers a brief can cite.
 
     A filing can tag the same concept and period more than once: once per
@@ -111,14 +129,16 @@ def facts_from_frame(rows: Iterator[dict[str, Any]]) -> list[Fact]:
         start, end = _opt_str(r.get("period_start")), _opt_str(r.get("period_end"))
         instant = _opt_str(r.get("period_instant"))
         dec = _opt_str(r.get("decimals"))
+        unit = str(r.get("unit_ref") or "")
         fact = Fact(
             concept=concept,
             value=float(value),
-            unit=str(r.get("unit_ref") or ""),
+            unit=unit,
             start=start,
             end=end,
             instant=instant,
             decimals=int(dec) if dec and dec.lstrip("-").isdigit() else None,
+            currency=(currencies or {}).get(unit),
         )
         key = (concept, fact.unit, start, end, instant)
         prev = best.get(key)
@@ -145,9 +165,9 @@ class EdgarSource:
         return self._list(ticker, FORMS, limit)
 
     def list_current(self, ticker: str, limit: int) -> list[FilingMeta]:
-        # 8-K/A amendments are skipped like 10-Q/A: a correction worth a call is
-        # usually re-reported in an 8-K or the next 10-Q
-        return self._list(ticker, (CURRENT,), limit)
+        # 8-K/A and 6-K/A amendments are skipped like 10-Q/A: a correction worth
+        # a call is usually re-reported in a new report or the next filing
+        return self._list(ticker, CURRENT_FORMS, limit)
 
     def list_recent(self, ticker: str, forms: tuple[str, ...], limit: int) -> list[FilingMeta]:
         """The newest filings of any of `forms` together, in one company lookup."""
@@ -200,7 +220,8 @@ class EdgarSource:
         if xbrl is None:  # no XBRL or it failed to parse: text only, no numbers
             return text, []
         frame = xbrl.facts.to_dataframe()
-        facts = facts_from_frame(r for r in frame.to_dict("records"))
+        units = getattr(xbrl, "units", None) or {}
+        facts = facts_from_frame((r for r in frame.to_dict("records")), currencies_of(units))
         return text, facts
 
     def accepted_at(self, meta: FilingMeta) -> str:
@@ -217,10 +238,10 @@ class EdgarSource:
             kind = str(getattr(att, "document_type", "") or "")
             if not kind.startswith(EXHIBIT_PREFIX):
                 continue
-            try:  # one unreadable exhibit must not cost the 8-K's own text
+            try:  # one unreadable exhibit must not cost the report's own text
                 body = att.text()
             except Exception as exc:
-                log.warning("8-K exhibit %s unreadable (%s)", kind, type(exc).__name__)
+                log.warning("%s exhibit %s unreadable (%s)", meta.form, kind, type(exc).__name__)
                 continue
             if body:  # a PDF or binary exhibit has no text
                 parts.append(f"EXHIBIT {kind.removeprefix('EX-')}\n\n{body}")

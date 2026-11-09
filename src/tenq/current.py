@@ -1,6 +1,7 @@
-"""8-K current reports: what a company told the SEC between its quarterly filings.
+"""Current reports: what a company told the SEC between its periodic filings.
 
-8-Ks are saved in their own store (default ./data/current) with the same layout and
+A US company files an 8-K; a foreign company files a 6-K instead (results,
+news, notices). Both are saved in their own store (default ./data/current) with the same layout and
 passage ids as 10-Q/10-K filings, so a citation to an 8-K is checked the same way.
 The store's search indexes carry their own tag ("c"), so a ticker's 8-K indexes
 never mix with its 10-Q/10-K ones.
@@ -49,7 +50,7 @@ ITEM_NAMES = {
 
 @dataclass(frozen=True)
 class Synced:
-    reports: list[FilingMeta]  # 8-Ks filed on or after `since`, newest first, all saved
+    reports: list[FilingMeta]  # reports filed on or after `since`, newest first, all saved
     new: list[FilingMeta]
     notes: list[str]
 
@@ -71,12 +72,12 @@ def sync_current(
     since: date,
     depth: int = LIST_DEPTH,
 ) -> Synced:
-    """Save every 8-K filed on or after `since`. Never raises: a failure is a note."""
+    """Save every 8-K or 6-K filed on or after `since`. Never raises: a failure is a note."""
     try:
         listed = source.list_current(ticker, depth)
     except Exception as exc:
-        log.warning("8-K listing failed for %s (%s)", ticker, type(exc).__name__)
-        return Synced([], [], [f"8-K list unavailable for {ticker}"])
+        log.warning("current report listing failed for %s (%s)", ticker, type(exc).__name__)
+        return Synced([], [], [f"current reports (8-K, 6-K) unavailable for {ticker}"])
     reports: list[FilingMeta] = []
     new: list[FilingMeta] = []
     notes: list[str] = []
@@ -85,16 +86,18 @@ def sync_current(
         try:
             filed = date.fromisoformat(m.filed)
         except ValueError:
-            notes.append(f"8-K {m.accession} has no filing date")
+            notes.append(f"{m.form} {m.accession} has no filing date")
             continue
         if filed >= since:
             recent.append(m)
     if listed and len(listed) == depth and len(recent) == depth:
-        notes.append(f"more than {depth} 8-Ks since {since} for {ticker}; older ones not checked")
-    try:  # report a saved 8-K as saved, with its acceptance time
+        notes.append(
+            f"more than {depth} current reports since {since} for {ticker}; older ones not checked"
+        )
+    try:  # report a saved report as saved, with its acceptance time
         saved = {m.accession: m for m in store.filings(ticker)}
     except Exception as exc:
-        log.warning("8-K store unreadable for %s (%s)", ticker, type(exc).__name__)
+        log.warning("current report store unreadable for %s (%s)", ticker, type(exc).__name__)
         saved = {}
     for meta in recent:
         if meta.accession in saved:
@@ -106,8 +109,8 @@ def sync_current(
                 store.save(meta, text, [])
             except Exception as exc:
                 kind = type(exc).__name__
-                log.warning("8-K fetch failed %s %s (%s)", ticker, meta.accession, kind)
-                notes.append(f"8-K {meta.accession} unavailable for {ticker}")
+                log.warning("%s fetch failed %s %s (%s)", meta.form, ticker, meta.accession, kind)
+                notes.append(f"{meta.form} {meta.accession} unavailable for {ticker}")
                 continue
             new.append(meta)
         reports.append(meta)
@@ -117,7 +120,7 @@ def sync_current(
 def main(argv: list[str] | None = None) -> int:
     from tenq.edgar import EdgarSource
 
-    ap = argparse.ArgumentParser(description="Save a ticker's 8-Ks filed since a date")
+    ap = argparse.ArgumentParser(description="Save a ticker's 8-Ks or 6-Ks filed since a date")
     ap.add_argument("ticker")
     ap.add_argument("--since", type=date.fromisoformat, required=True, help="YYYY-MM-DD")
     ap.add_argument("--root", type=Path, default=DEFAULT_ROOT)

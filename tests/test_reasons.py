@@ -539,3 +539,15 @@ def test_words_that_argue_with_codes_clause_are_left_to_the_reader(text: str) ->
     # Deliberate: code writes the number clause and never judges the model's
     # own words for truth. They hold no figure, and the true number is beside them.
     assert isinstance(render(Reason(text, ()), PACK), Rendered)
+
+
+@pytest.mark.parametrize(
+    ("text", "figure"),
+    [
+        ("The 6-K reports a new contract.", None),
+        ("Its 6-K's exhibit names a buyer.", None),
+        ("A 20-F was filed.", "2"),  # the sheet does not show 20-Fs, so it still drops
+    ],
+)
+def test_a_6k_named_in_a_reason_is_not_a_figure(text: str, figure: str | None) -> None:
+    assert figure_in(text) == figure
