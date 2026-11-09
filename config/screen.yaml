@@ -2,61 +2,43 @@
 # day. No model sees a stock the screen leaves out; it is recorded as "Hold by
 # screen" and scored on prices like any other call, so the screen is judged too.
 # Any edit here, even a comment, needs a new version.
-version: screen-v6
+version: screen-v7
 
-# 1. A new filing filed after the previous session's day, up to the day the
-#    screen runs: an 8-K, 6-K, 10-Q or 10-K.
-#    v5 (decided 2026-11-08): the foreign forms (6-K, 20-F, 40-F, counted since
-#    v2) were turned off, because the facts pack read only 10-Q, 10-K and 8-K,
-#    so a stock picked for a 6-K reached the models without the filing it was
-#    picked for.
-#    v6 (L11): the facts pack now reads a 6-K the way it reads an 8-K (its text
-#    and press-release exhibits), so the 6-K counts again. 20-F and 40-F stay
-#    off: they are annual reports the pack does not read yet.
-forms: [8-K, 6-K, 10-Q, 10-K]
-
-#    Routine filers (v3, decided 2026-11-08): a new filing does not count when
-#    the company filed the same form on at least `filings` other days in the
-#    `sessions` sessions before. Over Aug 14 to Nov 6 2026, CCEP passed on a
-#    6-K alone on 17 of 60 sessions, FER 11, NBIS 7 and TRI 6 (buyback and
-#    similar notices), and MSTR passed on 8-Ks on 18 (weekly purchase reports).
-#    A big move still passes such a stock.
-#    v4: for an 8-K, the same kind means the same items as well (leaving out
-#    9.01, the exhibit list). Under v3 a weekly 8-K filer's earnings 8-K (item
-#    2.02), or any other major event, could never pass on the filing.
-#    Over the same 60 sessions MSTR now passes on a filing 4 times, its
-#    2026-10-29 earnings 8-K among them; CCEP stays at 1.
-routine:
-  sessions: 10
-  filings: 2
-
-# 2. A big move against QQQ, measured in the stock's usual daily moves against
-#    QQQ (the spread of its daily return less QQQ's over the 20 sessions before
-#    the move): over 1 session, or over 5 sessions scaled up by the square root
-#    of 5. v2: v1 measured against the stock's own total swings, which set too
-#    high a bar for stocks that move with QQQ and passed quiet stocks on any
-#    big QQQ day; it also counted the move in its own yardstick.
-move_sigma: 2.5
+# v7 (decided 2026-11-09): a stock passes when its next earnings release, by
+# Yahoo's earnings list, falls in this many sessions after the screened one.
+# Why: on prices from Dec 2024 to Oct 2026 (113 stocks, 454 days, each day's
+# picks set against that day's other stocks, size of the next 20 sessions' move
+# against QQQ), stocks with a release due in 5 sessions moved 11.3% against
+# 9.6% for the rest, 1.77 points more, well past luck (0.97). Windows of 1, 3
+# and 10 sessions gave much the same (1.6 to 1.8 points). Release dates for
+# that test came from EDGAR (8-K item 2.02); the 8 foreign companies file no
+# such item, so they were not tested, but Yahoo lists their dates and they are
+# screened like the rest.
+# The v6 reasons, a new filing (8-K, 6-K, 10-Q, 10-K, less routine filers) and
+# a big move against QQQ (2.5 usual moves over 1 or 5 sessions), were dropped:
+# on the same prices the stocks they picked moved no more than the rest
+# (0.15 points less). Kept alongside earnings, they cut its gap to 0.56 points,
+# passed 16 stocks on a typical day, and left no room for the random fill on 4
+# days in 10.
+earnings_sessions: 5
 
 # Not a reason to pass (decided 2026-11-08): a recent Buy, Sell or Short from
 # Jev or Opus. Each day's call is scored on its own 20 sessions whether or not
 # the stock is asked again, so re-asking adds nothing to the scoring, and it
 # feeds itself: an asked stock can get another call, which keeps it asked, until
-# the same names fill the cap. If following up open bets is wanted later, add
-# it back as its own small allowance of slots, never ahead of filings and moves.
+# the same names fill the cap.
 
-# At most this many go to the models a day. Past the cap, stocks are kept in
-# this order: a new filing first, then the bigger move.
+# At most this many go to the models a day. Past the cap, the soonest release
+# first; stocks reporting on the same day in an order drawn at random (seeded
+# by the day, so a rerun keeps the same ones). In the test above more than 25
+# had a release due on 10% of days.
 cap: 25
 
 # Random fill (decided 2026-11-08): when fewer than this many pass, the rest of
 # the slots up to it go to left-out stocks drawn at random (seeded by the day,
-# so a rerun draws the same). Why: on prices from Dec 2024 to Oct 2026 the
-# big-move rule picked stocks that moved no more afterwards than the ones it
-# left out, and fewer than 20 passed on 97% of days. Random fills are a fair
-# sample of what the screen skips, so the scorecard can show whether screened
-# stocks give the models more to act on than random ones. Filling from recent
-# Buy, Sell or Short calls instead was considered and not chosen: those calls
-# are picked by the models themselves, so they cannot serve as that check, and
-# in November 2026 there were only days of them, from an unusually wild week.
+# so a rerun draws the same). They are a fair sample of what the screen skips,
+# so the scorecard can show whether screened stocks give the models more to act
+# on than random ones. On a typical day 5 stocks had a release due in the test
+# above, so about 15 slots go to the fill; on 4% of days none did, and all 20
+# are drawn at random.
 fill_to: 20

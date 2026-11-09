@@ -322,6 +322,8 @@ def calls_from(record: dict[str, Any]) -> list[Made]:
     versions = {k: str(v) for k, v in (record.get("versions") or {}).items()}
     old_short = short_meant_fall(record)
     groups = screen_groups(record)
+    if groups:  # so the screen checks can judge each screen version on its own
+        versions["screen"] = str(record["screen"].get("version"))
     out = []
     for s in record.get("stocks") or []:
         call = s.get("call") or {}
@@ -992,6 +994,16 @@ def on_picks(rows: Sequence[Row], cfg: ScoreConfig) -> dict[str, Row]:
     return out
 
 
+def screen_version(row: Row) -> str | None:
+    return (row.get("versions") or {}).get("screen")
+
+
+def current_screen(records: Iterable[dict[str, Any]]) -> str | None:
+    """The screen version of the newest screened day: the one the checks judge."""
+    days = [(r["day"], str(r["screen"].get("version"))) for r in records if screen_groups(r)]
+    return max(days)[1] if days else None
+
+
 def screen_check(
     runs: Path,
     today: date,
@@ -1000,15 +1012,27 @@ def screen_check(
     prices: PriceFetch,
     *,
     save: bool,
+    current: str | None = None,
 ) -> Row:
-    """Both screen checks. Check 1 needs its own price fetch; if that fails,
-    check 2 (from the scored calls) still stands."""
-    out: Row = {"calls": on_picks(calls, cfg)}
+    """Both screen checks, on `current`'s days only: a new screen picks for new
+    reasons, so its days are not pooled with an older one's. Check 1 needs its
+    own price fetch; if that fails, check 2 (from the scored calls) still stands."""
+
+    def mine(rows: Iterable[Row]) -> list[Row]:
+        return [r for r in rows if current is None or screen_version(r) == current]
+
+    out: Row = {"version": current, "calls": on_picks(mine(calls), cfg)}
     try:
-        done, opened, new = screen_update(runs, cfg, today, prices, save=save)
+        all_done, all_opened, all_new = screen_update(runs, cfg, today, prices, save=save)
     except Exception as exc:  # the call scorecard must not go down with it
         log.warning("screen check failed (%s)", type(exc).__name__)
         return out | {"error": f"check 1 could not be made ({type(exc).__name__})"}
+    done, opened, new = mine(all_done), mine(all_opened), mine(all_new)
+    earlier: dict[str, int] = {}
+    for r in [*all_done, *all_opened]:
+        v = screen_version(r)
+        if current is not None and v != current:
+            earlier[str(v)] = earlier.get(str(v), 0) + 1
     held = [r for r in new if r["status"] == "scored" and r["group"] == "held"]
     held.sort(key=lambda r: (-abs(r["excess"]), r["day"], r["ticker"]))
     return out | {
@@ -1023,6 +1047,7 @@ def screen_check(
         "biggest_held": [
             {"day": r["day"], "ticker": r["ticker"], "excess": r["excess"]} for r in held[:3]
         ],
+        "earlier": dict(sorted(earlier.items())),
     }
 
 
@@ -1087,7 +1112,9 @@ def scorecard(
         "baselines": baselines(scored),
         "call_prompts": versions,
         "left_out": [x for r in records for x in left_out(r)],
-        "screen": screen_check(runs, today, cfg, scored, prices, save=save),
+        "screen": screen_check(
+            runs, today, cfg, scored, prices, save=save, current=current_screen(records)
+        ),
         "this_week": _costs(week_records),
     }
 
@@ -1197,6 +1224,12 @@ def _days(n: int) -> str:
 def screen_lines(sc: Row, first: int) -> list[str]:
     """The two screen checks in plain words; nothing before the first screened day."""
     out: list[str] = []
+    if sc.get("earlier"):
+        gone = ", ".join(f"{n} by {v}" for v, n in sc["earlier"].items())
+        out.append(
+            f"Screen checks are on {sc.get('version')} only; stock-days screened by an "
+            f"earlier screen are left out ({gone})."
+        )
     mv = sc.get("moves") or {}
     wait = sc.get("waiting") or 0
     if sc.get("error"):
