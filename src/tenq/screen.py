@@ -18,7 +18,7 @@ stock whose dates could not be read, or that has no upcoming date, is not
 screened: neither passed nor held, and never drawn for the fill. The exception
 is a stock that reported in the last `JUST_REPORTED_DAYS` days: Yahoo lists the
 next date only some time after a release, and the next one is months away, so
-it is held.
+it is held. Past that, a missing date points to a fault in Yahoo's list.
 
 Until screen-v7 a stock passed on a new filing or a big move against QQQ.
 Neither picked stocks that moved more than the ones left out over two years of
@@ -59,8 +59,11 @@ TOP_LEVEL = {"version", "earnings_sessions", "cap", "fill_to"}
 MAX_FAILED_SHARE = 0.1  # more stocks than this with no usable date: the screen is refused
 # Yahoo lists a stock's next release only some time after its last one. A stock
 # that reported this recently with no next date yet is held: on Yahoo's lists of
-# 2026-11-09 no stock's releases came closer than 49 days apart (2,533 gaps).
-JUST_REPORTED_DAYS = 30
+# 2026-11-09 no stock's releases came closer than 49 days apart (2,533 gaps), and
+# every stock that had reported 3 to 30 days before (75) already had its next date.
+# One still without a date a week on points to a fault in the list, so it counts
+# as not screened, toward the refusal.
+JUST_REPORTED_DAYS = 7
 
 
 @dataclass(frozen=True)

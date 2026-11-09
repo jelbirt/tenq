@@ -299,14 +299,14 @@ def test_a_stock_that_just_reported_with_no_next_date_yet_is_held() -> None:
     out = _screen(
         {
             "TODAY": [_at(DAY, hour=7)],  # reported this morning; Yahoo has no next date yet
-            "MONTH": [_at(date(2026, 10, 7))],  # 30 days before the run: still held
-            "OLDER": [_at(date(2026, 10, 6))],  # 31 days: no decision
+            "WEEK": [_at(date(2026, 10, 30))],  # 7 days before the run: still held
+            "OLDER": [_at(date(2026, 10, 29))],  # 8 days: a fault in the list, no decision
             "NEXT": [_at(DAY, hour=7), _at(LATER)],  # a next date: the usual way
         },
         cfg=replace(CFG, fill_to=0),
     )
-    assert out["held"] == ["TODAY", "MONTH", "NEXT"] and out["unscreened"] == ["OLDER"]
-    assert out["just_reported"] == {"TODAY": "2026-11-06", "MONTH": "2026-10-07"}
+    assert out["held"] == ["TODAY", "WEEK", "NEXT"] and out["unscreened"] == ["OLDER"]
+    assert out["just_reported"] == {"TODAY": "2026-11-06", "WEEK": "2026-10-30"}
     assert out["next_earnings"] == {"NEXT": LATER.isoformat()}
     assert out["dates_failed"] == 1 and not refusals(out | {"universe": 20})
     assert "3 are Hold by screen (2 just reported, no next date yet)" in "\n".join(lines(out))
@@ -326,9 +326,9 @@ def test_a_release_after_the_run_is_not_one_just_reported() -> None:
 
 def test_just_reported_counts_days_in_new_york_not_utc() -> None:
     late = datetime(2026, 11, 7, 3, tzinfo=UTC)  # 22:00 on the 6th in New York
-    assert just_reported([_at(date(2026, 10, 7), hour=7)], late) == date(2026, 10, 7)
-    evening = _at(date(2026, 10, 7), hour=21).astimezone(UTC)  # already the 8th in UTC
-    assert just_reported([evening], RUN) == date(2026, 10, 7)
+    assert just_reported([_at(date(2026, 10, 30), hour=7)], late) == date(2026, 10, 30)
+    evening = _at(date(2026, 10, 30), hour=21).astimezone(UTC)  # already the 31st in UTC
+    assert just_reported([evening], RUN) == date(2026, 10, 30)
 
 
 def test_a_stock_that_could_not_be_screened_is_never_drawn_for_the_fill() -> None:

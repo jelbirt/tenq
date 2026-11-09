@@ -151,9 +151,10 @@ day are taken in an order drawn at random, the same on a rerun.
 When fewer than 20 pass, the rest of the 20 are drawn at random from the stocks left out, the
 same draw on a rerun, as a check on the screen itself. Everyone else would be "Hold by screen",
 except a stock whose dates could not be read, or that has no upcoming date: that is listed as
-not screened, and is never drawn for the fill. A stock that reported in the last 30 days but has
-no next date yet (Yahoo posts it some time after a release) is held: its next release is months
-away. The run stops, and its JSON says `"ok": false`,
+not screened, and is never drawn for the fill. A stock that reported in the last 7 days but has
+no next date yet is held: Yahoo posts the next date a few days after a release, and that release
+is months away. A stock still without a date after a week points to a fault in Yahoo's list, so it
+counts as not screened. The run stops, and its JSON says `"ok": false`,
 if QQQ's bar for the session is missing, or more than 1 in 10 stocks have no usable date.
 The daily run asks the models about the stocks that passed plus the random fill (20 to 25 a
 day) and keeps the whole screen in its record, every stock's next release date included, so
