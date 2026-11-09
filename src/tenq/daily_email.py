@@ -132,10 +132,13 @@ def screen_lines(record: dict[str, Any]) -> list[str]:
             "Today's calls are not a screened day.",
         ]
     chosen, filled = sc.get("chosen") or [], sc.get("filled") or []
+    held = sc.get("held") or []
+    recent = sum(1 for t in held if t in (sc.get("just_reported") or {}))
     out = [
         f"Screen {sc.get('version')}: {len(chosen)} of {sc.get('universe')} stocks passed"
         + (f", {len(filled)} more drawn at random as a check" if filled else "")
-        + f"; {len(sc.get('held') or [])} Hold by screen"
+        + f"; {len(held)} Hold by screen"
+        + (f" ({recent} just reported, no next date yet)" if recent else "")
         + (f"; {len(sc['unscreened'])} could not be screened" if sc.get("unscreened") else "")
         + "."
     ]

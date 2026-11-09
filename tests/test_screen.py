@@ -193,6 +193,8 @@ def test_a_late_run_counts_from_the_open_it_can_still_make() -> None:
     out = _screen(
         {
             "OUT": [_at(date(2026, 11, 9), hour=7), LATER_RELEASE],  # out before the run
+            "NOON": [_at(date(2026, 11, 9), hour=12)],  # to come, but before Tuesday's open
+            "MONDAY": [_at(date(2026, 11, 9))],  # 16:00 Monday: before Tuesday's open too
             "SIXTH": [_at(date(2026, 11, 16))],  # 5th session from Tuesday
             "SEVENTH": [_at(date(2026, 11, 17))],
         },
@@ -200,7 +202,7 @@ def test_a_late_run_counts_from_the_open_it_can_still_make() -> None:
         now=late,
     )
     assert _tickers(out["chosen"]) == ["SIXTH"]
-    assert out["held"] == ["OUT", "SEVENTH"]
+    assert out["held"] == ["OUT", "NOON", "MONDAY", "SEVENTH"]
     assert (out["due_from"], out["due_through"]) == ("2026-11-10", "2026-11-16")
 
 
@@ -224,6 +226,12 @@ def test_a_release_due_in_the_window_passes_and_nothing_else_does() -> None:
     assert out["next_earnings"] == {"SOON": "2026-11-13", "LATER": "2026-11-16",
                                     "TODAY": "2027-02-05"}  # fmt: skip
     assert (out["due_from"], out["due_through"]) == ("2026-11-09", "2026-11-13")
+
+
+def test_a_release_after_the_evening_run_on_the_screened_day_is_not_due() -> None:
+    out = _screen({"EVE": [_at(DAY, hour=18)]}, cfg=replace(CFG, fill_to=0))  # run at 17:30
+    assert out["chosen"] == [] and out["held"] == ["EVE"]  # its jump comes before the entry
+    assert out["next_earnings"] == {"EVE": "2026-11-06"}
 
 
 def test_a_release_before_the_next_open_passes() -> None:
@@ -301,11 +309,13 @@ def test_a_stock_that_just_reported_with_no_next_date_yet_is_held() -> None:
     assert out["just_reported"] == {"TODAY": "2026-11-06", "MONTH": "2026-10-07"}
     assert out["next_earnings"] == {"NEXT": LATER.isoformat()}
     assert out["dates_failed"] == 1 and not refusals(out | {"universe": 20})
+    assert "3 are Hold by screen (2 just reported, no next date yet)" in "\n".join(lines(out))
 
 
 def test_a_stock_that_just_reported_can_be_drawn_for_the_fill() -> None:
     out = _screen({"TODAY": [_at(DAY, hour=7)]}, ["TODAY"])
     assert out["filled"] == ["TODAY"] and out["unscreened"] == []
+    assert "just reported" not in "\n".join(lines(out))  # drawn, so not among the held
 
 
 def test_a_release_after_the_run_is_not_one_just_reported() -> None:
@@ -399,7 +409,9 @@ def test_the_fill_never_draws_more_than_it_can(left: list[str], slots: int, coun
 def test_the_output_says_the_window_and_why_each_stock_passed() -> None:
     out = _screen({"SOON": [_at(date(2026, 11, 13))]}, cfg=replace(CFG, fill_to=0))
     text = lines(out)
-    assert text[0] == ("Screen screen-v7 for the 2026-11-06 session (earnings due by 2026-11-13):")
+    assert text[0] == (
+        "Screen screen-v7 for the 2026-11-06 session (earnings due 2026-11-09 to 2026-11-13):"
+    )
     assert "   1. SOON: earnings due 2026-11-13" in text
 
 

@@ -120,7 +120,8 @@ def window(day: date, now: datetime, sessions: int) -> tuple[date, date]:
     from: from the first session that opens after the run. On the evening run
     that is the session after `day`; a run late enough to miss that open moves
     the window to the next one, so a release counts only if it lands where the
-    calls are scored."""
+    calls are scored. One still to come but dated before `first`, such as one
+    on the screened day after the run, comes before the calls enter: not due."""
     first = max(next_session(day), planned_entry(now))
     last = first
     for _ in range(sessions - 1):
@@ -177,7 +178,7 @@ def screen(
         elif nxt is None:
             st.unchecked.append("no upcoming earnings date")
         else:
-            st.earnings, st.due = nxt.isoformat(), nxt <= last
+            st.earnings, st.due = nxt.isoformat(), first <= nxt <= last
         stocks.append(st)
     # Past the cap: the soonest release first; a day's ties in a seeded random order.
     passed = sorted((s for s in stocks if s.due), key=lambda s: s.ticker)
@@ -224,13 +225,15 @@ def _row(s: Stock) -> dict[str, Any]:
 
 def lines(result: dict[str, Any]) -> list[str]:
     chosen, over = result["chosen"], result["over_cap"]
+    recent = sum(1 for t in result["held"] if t in result.get("just_reported", {}))
     out = [
         f"Screen {result['version']} for the {result['day']} session "
-        f"(earnings due by {result['due_through']}):",
+        f"(earnings due {result['due_from']} to {result['due_through']}):",
         f"{len(chosen)} of {result['universe']} stocks pass"
         + (f"; {len(over)} more passed but are over the cap of {result['cap']}" if over else "")
         + (f"; {len(result['filled'])} more drawn at random" if result["filled"] else "")
         + f"; {len(result['held'])} are Hold by screen"
+        + (f" ({recent} just reported, no next date yet)" if recent else "")
         + (
             f"; {len(result['unscreened'])} could not be screened." if result["unscreened"] else "."
         ),

@@ -1640,10 +1640,13 @@ def test_a_failed_check_1_still_says_which_screen_check_2_judges(tmp_path: Path)
     card = scorecard(tmp_path, days[-1], CFG, fetch, save=False)
     sc = card["screen"]
     assert sc["error"] == "check 1 could not be made (RuntimeError)"
-    assert sc["earlier"] == {"screen-v6": 2}  # the v6 day's two called stocks
+    assert sc["earlier_calls"] == {"screen-v6": 2}  # the v6 day's two called stocks
+    assert "earlier" not in sc  # no screen ledger to count stock-days from
     assert sc["calls"]["jev"]["days"] == 1  # check 2 on the v7 day only
     assert card["scored"] == 5  # the fallback day's call is scored, but not by the screen
+    text = lines(card)
     assert (
-        "Screen checks are on screen-v7 only; stock-days screened by an earlier screen are "
+        "Screen check 2 is on screen-v7 only; calls on days screened by an earlier screen are "
         "left out (2 by screen-v6)."
-    ) in lines(card)
+    ) in text
+    assert not any(t.startswith("Screen checks are on") for t in text)

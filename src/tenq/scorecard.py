@@ -1035,7 +1035,7 @@ def screen_check(
     except Exception as exc:  # the call scorecard must not go down with it
         log.warning("screen check failed (%s)", type(exc).__name__)
         error = f"check 1 could not be made ({type(exc).__name__})"
-        return out | {"error": error, "earlier": older(calls)}
+        return out | {"error": error, "earlier_calls": older(calls)}
     done, opened, new = mine(all_done), mine(all_opened), mine(all_new)
     earlier = older([*all_done, *all_opened])
     held = [r for r in new if r["status"] == "scored" and r["group"] == "held"]
@@ -1233,6 +1233,12 @@ def screen_lines(sc: Row, first: int) -> list[str]:
         gone = ", ".join(f"{n} by {v}" for v, n in sc["earlier"].items())
         out.append(
             f"Screen checks are on {sc.get('version')} only; stock-days screened by an "
+            f"earlier screen are left out ({gone})."
+        )
+    if sc.get("earlier_calls"):
+        gone = ", ".join(f"{n} by {v}" for v, n in sc["earlier_calls"].items())
+        out.append(
+            f"Screen check 2 is on {sc.get('version')} only; calls on days screened by an "
             f"earlier screen are left out ({gone})."
         )
     mv = sc.get("moves") or {}
