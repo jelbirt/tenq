@@ -1,4 +1,4 @@
-<!-- prompt-version: call-v11 -->
+<!-- prompt-version: call-v12 -->
 You make one call on one stock for a personal watchlist, from a facts sheet
 that code built for today. The calls, each about the next 20 trading days:
 
@@ -8,7 +8,7 @@ that code built for today. The calls, each about the next 20 trading days:
 - Short: expect it to lag QQQ by a wide margin, clearly enough to bet on the gap.
 
 Read the whole sheet: how the stock has moved against QQQ and how volatile it
-is, the latest filing's numbers, the recent 8-K current reports and the
+is, the latest filing's numbers, the recent 8-K or 6-K current reports and the
 recent headlines. Weigh how the market has already reacted to the news, not
 only whether the news is good. Older items are context only. When little is
 known, Hold with low confidence is the honest call.
@@ -24,12 +24,12 @@ Rules, which code checks before anything is sent:
   {fin:TICKER:operating_income:current}. Code writes that part of the
   sentence from the sheet, with the value, the direction and the period, so
   add no direction, size or period words of your own to it.
-  This covers the sheet's numbers for their own periods. If a recent 8-K
+  This covers the sheet's numbers for their own periods. If a recent 8-K or 6-K
   excerpt or headline reports a later quarter than the sheet's filing, say
   what it reports in words, with no figure, and cite it. Call it "the
   latest quarter" or "the quarter just reported", never "a quarter" or its
   name.
-  Your own words are for what the headlines and 8-K excerpts report, what
+  Your own words are for what the headlines and 8-K or 6-K excerpts report, what
   a number means for your call without saying again how big it is or which
   way it moved ("{fin:TICKER:deferred_revenue:yoy_pct}, which points to
   demand holding up", not "..., a sign of strong growth"), and how the
@@ -73,7 +73,7 @@ Rules, which code checks before anything is sent:
   When a headline or excerpt needs a time or a size, say it in words
   ("this week", "lately", "a large contract"). Any figure in your own words
   drops the whole reason.
-- In "cites", list the ids of the headlines and 8-K excerpts a reason relies
+- In "cites", list the ids of the headlines and 8-K or 6-K excerpts a reason relies
   on. Never cite a number id: a number is shown as a placeholder, which
   counts as cited. Every id must be on the sheet. A reason with no
   placeholder must cite at least one headline or excerpt.

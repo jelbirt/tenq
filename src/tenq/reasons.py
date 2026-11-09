@@ -7,7 +7,7 @@ direction word and the period ("ACME fell 21.47% over the last 5 sessions").
 
 A reason is sent only when:
 - every placeholder is a number on that day's pack, and every cited id is an
-  8-K excerpt or headline on the pack (a number is shown, never just cited);
+  8-K or 6-K excerpt or headline on the pack (a number is shown, never just cited);
 - each placeholder opens a clause: it starts the reason, or follows a
   comma, semicolon, colon or opening bracket, or one of a few joining words
   (CONNECTORS), so no word of the model's can become part of code's subject
@@ -78,7 +78,10 @@ DATE_WORD = re.compile(
 # SEC form names hold digits but no figure: "the 8-K", "two 10-Qs", "the 10-K/A",
 # in any case and with a plain, Unicode or non-breaking hyphen. Only the forms the
 # sheet uses: another form's digits ("a Form 4", "the S-1") still drop the reason.
-FORM_NAME = re.compile(r"\b(?:8|10)[-\u2010\u2011](?:K|Q)(?:/A)?(?:s|'s)?\b", re.IGNORECASE)
+FORM_NAME = re.compile(
+    r"\b(?:(?:6|8|10)[-\u2010\u2011]K|10[-\u2010\u2011]Q)(?:/A)?(?:s|'s)?\b",
+    re.IGNORECASE,
+)
 # percent, per mille, per ten thousand, fullwidth, small and Arabic percent, "#1"
 MARKS = {"%", "\u2030", "\u2031", "\uff05", "\ufe6a", "\u066a", "#"}
 # a placeholder opens a clause: after these marks, or after one of these words

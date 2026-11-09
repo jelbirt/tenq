@@ -1,9 +1,9 @@
 """The daily screen (L6): code alone picks which stocks Jev and Opus see.
 
 A stock passes when either of two things holds (config/screen.yaml):
-1. it filed one of `forms` after the previous session's day (8-K, 10-Q or
-   10-K; a foreign company's 6-K, 20-F or 40-F is off until the facts pack
-   reads those forms);
+1. it filed one of `forms` after the previous session's day (8-K, 6-K, 10-Q
+   or 10-K; a foreign company's 20-F or 40-F is off until the facts pack
+   reads those annual reports);
 2. it moved a lot against QQQ for that stock: over 1 session, or over 5, by
    at least `move_sigma` of its usual daily moves against QQQ, measured over
    the 20 sessions before the move.

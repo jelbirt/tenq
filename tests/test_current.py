@@ -79,13 +79,23 @@ def test_a_failed_8k_is_a_note_and_the_others_still_save(tmp_path: Path) -> None
     assert not store.has("CRWD", NEW.accession)  # next run retries it
 
 
+def test_a_failed_6k_is_named_as_a_6k(tmp_path: Path) -> None:
+    from dataclasses import replace
+
+    six_k = replace(NEW, form="6-K", items="")
+    got = sync_current(
+        Source([six_k], {six_k.accession}), FilingStore(tmp_path), "CRWD", date(2026, 11, 1)
+    )
+    assert got.notes == [f"6-K {six_k.accession} unavailable for CRWD"]
+
+
 def test_a_failed_listing_is_a_note(tmp_path: Path) -> None:
     class Down(Source):
         def list_current(self, ticker: str, limit: int) -> list[FilingMeta]:
             raise ConnectionError("edgar down")
 
     got = sync_current(Down([]), FilingStore(tmp_path), "CRWD", date(2026, 11, 1))
-    assert got.reports == [] and got.notes == ["8-K list unavailable for CRWD"]
+    assert got.reports == [] and got.notes == ["current reports (8-K, 6-K) unavailable for CRWD"]
 
 
 def test_items_get_plain_names() -> None:
@@ -119,7 +129,9 @@ def test_an_8k_without_a_filing_date_is_a_note(tmp_path: Path) -> None:
 
 def test_a_full_listing_since_the_date_says_older_ones_were_not_checked(tmp_path: Path) -> None:
     got = sync_current(Source([NEW, MID]), FilingStore(tmp_path), "CRWD", date(2026, 11, 1), 2)
-    assert got.notes == ["more than 2 8-Ks since 2026-11-01 for CRWD; older ones not checked"]
+    assert got.notes == [
+        "more than 2 current reports since 2026-11-01 for CRWD; older ones not checked"
+    ]
     short = sync_current(Source([NEW, OLD]), FilingStore(tmp_path), "CRWD", date(2026, 11, 1), 2)
     assert short.notes == []  # the listing reached back past the date
 

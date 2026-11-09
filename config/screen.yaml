@@ -2,17 +2,18 @@
 # day. No model sees a stock the screen leaves out; it is recorded as "Hold by
 # screen" and scored on prices like any other call, so the screen is judged too.
 # Any edit here, even a comment, needs a new version.
-version: screen-v5
+version: screen-v6
 
 # 1. A new filing filed after the previous session's day, up to the day the
-#    screen runs: an 8-K, 10-Q or 10-K.
+#    screen runs: an 8-K, 6-K, 10-Q or 10-K.
 #    v5 (decided 2026-11-08): the foreign forms (6-K, 20-F, 40-F, counted since
-#    v2) are off until the facts pack can read them. It reads only 10-Q, 10-K
-#    and 8-K, so a stock picked for a 6-K reached the models without the filing
-#    it was picked for. The foreign filers (MNDY, ARM, ASML, CCEP, FER, NBIS,
-#    PDD, TRI) can still pass on a big move or the random fill. The PR that
-#    teaches the facts pack those forms turns them back on here.
-forms: [8-K, 10-Q, 10-K]
+#    v2) were turned off, because the facts pack read only 10-Q, 10-K and 8-K,
+#    so a stock picked for a 6-K reached the models without the filing it was
+#    picked for.
+#    v6 (L11): the facts pack now reads a 6-K the way it reads an 8-K (its text
+#    and press-release exhibits), so the 6-K counts again. 20-F and 40-F stay
+#    off: they are annual reports the pack does not read yet.
+forms: [8-K, 6-K, 10-Q, 10-K]
 
 #    Routine filers (v3, decided 2026-11-08): a new filing does not count when
 #    the company filed the same form on at least `filings` other days in the

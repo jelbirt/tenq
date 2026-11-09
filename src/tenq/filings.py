@@ -32,12 +32,12 @@ class FilingMeta:
     ticker: str
     cik: int
     company: str
-    form: str  # "10-Q", "10-K" or "8-K"
+    form: str  # "10-Q", "10-K", "8-K" or "6-K"
     accession: str  # "0001535527-26-000031"
     filed: str  # ISO date the filing was accepted
     period: str  # ISO date the reporting period ends (an 8-K: the event date)
     url: str
-    items: str = ""  # an 8-K's item numbers as EDGAR lists them, e.g. "2.02,9.01"
+    items: str = ""  # an 8-K's item numbers as EDGAR lists them, e.g. "2.02,9.01"; a 6-K has none
     accepted: str = ""  # EDGAR's acceptance time, ISO with offset; "" when not known
 
     @property
@@ -55,6 +55,10 @@ class Fact:
     end: str | None
     instant: str | None  # instant (balance sheet) facts carry only this
     decimals: int | None
+    # ISO 4217 code of a money unit ("USD", "EUR"), from the filing's own unit
+    # definition; a per-share unit carries its numerator's code ("USD" for USD per
+    # share). None for shares, ratios, or facts saved before this field existed.
+    currency: str | None = None
 
 
 @dataclass(frozen=True)

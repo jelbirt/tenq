@@ -7,7 +7,7 @@
 # reads text only: no question asks it to compare or combine figures, so the
 # filing's trend is read in code too (rules.trend).
 #
-# "Recent" is decided in code: the pack prints recent 8-Ks and headlines
+# "Recent" is decided in code: the pack prints recent 8-K or 6-K reports and headlines
 # (7 days old or less) in their own sections, apart from older context.
 #
 # Jev leans toward earlier options, so every choice lists its "nothing
@@ -18,12 +18,13 @@
 # Types (OpenRouter System One): noul is the probability a statement is
 # true; choice picks one label from criteria; score picks a level from an
 # ordered list (0 is the first). Changing any question bumps the version.
-version: jev-q8
+version: jev-q9
 questions:
   material:
     type: noul
     instructions: >-
-      Does any item in the recent 8-K or recent headline sections report something that could change the company's revenue, profit or risk
+      Does any item in the recent current report or recent headline sections
+      report something that could change the company's revenue, profit or risk
       by more than a routine amount (results, guidance, a large deal, an
       acquisition, a security incident, a lawsuit, an executive departure, an
       index change)?
@@ -33,7 +34,7 @@ questions:
   direction:
     type: choice
     instructions: >-
-      Taken together, is the information in the recent 8-K and recent headline
+      Taken together, is the information in the recent current report and recent headline
       sections better or worse for this company's business than investors
       would already have expected (not for its stock price)? Routine items
       are what companies normally put out and count as neutral, whether they
@@ -54,7 +55,7 @@ questions:
     type: choice
     instructions: >-
       What is the strongest kind of evidence behind the most important item
-      in the recent 8-K and recent headline sections? Headlines are not
+      in the recent current report and recent headline sections? Headlines are not
       labelled; judge each one's kind from its site (when shown), headline
       and summary. A site such as finance.yahoo.com may be republishing
       another outlet's story.
@@ -63,11 +64,11 @@ questions:
       opinion: Analyst or columnist opinion, previews, or speculation.
       reporting: News reporting of a specific event.
       company: A company announcement or guidance.
-      reported: Reported results or a filed document (10-Q, 10-K, 8-K).
+      reported: Reported results or a filed document (10-Q, 10-K, 8-K, 6-K).
   guidance:
     type: choice
     instructions: >-
-      Did the company give or change its outlook (guidance) in the recent 8-K
+      Did the company give or change its outlook (guidance) in the recent current report
       or recent headline sections? Ignore guidance in older items. Judge only
       from what the text says in words (raised, lowered, cut, reaffirmed,
       maintained). Never compare figures yourself; guidance given only as
@@ -82,7 +83,8 @@ questions:
   risk:
     type: noul
     instructions: >-
-      Does the recent 8-K or recent headline section report a risk event for
+      Does any item in the recent current report or recent headline sections
+      report a risk event for
       this company: a lawsuit, investigation, outage or breach, a
       downgrade, an executive leaving, or a customer loss?
     criteria:

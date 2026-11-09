@@ -1,10 +1,12 @@
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, ClassVar
 
 import edgar
 import pytest
 
-from tenq.edgar import EdgarSource
+from tenq.edgar import EdgarSource, currencies_of, facts_from_frame
+from tenq.filings import FilingMeta
 
 
 @dataclass
@@ -131,3 +133,151 @@ def test_the_acceptance_time_comes_from_the_header_in_eastern_time(
         "2026-07-03T16:05:00-04:00",
         "",
     ]
+
+
+def test_a_foreign_filers_6k_lists_and_reads_like_an_8k(source: EdgarSource) -> None:
+    """L11: a 6-K is a foreign company's current report. It lists with the 8-Ks
+    (no items: a 6-K has none) and reads the same way, text plus EX-99."""
+    FakeCompany.filings = [
+        FakeFiling(
+            "6-K",
+            "0000937966-26-000050",
+            items="",
+            attachments=[Att("EX-99.1", "Q3 results"), Att("EX-101.INS", "<xbrl/>")],
+        ),
+        FakeFiling("20-F", "0000937966-26-000010", items=""),
+    ]
+    (meta,) = source.list_current("ASML", 5)
+    assert (meta.form, meta.items) == ("6-K", "")
+    assert source.fetch_current(meta) == "FORM 8-K\n\nEXHIBIT 99.1\n\nQ3 results"
+
+
+def test_a_facts_currency_comes_from_the_filings_unit_definition() -> None:
+    """A filer names its own unit ids, so "usd" or "U_EUR" says nothing for sure;
+    the unit's iso4217 measure does. Shares and per-share units get none."""
+    units = {
+        "usd": {"type": "simple", "measure": "iso4217:USD"},
+        "U1": {"type": "simple", "measure": "iso4217:EUR"},
+        "shares": {"type": "simple", "measure": "xbrli:shares"},
+        "usdPerShare": {
+            "type": "divide",
+            "numerator": ["iso4217:USD"],
+            "denominator": ["xbrli:shares"],
+        },
+    }
+    assert currencies_of(units) == {"usd": "USD", "U1": "EUR"}
+    other_prefix = {  # a filer may bind ISO 4217 to its own prefix name
+        "a": {"type": "simple", "measure": "ISO4217:GBP"},
+        "b": {"type": "simple", "measure": "iso4217-2:CAD"},
+        "c": {"type": "simple", "measure": "us-gaap:USD"},  # not the ISO namespace
+        "d": {"type": "simple", "measure": "iso4217:usdollar"},  # not a code
+    }
+    assert currencies_of(other_prefix) == {"a": "GBP", "b": "CAD"}
+    row = {"concept": "us-gaap:Revenues", "period_start": "2026-07-01", "period_end": "2026-09-30"}
+    rows = [
+        row | {"numeric_value": 10.0, "unit_ref": "usd"},
+        row | {"numeric_value": 9.0, "unit_ref": "U1"},
+        row | {"concept": "us-gaap:SharesOutstanding", "numeric_value": 5.0, "unit_ref": "shares"},
+    ]
+    got = {(f.unit, f.currency) for f in facts_from_frame(iter(rows), currencies_of(units))}
+    assert got == {("usd", "USD"), ("U1", "EUR"), ("shares", None)}
+    assert {f.currency for f in facts_from_frame(iter(rows))} == {None}
+
+
+class FakeFrame:
+    def __init__(self, rows: list[dict[str, Any]]) -> None:
+        self.rows = rows
+
+    def to_dict(self, orient: str) -> list[dict[str, Any]]:
+        assert orient == "records"
+        return self.rows
+
+
+@dataclass
+class FakeXbrl:
+    rows: list[dict[str, Any]]
+    units: dict[str, Any]
+
+    @property
+    def facts(self) -> Any:
+        frame = FakeFrame(self.rows)
+        return type("Facts", (), {"to_dataframe": lambda _self: frame})()
+
+
+@dataclass
+class FilingWithXbrl:
+    xbrl_data: FakeXbrl
+
+    def text(self) -> str:
+        return "FORM 10-Q"
+
+    def xbrl(self) -> FakeXbrl:
+        return self.xbrl_data
+
+
+def test_fetch_tags_each_fact_with_the_currency_its_unit_names(
+    source: EdgarSource, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """The guard only works if fetch reads the filing's unit definitions; without
+    them every fact's currency is unknown, and the log says so."""
+    row = {
+        "concept": "us-gaap:Revenues",
+        "numeric_value": 9.0,
+        "unit_ref": "U1",
+        "period_start": "2026-07-01",
+        "period_end": "2026-09-30",
+    }
+    euros = {"U1": {"type": "simple", "measure": "iso4217:EUR"}}
+    meta = FilingMeta("ASML", 937966, "ASML", "10-Q", "0000937966-26-000001", "d", "d", "u")
+    monkeypatch.setattr(source, "_filing", lambda m: FilingWithXbrl(FakeXbrl([row], euros)))
+    _, (fact,) = source.fetch(meta)
+    assert fact.currency == "EUR"
+    assert "currencies unknown" not in caplog.text
+    monkeypatch.setattr(source, "_filing", lambda m: FilingWithXbrl(FakeXbrl([row], {})))
+    _, (fact,) = source.fetch(meta)
+    assert fact.currency is None
+    assert "no XBRL unit definitions in 0000937966-26-000001: currencies unknown" in caplog.text
+
+
+INSTANCE = """<?xml version="1.0" encoding="UTF-8"?>
+<xbrli:xbrl xmlns:xbrli="http://www.xbrl.org/2003/instance"
+  xmlns:iso4217="http://www.xbrl.org/2003/iso4217" xmlns:us-gaap="http://fasb.org/us-gaap/2024">
+  <xbrli:context id="Q3">
+    <xbrli:entity><xbrli:identifier scheme="http://www.sec.gov/CIK">1</xbrli:identifier>
+    </xbrli:entity>
+    <xbrli:period><xbrli:startDate>2026-07-01</xbrli:startDate>
+      <xbrli:endDate>2026-09-30</xbrli:endDate></xbrli:period>
+  </xbrli:context>
+  <xbrli:unit id="U1"><xbrli:measure>iso4217:EUR</xbrli:measure></xbrli:unit>
+  <xbrli:unit id="usd"><xbrli:measure>iso4217:USD</xbrli:measure></xbrli:unit>
+  <us-gaap:Revenues contextRef="Q3" unitRef="U1" decimals="-6">5000000</us-gaap:Revenues>
+  <us-gaap:GrossProfit contextRef="Q3" unitRef="usd" decimals="-6">3000000</us-gaap:GrossProfit>
+</xbrli:xbrl>
+"""
+
+
+def test_a_real_xbrl_parse_gives_each_fact_its_currency(
+    source: EdgarSource, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Through edgartools' own parser, offline: an upgrade that changes how units
+    or currencies come out fails here, not silently in the dollars-only guard."""
+    from edgar.xbrl import XBRL
+
+    path = tmp_path / "instance.xml"
+    path.write_text(INSTANCE)
+    parsed = XBRL.from_files(instance_file=path)
+
+    class Parsed:
+        def text(self) -> str:
+            return "FORM 10-Q"
+
+        def xbrl(self) -> Any:
+            return parsed
+
+    meta = FilingMeta("ACME", 1, "Acme", "10-Q", "0000000001-26-000001", "d", "d", "u")
+    monkeypatch.setattr(source, "_filing", lambda m: Parsed())
+    _, facts = source.fetch(meta)
+    assert {(f.concept, f.currency) for f in facts} == {
+        ("us-gaap:Revenues", "EUR"),
+        ("us-gaap:GrossProfit", "USD"),
+    }

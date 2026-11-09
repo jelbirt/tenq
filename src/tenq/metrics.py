@@ -29,6 +29,7 @@ from typing import Literal
 
 from tenq.filings import Fact, FilingMeta, FilingStore
 
+DOLLARS = "USD"  # the currency every base metric is in; facts in another are left out
 QUARTER_DAYS = range(80, 101)  # a fiscal quarter, allowing 13/14-week quarters
 YEAR_DAYS = range(357, 379)  # a fiscal year, allowing 52/53-week years
 PERIOD_TOLERANCE = 4  # report date vs fact end date in a 52/53-week calendar
@@ -261,6 +262,8 @@ class _Pool:
         self.restated: set[tuple[str, str, str]] = set()  # flows an older filing tagged differently
         for meta, facts in filings:
             for f in facts:
+                if f.currency not in (None, DOLLARS):
+                    continue  # every base metric is in dollars: a euro figure is not one
                 src = Source(meta.accession, f.concept, f.start, f.end, f.instant, f.value)
                 if f.start and f.end:
                     key = (f.concept, f.start, f.end)

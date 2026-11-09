@@ -231,8 +231,7 @@ def test_an_8k_without_an_exhibit_is_quoted_from_its_start() -> None:
         "The board appointed a new chief financial officer effective today.\n",
     )
     out = excerpts(passages)
-    assert [e.text for e in out] == [
-        "Item 5.02 Departure of Directors or Certain Officers",
+    assert [e.text for e in out] == [  # the item's heading is on the report's line already
         "The board appointed a new chief financial officer effective today.",
     ]
 
@@ -565,7 +564,7 @@ def test_eightks_and_headlines_are_rendered_with_their_age(
     current.save(_eightk("0001535527-26-000040", "2026-10-20"), EIGHTK_TEXT, [])
     news = [_news("CRWD", "CrowdStrike wins a deal", AS_OF - timedelta(days=2))]
     lines = _build(store, current, news=news).render().splitlines()
-    assert "- CRWD-0001535527-26-000040 filed 2026-10-20 (5 days old): " in "\n".join(lines)
+    assert "- 8-K CRWD-0001535527-26-000040 filed 2026-10-20 (5 days old): " in "\n".join(lines)
     headline = next(line for line in lines if "CrowdStrike wins a deal" in line)
     assert ", 2 days old) CrowdStrike wins a deal" in headline
 
@@ -604,3 +603,311 @@ def test_a_growth_line_shows_codes_reading_and_never_minus_zero(value: float, sh
     assert pack._shown(n) == shown
     other = pack.Number("px:ACME:excess_5d", "ACME return less QQQ", -0.00001, "points")
     assert pack._shown(other) == "+0.00 points"
+
+
+def test_a_6k_is_shown_with_its_form_and_why_it_lists_no_items(
+    store: FilingStore, current: FilingStore
+) -> None:
+    """L11: a foreign company's 6-K sits with the 8-Ks, named as a 6-K, and the
+    line says why no items are listed rather than leaving the models to guess."""
+    six_k = replace(_eightk("0001535527-26-000060", "2026-10-21", items=""), form="6-K")
+    current.save(six_k, EIGHTK_TEXT, [])
+    pack = _build(store, current)
+    text = pack.render()
+    assert (
+        "- 6-K CRWD-0001535527-26-000060 filed 2026-10-21 (4 days old): "
+        "a foreign company's report; 6-Ks list no items" in text
+    )
+    assert "Recent 8-K or 6-K current reports" in text
+    assert pack.reports[0].form == "6-K"
+    assert type(pack).from_dict(pack.to_dict()).reports[0].form == "6-K"
+
+
+def test_a_filing_with_no_dollar_figures_says_why_it_shows_none(
+    tmp_path: Path, current: FilingStore
+) -> None:
+    """L11: the metrics count dollars only, so a filing tagged in euros shows no
+    figures; the sheet says why, rather than leaving the models to guess."""
+    from tenq.filings import Fact
+
+    euros = FilingStore(tmp_path / "eur")
+    meta = FilingMeta("CRWD", 1, "C", "10-Q", "0001-26-000001", "2026-09-01", "2026-07-31", "u")
+    revenue = Fact("us-gaap:Revenues", 9.0, "U1", "2026-05-01", "2026-07-31", None, -3, "EUR")
+    euros.save(meta, "FORM 10-Q", [revenue])
+    built = _build(euros, current)
+    assert not [n for n in built.numbers if n.id.startswith("fin:")]
+    assert "the 10-Q's figures for CRWD are in EUR, not dollars" in built.notes
+    dollars = FilingStore(tmp_path / "usd")
+    dollars.save(meta, "FORM 10-Q", [replace(revenue, currency="USD")])
+    assert not [n for n in _build(dollars, current).notes if "not dollars" in n]
+
+
+def test_a_report_without_a_press_release_skips_its_cover_page() -> None:
+    """A 6-K with no exhibit opens with form text ("Indicate by check mark ...
+    Form 20-F or Form 40-F"); quoting it would waste the excerpts on boilerplate."""
+    from tenq.filings import Passage
+
+    texts = [
+        "Commission File Number 001-33463",
+        "Indicate by check mark whether the registrant files or will file annual reports "
+        "under cover of Form 20-F or Form 40-F.",
+        "ASML today announced a new share buyback programme of up to EUR 12 billion.",
+    ]
+    passages = [Passage(f"ASML-x:{i}", "ASML-x", i, t) for i, t in enumerate(texts, 1)]
+    assert [e.id for e in excerpts(passages)] == ["ASML-x:3"]
+
+
+def test_a_record_from_before_l11_loads_its_reports_as_8ks(
+    store: FilingStore, current: FilingStore
+) -> None:
+    current.save(_eightk("0001535527-26-000040", "2026-10-20"), EIGHTK_TEXT, [])
+    old = _build(store, current).to_dict()
+    for r in old["reports"]:
+        del r["form"]
+    assert [r.form for r in pack.Pack.from_dict(old).reports] == ["8-K"]
+
+
+EIGHTK_COVER = [  # the real shape of an 8-K cover page, one short passage per line
+    "UNITED STATES",
+    "SECURITIES AND EXCHANGE COMMISSION",
+    "WASHINGTON, D.C. 20549",
+    "FORM 8-K",
+    "Pursuant to Section 13 or 15(d)",
+    "of the Securities Exchange Act of 1934",
+    "Date of Report (Date of earliest event reported): November 4, 2026",
+    "(Exact name of Registrant as Specified in Its Charter)",
+    "Check the appropriate box below if the Form 8-K filing is intended to simultaneously "
+    "satisfy the filing obligation of the registrant under any of the following provisions:",
+    "Securities registered pursuant to Section 12(b) of the Act:",
+    "Indicate by check mark whether the registrant is an emerging growth company.",
+    "Emerging growth company ☐",
+    "If an emerging growth company, indicate by check mark if the registrant has elected "
+    "not to use the extended transition period.",
+    "Item 5.02 Departure of Directors or Certain Officers.",
+    "On November 3, 2026, the chief financial officer told the company she will resign.",
+]
+SIXK_COVER = [
+    "UNITED STATES SECURITIES AND EXCHANGE COMMISSION Washington, D.C. 20549",
+    "REPORT OF FOREIGN PRIVATE ISSUER PURSUANT TO RULE 13a-16 OR 15d-16",
+    "For the month of October 2026",
+    "Commission File Number: 001-12345",
+    "Main Street 1, Amsterdam, The Netherlands (Address of principal executive office)",
+    "Indicate by check mark whether the registrant files or will file annual reports "
+    "under cover of Form 20-F or Form 40-F.",
+    "Form 20-F ☒ Form 40-F ☐",
+    "Acme N.V. announced today that its chief executive will retire next year.",
+    "Further details are in the annual report on Form 20-F filed with the SEC.",
+]
+
+
+@pytest.mark.parametrize(
+    ("texts", "first"),
+    [(EIGHTK_COVER, "On November 3, 2026"), (SIXK_COVER, "Acme N.V. announced")],
+    ids=["8-K", "6-K"],
+)
+def test_a_report_quoted_from_its_own_text_starts_after_the_whole_cover(
+    texts: list[str], first: str
+) -> None:
+    """A cover page runs to many short lines with no marker on most of them, so
+    the quote starts after the last marker, not just past the marked lines."""
+    from tenq.filings import Passage
+
+    passages = [Passage(f"X:{i}", "X", i, t) for i, t in enumerate(texts, 1)]
+    quoted = excerpts(passages)
+    assert quoted[0].text.startswith(first)
+    assert not any("Commission" in e.text or "registrant" in e.text for e in quoted)
+
+
+def test_a_press_release_citing_its_annual_report_keeps_its_text() -> None:
+    """Inside an exhibit nothing is skipped as a cover, and naming Form 20-F alone
+    is not cover text: a release often cites its annual report."""
+    from tenq.filings import Passage
+
+    texts = [
+        "FORM 6-K",
+        "EXHIBIT 99.1",
+        "Acme N.V. reports third quarter sales of EUR 7.5 billion.",
+        "Risk factors are described in our annual report on Form 20-F.",
+        "Bookings were the highest in two years.",
+    ]
+    passages = [Passage(f"X:{i}", "X", i, t) for i, t in enumerate(texts, 1)]
+    assert [e.id for e in excerpts(passages)] == ["X:3", "X:4", "X:5"]
+
+
+def _euro_filing(tmp_path: Path, *facts: object) -> FilingStore:
+    euros = FilingStore(tmp_path / "mixed")
+    meta = FilingMeta("CRWD", 1, "C", "10-Q", "0001-26-000001", "2026-09-01", "2026-07-31", "u")
+    euros.save(meta, "FORM 10-Q", list(facts))  # type: ignore[arg-type]
+    return euros
+
+
+def test_some_figures_in_another_currency_are_named_even_when_others_show(
+    tmp_path: Path, current: FilingStore
+) -> None:
+    from tenq.filings import Fact
+
+    revenue = Fact("us-gaap:Revenues", 9.0, "U1", "2026-05-01", "2026-07-31", None, -3, "EUR")
+    profit = Fact("us-gaap:GrossProfit", 5.0, "usd", "2026-05-01", "2026-07-31", None, -3, "USD")
+    built = _build(_euro_filing(tmp_path, revenue, profit), current)
+    assert [n.id for n in built.numbers if n.id.startswith("fin:")]
+    assert (
+        "some of the 10-Q's figures for CRWD are in EUR, not dollars, and are left out"
+        in built.notes
+    )
+
+
+def test_a_euro_fact_that_is_not_a_sheet_figure_says_nothing(
+    tmp_path: Path, current: FilingStore
+) -> None:
+    """A US company's euro notes are tagged in euros; they are not on the sheet,
+    so no note says its figures are not dollars."""
+    from tenq.filings import Fact
+
+    notes = Fact("us-gaap:LongTermDebt", 9.0, "U1", None, None, "2026-07-31", -3, "EUR")
+    profit = Fact("us-gaap:GrossProfit", 5.0, "usd", "2026-05-01", "2026-07-31", None, -3, "USD")
+    built = _build(_euro_filing(tmp_path, notes, profit), current)
+    assert not [n for n in built.notes if "not dollars" in n]
+
+
+def test_a_foreign_filer_without_a_10q_is_named_as_one(
+    tmp_path: Path, current: FilingStore
+) -> None:
+    """A 6-K filer has no 10-Q or 10-K; the sheet says why rather than reading
+    as missing data. A US company with neither keeps the plain note."""
+    empty = FilingStore(tmp_path / "none")
+    plain = _build(empty, current)
+    assert "no 10-Q or 10-K on record for CRWD" in plain.notes
+    six_k = replace(_eightk("0001535527-26-000060", "2026-10-21", items=""), form="6-K")
+    current.save(six_k, EIGHTK_TEXT, [])
+    foreign = _build(empty, current)
+    assert not [n for n in foreign.notes if "no 10-Q" in n]
+    assert (
+        "CRWD is a foreign company (it files 6-Ks and an annual 20-F or 40-F); "
+        "its reported figures are not on this sheet yet" in foreign.notes
+    )
+
+
+def test_an_unreadable_6k_is_named_as_a_6k(
+    store: FilingStore, current: FilingStore, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    six_k = replace(_eightk("0001535527-26-000060", "2026-10-21", items=""), form="6-K")
+    current.save(six_k, EIGHTK_TEXT, [])
+
+    def passages(meta: FilingMeta) -> list[object]:
+        raise OSError("gone")
+
+    monkeypatch.setattr(current, "passages", passages)
+    assert "6-K 0001535527-26-000060 text unavailable" in _build(store, current).notes
+
+
+def _quoted(texts: list[str]) -> list[str]:
+    from tenq.filings import Passage
+
+    passages = [Passage(f"X:{i}", "X", i, t) for i, t in enumerate(texts, 1)]
+    return [e.text for e in excerpts(passages)]
+
+
+NEWS = "Acme N.V. announced today that its chief executive will retire next year."
+
+
+@pytest.mark.parametrize(
+    "box",
+    ["Form 20-F x Form 40-F ¨", "(Check One) Form 20-F ý Form 40-F D ¨", "Form 20-F  Form 40-F"],
+    ids=["x", "y-acute", "private-use"],
+)
+def test_the_6k_box_line_is_cover_whatever_mark_the_filer_uses(box: str) -> None:
+    """Real 6-Ks tick the box with "x", "ý" or a private-use glyph, not only ☒."""
+    assert _quoted(["Commission File Number 001-1", box, NEWS]) == [NEWS]
+
+
+def test_cover_words_wrapped_across_lines_still_mark_the_cover() -> None:
+    texts = ["If an emerging growth company, indicate\n by check mark if the registrant", NEWS]
+    assert _quoted(texts) == [NEWS]
+
+
+def test_a_6k_issuer_line_after_the_box_is_cover_too() -> None:
+    """CCEP's 6-K repeats "pursuant to Rule 13a-16" after the box line."""
+    texts = [
+        "Form 20-F ý Form 40-F ¨",
+        "List identifying information required to be furnished",
+        "pursuant to Rule 13a-16 or 15d-16 of The Securities Exchange Act",
+        NEWS,
+    ]
+    assert _quoted(texts) == [NEWS]
+
+
+def test_form_text_is_skipped_only_when_it_opens_the_passage() -> None:
+    """Incorporation and signing lines are form text; news that merely ends with
+    "... filed with the Securities and Exchange Commission" is still news."""
+    late = (
+        "ISSAQUAH, Wash. - Costco reported net sales of $21 billion for the month, and "
+        "noted other risks identified in reports filed with the Securities and Exchange "
+        "Commission."
+    )
+    texts = [
+        NEWS,
+        "THIS REPORT ON FORM 6-K IS HEREBY INCORPORATED BY REFERENCE INTO THE REGISTRANT'S",
+        "• REGISTRATION STATEMENT ON FORM S-8 OF ACME N.V. (REGISTRATION NO. 333-1);",
+        "The press release is furnished and shall not be deemed filed for any purpose.",
+        late,
+    ]
+    assert _quoted(texts) == [NEWS, late]
+
+
+def test_item_headings_page_lines_and_repeats_are_skipped() -> None:
+    texts = [
+        "Item 5.07 Submission of Matters to a Vote of Security Holders.",
+        "P a g e | 1",
+        NEWS,
+        NEWS,
+        "The holders elected all eleven directors at the annual meeting today.",
+    ]
+    assert _quoted(texts) == [NEWS, texts[4]]
+
+
+def test_a_quote_stops_at_the_signatures_or_the_next_exhibit() -> None:
+    assert _quoted([NEWS, "SIGNATURES", "The registrant has signed this report below."]) == [NEWS]
+    assert _quoted(
+        ["EXHIBIT 99.1", NEWS, "EXHIBIT 99.2", "A second release about a rival bid."]
+    ) == [NEWS]
+
+
+def test_an_earlier_filing_in_another_currency_is_named(
+    tmp_path: Path, current: FilingStore
+) -> None:
+    """The metrics pool the year-ago filing too: if it is in euros, the changes
+    go blank, and the sheet should say why."""
+    from tenq.filings import Fact
+
+    store = FilingStore(tmp_path / "older")
+    old = FilingMeta("CRWD", 1, "C", "10-Q", "0001-25-000001", "2025-09-01", "2025-07-31", "u")
+    new = FilingMeta("CRWD", 1, "C", "10-Q", "0001-26-000001", "2026-09-01", "2026-07-31", "u")
+    store.save(
+        old,
+        "FORM 10-Q",
+        [Fact("us-gaap:Revenues", 8.0, "U", "2025-05-01", "2025-07-31", None, -3, "EUR")],
+    )
+    store.save(
+        new,
+        "FORM 10-Q",
+        [Fact("us-gaap:Revenues", 9.0, "u", "2026-05-01", "2026-07-31", None, -3, "USD")],
+    )
+    notes = _build(store, current).notes
+    assert (
+        "some of CRWD's earlier filings report in EUR, not dollars, so changes against "
+        "those quarters are left out" in notes
+    )
+    assert not [n for n in notes if "10-Q's figures" in n]
+
+
+def test_a_sheet_figure_with_no_currency_is_logged(
+    tmp_path: Path, current: FilingStore, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Fresh facts always carry a currency; one without means the unit reading
+    broke, and the figure counts as dollars, so it must at least show in the log."""
+    from tenq.filings import Fact
+
+    revenue = Fact("us-gaap:Revenues", 9.0, "usd", "2026-05-01", "2026-07-31", None, -3)
+    with caplog.at_level("WARNING", logger="tenq.pack"):
+        _build(_euro_filing(tmp_path, revenue), current)
+    assert "1 sheet figures in CRWD-0001-26-000001 have no currency" in caplog.text
