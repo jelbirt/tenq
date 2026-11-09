@@ -2,8 +2,8 @@
 
 A US company files an 8-K; a foreign company files a 6-K instead (results,
 news, notices). Both are saved in their own store (default ./data/current) with the same layout and
-passage ids as 10-Q/10-K filings, so a citation to an 8-K is checked the same way.
-The store's search indexes carry their own tag ("c"), so a ticker's 8-K indexes
+passage ids as 10-Q/10-K filings, so a citation to an 8-K or 6-K is checked the same way.
+The store's search indexes carry their own tag ("c"), so a ticker's current-report indexes
 never mix with its 10-Q/10-K ones.
 They carry no facts: the numbers tenq checks come from 10-Q/10-K tagged data only.
 """

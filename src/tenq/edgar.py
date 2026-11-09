@@ -219,9 +219,13 @@ class EdgarSource:
         xbrl = filing.xbrl()
         if xbrl is None:  # no XBRL or it failed to parse: text only, no numbers
             return text, []
-        frame = xbrl.facts.to_dataframe()
+        rows = xbrl.facts.to_dataframe().to_dict("records")
         units = getattr(xbrl, "units", None) or {}
-        facts = facts_from_frame((r for r in frame.to_dict("records")), currencies_of(units))
+        if rows and not units:
+            # Without unit definitions no fact gets a currency, and the metrics'
+            # dollars-only guard cannot tell a euro figure from a dollar one.
+            log.warning("no XBRL unit definitions in %s: currencies unknown", meta.accession)
+        facts = facts_from_frame(iter(rows), currencies_of(units))
         return text, facts
 
     def accepted_at(self, meta: FilingMeta) -> str:

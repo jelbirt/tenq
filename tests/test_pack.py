@@ -622,3 +622,47 @@ def test_a_6k_is_shown_with_its_form_and_why_it_lists_no_items(
     assert "Recent 8-K or 6-K current reports" in text
     assert pack.reports[0].form == "6-K"
     assert type(pack).from_dict(pack.to_dict()).reports[0].form == "6-K"
+
+
+def test_a_filing_with_no_dollar_figures_says_why_it_shows_none(
+    tmp_path: Path, current: FilingStore
+) -> None:
+    """L11: the metrics count dollars only, so a filing tagged in euros shows no
+    figures; the sheet says why, rather than leaving the models to guess."""
+    from tenq.filings import Fact
+
+    euros = FilingStore(tmp_path / "eur")
+    meta = FilingMeta("CRWD", 1, "C", "10-Q", "0001-26-000001", "2026-09-01", "2026-07-31", "u")
+    revenue = Fact("us-gaap:Revenues", 9.0, "U1", "2026-05-01", "2026-07-31", None, -3, "EUR")
+    euros.save(meta, "FORM 10-Q", [revenue])
+    built = _build(euros, current)
+    assert not [n for n in built.numbers if n.id.startswith("fin:")]
+    assert "the 10-Q's figures for CRWD are in EUR, not dollars" in built.notes
+    dollars = FilingStore(tmp_path / "usd")
+    dollars.save(meta, "FORM 10-Q", [replace(revenue, currency="USD")])
+    assert not [n for n in _build(dollars, current).notes if "not dollars" in n]
+
+
+def test_a_report_without_a_press_release_skips_its_cover_page() -> None:
+    """A 6-K with no exhibit opens with form text ("Indicate by check mark ...
+    Form 20-F or Form 40-F"); quoting it would waste the excerpts on boilerplate."""
+    from tenq.filings import Passage
+
+    texts = [
+        "Commission File Number 001-33463",
+        "Indicate by check mark whether the registrant files or will file annual reports "
+        "under cover of Form 20-F or Form 40-F.",
+        "ASML today announced a new share buyback programme of up to EUR 12 billion.",
+    ]
+    passages = [Passage(f"ASML-x:{i}", "ASML-x", i, t) for i, t in enumerate(texts, 1)]
+    assert [e.id for e in excerpts(passages)] == ["ASML-x:3"]
+
+
+def test_a_record_from_before_l11_loads_its_reports_as_8ks(
+    store: FilingStore, current: FilingStore
+) -> None:
+    current.save(_eightk("0001535527-26-000040", "2026-10-20"), EIGHTK_TEXT, [])
+    old = _build(store, current).to_dict()
+    for r in old["reports"]:
+        del r["form"]
+    assert [r.form for r in pack.Pack.from_dict(old).reports] == ["8-K"]

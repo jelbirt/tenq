@@ -7,7 +7,7 @@ direction word and the period ("ACME fell 21.47% over the last 5 sessions").
 
 A reason is sent only when:
 - every placeholder is a number on that day's pack, and every cited id is an
-  8-K excerpt or headline on the pack (a number is shown, never just cited);
+  8-K or 6-K excerpt or headline on the pack (a number is shown, never just cited);
 - each placeholder opens a clause: it starts the reason, or follows a
   comma, semicolon, colon or opening bracket, or one of a few joining words
   (CONNECTORS), so no word of the model's can become part of code's subject

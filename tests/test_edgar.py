@@ -5,6 +5,7 @@ import edgar
 import pytest
 
 from tenq.edgar import EdgarSource, currencies_of, facts_from_frame
+from tenq.filings import FilingMeta
 
 
 @dataclass
@@ -173,3 +174,58 @@ def test_a_facts_currency_comes_from_the_filings_unit_definition() -> None:
     got = {(f.unit, f.currency) for f in facts_from_frame(iter(rows), currencies_of(units))}
     assert got == {("usd", "USD"), ("U1", "EUR"), ("shares", None)}
     assert {f.currency for f in facts_from_frame(iter(rows))} == {None}
+
+
+class FakeFrame:
+    def __init__(self, rows: list[dict[str, Any]]) -> None:
+        self.rows = rows
+
+    def to_dict(self, orient: str) -> list[dict[str, Any]]:
+        assert orient == "records"
+        return self.rows
+
+
+@dataclass
+class FakeXbrl:
+    rows: list[dict[str, Any]]
+    units: dict[str, Any]
+
+    @property
+    def facts(self) -> Any:
+        frame = FakeFrame(self.rows)
+        return type("Facts", (), {"to_dataframe": lambda _self: frame})()
+
+
+@dataclass
+class FilingWithXbrl:
+    xbrl_data: FakeXbrl
+
+    def text(self) -> str:
+        return "FORM 10-Q"
+
+    def xbrl(self) -> FakeXbrl:
+        return self.xbrl_data
+
+
+def test_fetch_tags_each_fact_with_the_currency_its_unit_names(
+    source: EdgarSource, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """The guard only works if fetch reads the filing's unit definitions; without
+    them every fact's currency is unknown, and the log says so."""
+    row = {
+        "concept": "us-gaap:Revenues",
+        "numeric_value": 9.0,
+        "unit_ref": "U1",
+        "period_start": "2026-07-01",
+        "period_end": "2026-09-30",
+    }
+    euros = {"U1": {"type": "simple", "measure": "iso4217:EUR"}}
+    meta = FilingMeta("ASML", 937966, "ASML", "10-Q", "0000937966-26-000001", "d", "d", "u")
+    monkeypatch.setattr(source, "_filing", lambda m: FilingWithXbrl(FakeXbrl([row], euros)))
+    _, (fact,) = source.fetch(meta)
+    assert fact.currency == "EUR"
+    assert "currencies unknown" not in caplog.text
+    monkeypatch.setattr(source, "_filing", lambda m: FilingWithXbrl(FakeXbrl([row], {})))
+    _, (fact,) = source.fetch(meta)
+    assert fact.currency is None
+    assert "no XBRL unit definitions in 0000937966-26-000001: currencies unknown" in caplog.text

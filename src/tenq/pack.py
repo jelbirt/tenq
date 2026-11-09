@@ -44,7 +44,14 @@ from typing import Any, Literal
 
 from tenq.current import describe
 from tenq.filings import FilingMeta, FilingStore, Passage
-from tenq.metrics import CHANGE_FIELDS, FIELDS, STEADY_GROWTH, growth_reading, metrics_for
+from tenq.metrics import (
+    CHANGE_FIELDS,
+    DOLLARS,
+    FIELDS,
+    STEADY_GROWTH,
+    growth_reading,
+    metrics_for,
+)
 from tenq.news import NewsItem, host
 from tenq.prices import (
     BENCHMARK,
@@ -67,6 +74,11 @@ EXCERPTS = 3  # passages quoted from each 8-K or 6-K
 EXCERPT_CHARS = 600
 SUMMARY_CHARS = 300
 EXHIBIT = re.compile(r"EXHIBIT 99(?:\.[0-9]+)?")  # the block edgar.fetch_current writes
+# SEC cover-page boilerplate, which opens a report that has no press release
+# (a 6-K's "Indicate by check mark ... Form 20-F or Form 40-F"): no news in it.
+COVER = re.compile(
+    r"indicate by check mark|check the appropriate box|commission file number", re.IGNORECASE
+)
 
 
 @dataclass(frozen=True)
@@ -461,19 +473,30 @@ def settled_by(prices: Prices, as_of: datetime) -> Prices:
     return Prices(bars, prices.notes)
 
 
+def _not_dollars(filings: FilingStore, latest: FilingMeta, ticker: str) -> list[str]:
+    """Why a filing shows no numbers, when the reason is its currency: the metrics
+    count dollars only, so without this note the models would see a filing with
+    no figures and no reason."""
+    other = sorted({f.currency for f in filings.facts(latest) if f.currency} - {DOLLARS})
+    if not other:
+        return []
+    return [f"the {latest.form}'s figures for {ticker} are in {', '.join(other)}, not dollars"]
+
+
 def _no_items(form: str) -> str:
     """What the line says when EDGAR lists no items: a 6-K never has any."""
     return "a foreign company's report; 6-Ks list no items" if form == "6-K" else "items not listed"
 
 
 def excerpts(passages: list[Passage], k: int = EXCERPTS) -> tuple[Excerpt, ...]:
-    """The first `k` passages of the first EX-99 exhibit, else of the report itself."""
+    """The first `k` passages of the first EX-99 exhibit, else of the report itself,
+    skipping cover-page form text."""
     start = next((i for i, p in enumerate(passages) if EXHIBIT.fullmatch(p.text.strip())), None)
     chosen = passages if start is None else passages[start + 1 :]
     out = []
     for p in chosen:
-        if len(p.text.split()) < 4:  # a bare heading or page number says nothing
-            continue
+        if len(p.text.split()) < 4 or COVER.search(p.text):  # a heading, page number or
+            continue  # cover-page form text says nothing
         out.append(Excerpt(p.id, _cut(p.text, EXCERPT_CHARS)))
         if len(out) == k:
             break
@@ -522,7 +545,10 @@ def build(
             pack.notes.append(f"latest {latest.form} is {age} days old")
         try:
             metrics = metrics_for(filings, ticker, latest.accession)
-            pack.numbers.extend(filing_numbers(ticker, metrics.to_dict()))
+            shown = filing_numbers(ticker, metrics.to_dict())
+            pack.numbers.extend(shown)
+            if not shown:
+                pack.notes.extend(_not_dollars(filings, latest, ticker))
             pack.filing = replace(
                 pack.filing,
                 prior_period=metrics.prior_period,
