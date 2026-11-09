@@ -811,7 +811,7 @@ def test_an_old_opus_short_is_left_out_and_jevs_call_on_that_stock_kept() -> Non
     assert made.opus is None and made.opus_confidence is None and made.opus_lean is None
     assert left_out(record) == [
         {"day": "2026-11-05", "ticker": "TEAM", "method": "opus", "call": "Short",
-         "prompt": "call-v9"}
+         "prompt": "call-v9", "jev": "Sell"}
     ]  # fmt: skip
 
 
@@ -855,7 +855,7 @@ def test_jevs_short_in_an_old_record_is_kept() -> None:
 def test_a_stock_whose_only_call_was_an_old_short_is_not_scored() -> None:
     record = _old(_stock(jev=None, opus="Short"))
     assert calls_from(record) == []
-    assert [x["ticker"] for x in left_out(record)] == ["CRWD"]
+    assert [(x["ticker"], x["jev"]) for x in left_out(record)] == [("CRWD", None)]
 
 
 def test_the_card_scores_without_the_old_short_and_names_it(tmp_path: Path) -> None:
@@ -870,8 +870,10 @@ def test_the_card_scores_without_the_old_short_and_names_it(tmp_path: Path) -> N
     assert card["call_prompts"] == {"call-v9": 1}  # only the Opus call that was scored
     assert card["left_out"] == left_out(_old(_stock(jev="Sell", opus="Short")))
     assert (
-        "Left out: Opus's Short on CRWD from 2026-11-05, made when its prompt (call-v9) "
-        "said a Short meant the stock would fall outright, not lag QQQ."
+        "Left out: Opus's Short on CRWD from 2026-11-05. Its prompt then (call-v9) said "
+        "Short meant the stock would fall outright; since call-v10, Short means it will "
+        "lag QQQ by a wide margin, which is what the card scores. Jev's Sell on CRWD "
+        "that day still counts."
     ) in lines(card)
 
 
@@ -881,10 +883,19 @@ def test_a_card_with_nothing_left_out_says_nothing_about_it(tmp_path: Path) -> N
     assert not any(t.startswith("Left out:") for t in lines(card))
 
 
-def test_the_old_short_line_rides_in_the_weekly_email_before_anything_scores(
-    tmp_path: Path,
-) -> None:
-    _save(tmp_path, _old(_stock("TEAM", jev="Sell", opus="Short")))
-    card = scorecard(tmp_path, ENTRY, CFG, _fetcher({}), save=False)
-    assert card["scored"] == 0 and card["open"] == 1
-    assert any(t.startswith("Left out: Opus's Short on TEAM from 2026-11-05") for t in lines(card))
+def test_fridays_email_names_the_old_shorts_before_anything_scores(tmp_path: Path) -> None:
+    _save(
+        tmp_path,
+        _old(_stock("TEAM", jev="Sell", opus="Short"), _stock("HUBS", jev=None, opus="Short")),
+    )
+    outbox = Outbox()
+    record = _friday(tmp_path, _fetcher({}), outbox)
+    assert record["scorecard"]["scored"] == 0
+    [email] = outbox.sent
+    weekly = email.text[: email.text.index("tenq daily")]
+    [team, hubs] = [t for t in weekly.splitlines() if t.startswith("Left out:")]
+    assert team.startswith("Left out: Opus's Short on TEAM from 2026-11-05.")
+    assert team.endswith("Jev's Sell on TEAM that day still counts.")
+    assert hubs.startswith("Left out: Opus's Short on HUBS from 2026-11-05.")
+    assert hubs.endswith("which is what the card scores.")  # Jev made no call on HUBS
+    assert "Short on TEAM from 2026-11-05" in email.html

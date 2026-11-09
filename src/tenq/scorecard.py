@@ -252,6 +252,7 @@ def left_out(record: dict[str, Any]) -> list[dict[str, Any]]:
             "method": "opus",
             "call": "Short",
             "prompt": str(record["versions"]["call_prompt"]),
+            "jev": _call((s.get("call") or {}).get("call")),  # still scored
         }
         for s in record.get("stocks") or []
         if _call((s.get("opus") or {}).get("call")) == "Short"
@@ -908,10 +909,12 @@ def lines(card: dict[str, Any]) -> list[str]:
         span = days[0] if len(days) == 1 else f"{min(days)} to {max(days)}"
         out.append(f"Not scored: {ticker}, {len(days)} call(s) from {span} ({reason}).")
     for x in card.get("left_out") or []:
+        jev = f" Jev's {x['jev']} on {x['ticker']} that day still counts." if x.get("jev") else ""
         out.append(
-            f"Left out: Opus's {x['call']} on {x['ticker']} from {x['day']}, made when "
-            f"its prompt ({x['prompt']}) said a Short meant the stock would fall "
-            "outright, not lag QQQ."
+            f"Left out: Opus's {x['call']} on {x['ticker']} from {x['day']}. Its prompt then "
+            f"({x['prompt']}) said Short meant the stock would fall outright; since "
+            f"call-v{SHORT_LAGS_QQQ_FROM}, Short means it will lag QQQ by a wide margin, "
+            f"which is what the card scores.{jev}"
         )
     w = card["this_week"]
     out.append(
