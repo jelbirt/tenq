@@ -1273,6 +1273,40 @@ def test_check_2_sets_each_days_picks_only_against_that_days_draw() -> None:
     assert c["opus"]["days"] == 0 and c["opus"]["picks_mean"] is None
 
 
+def test_check_2_never_counts_held_or_cut_stocks_even_with_a_call() -> None:
+    # The daily run calls only the picks and the random draw, so today a stock
+    # held by the screen or cut by the cap never has a call. If that ever
+    # changes, check 2 must still count as picks only what the screen sent
+    # (a stock the cap cut never got a call from the screen), and set them only
+    # against the random draw, or the draw stops being a fair sample of what
+    # the screen leaves out.
+    def row(day: date, t: str, group: str, excess: float) -> dict[str, Any]:
+        return {
+            "day": day.isoformat(),
+            "ticker": t,
+            "status": "scored",
+            "group": group,
+            "jev": "Buy",
+            "opus": None,
+            "excess": excess,
+            "exit_day": next_session(day).isoformat(),
+        }
+
+    one, two = _sessions(2)
+    rows = [
+        row(one, "P1", "picked", 0.04),
+        row(one, "R1", "random", 0.02),
+        row(one, "H1", "held", 0.50),
+        row(one, "C1", "over_cap", -0.50),
+        row(two, "P2", "picked", 0.30),
+        row(two, "H2", "held", -0.30),  # not a draw: the day has none, it sits out
+    ]
+    jev = on_picks(rows, CFG)["jev"]
+    assert (jev["picks"], jev["draw"], jev["days"], jev["no_draw"]) == (1, 1, 1, 1)
+    assert jev["picks_mean"] == pytest.approx(0.04)
+    assert jev["draw_mean"] == pytest.approx(0.02)
+
+
 def test_check_2s_luck_range_comes_from_the_daily_moves() -> None:
     rows: list[dict[str, Any]] = []
     for i, d in enumerate(_sessions(12)):
