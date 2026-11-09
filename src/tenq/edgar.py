@@ -106,6 +106,12 @@ def currencies_of(units: dict[str, Any]) -> dict[str, str]:
     return out
 
 
+def _currency(value: Any) -> str | None:
+    """edgartools' own reading of a fact's unit (its `currency` column), which
+    also covers per-share units; None when the frame has none."""
+    return value if isinstance(value, str) and value else None
+
+
 def facts_from_frame(
     rows: Iterator[dict[str, Any]], currencies: dict[str, str] | None = None
 ) -> list[Fact]:
@@ -138,7 +144,7 @@ def facts_from_frame(
             end=end,
             instant=instant,
             decimals=int(dec) if dec and dec.lstrip("-").isdigit() else None,
-            currency=(currencies or {}).get(unit),
+            currency=_currency(r.get("currency")) or (currencies or {}).get(unit),
         )
         key = (concept, fact.unit, start, end, instant)
         prev = best.get(key)

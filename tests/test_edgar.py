@@ -1,4 +1,5 @@
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, ClassVar
 
 import edgar
@@ -229,3 +230,47 @@ def test_fetch_tags_each_fact_with_the_currency_its_unit_names(
     _, (fact,) = source.fetch(meta)
     assert fact.currency is None
     assert "no XBRL unit definitions in 0000937966-26-000001: currencies unknown" in caplog.text
+
+
+INSTANCE = """<?xml version="1.0" encoding="UTF-8"?>
+<xbrli:xbrl xmlns:xbrli="http://www.xbrl.org/2003/instance"
+  xmlns:iso4217="http://www.xbrl.org/2003/iso4217" xmlns:us-gaap="http://fasb.org/us-gaap/2024">
+  <xbrli:context id="Q3">
+    <xbrli:entity><xbrli:identifier scheme="http://www.sec.gov/CIK">1</xbrli:identifier>
+    </xbrli:entity>
+    <xbrli:period><xbrli:startDate>2026-07-01</xbrli:startDate>
+      <xbrli:endDate>2026-09-30</xbrli:endDate></xbrli:period>
+  </xbrli:context>
+  <xbrli:unit id="U1"><xbrli:measure>iso4217:EUR</xbrli:measure></xbrli:unit>
+  <xbrli:unit id="usd"><xbrli:measure>iso4217:USD</xbrli:measure></xbrli:unit>
+  <us-gaap:Revenues contextRef="Q3" unitRef="U1" decimals="-6">5000000</us-gaap:Revenues>
+  <us-gaap:GrossProfit contextRef="Q3" unitRef="usd" decimals="-6">3000000</us-gaap:GrossProfit>
+</xbrli:xbrl>
+"""
+
+
+def test_a_real_xbrl_parse_gives_each_fact_its_currency(
+    source: EdgarSource, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Through edgartools' own parser, offline: an upgrade that changes how units
+    or currencies come out fails here, not silently in the dollars-only guard."""
+    from edgar.xbrl import XBRL
+
+    path = tmp_path / "instance.xml"
+    path.write_text(INSTANCE)
+    parsed = XBRL.from_files(instance_file=path)
+
+    class Parsed:
+        def text(self) -> str:
+            return "FORM 10-Q"
+
+        def xbrl(self) -> Any:
+            return parsed
+
+    meta = FilingMeta("ACME", 1, "Acme", "10-Q", "0000000001-26-000001", "d", "d", "u")
+    monkeypatch.setattr(source, "_filing", lambda m: Parsed())
+    _, facts = source.fetch(meta)
+    assert {(f.concept, f.currency) for f in facts} == {
+        ("us-gaap:Revenues", "EUR"),
+        ("us-gaap:GrossProfit", "USD"),
+    }

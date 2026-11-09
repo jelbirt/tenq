@@ -562,3 +562,12 @@ def test_a_zero_round_cap_asks_nothing(questions: QuestionSet) -> None:
     server = Server()
     result = _ask(questions, server, rounds=0)
     assert server.calls == [] and result.answers == {}
+
+
+def test_every_question_names_the_report_sections_one_way() -> None:
+    """The sheet's section is "Recent 8-K or 6-K current reports"; every question
+    calls it the recent current report, never "the recent 8-K or 6-K and ...",
+    which a small model can read as "8-K, or 6-K and headlines"."""
+    text = " ".join(" ".join(q.instructions.split()) for q in load_questions().questions)
+    assert "recent 8-K or 6-K" not in text
+    assert text.count("the recent current report") == 5

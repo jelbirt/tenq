@@ -45,6 +45,7 @@ from typing import Any, Literal
 from tenq.current import describe
 from tenq.filings import FilingMeta, FilingStore, Passage
 from tenq.metrics import (
+    BASE_METRICS,
     CHANGE_FIELDS,
     DOLLARS,
     FIELDS,
@@ -76,9 +77,17 @@ SUMMARY_CHARS = 300
 EXHIBIT = re.compile(r"EXHIBIT 99(?:\.[0-9]+)?")  # the block edgar.fetch_current writes
 # SEC cover-page boilerplate, which opens a report that has no press release
 # (a 6-K's "Indicate by check mark ... Form 20-F or Form 40-F"): no news in it.
+# A cover runs to many short lines (name, address, file number, form boxes), so
+# a report quoted from its own text starts after the last of these markers seen
+# in its first COVER_SPAN passages. "Form 20-F ... Form 40-F" is the 6-K's box
+# line; the two names together, not either alone, since a release may cite its
+# annual report on Form 20-F.
 COVER = re.compile(
-    r"indicate by check mark|check the appropriate box|commission file number", re.IGNORECASE
+    r"indicate by check mark|check the appropriate box|commission file number"
+    r"|form\s+20-f\W{0,12}form\s+40-f",
+    re.IGNORECASE,
 )
+COVER_SPAN = 40
 
 
 @dataclass(frozen=True)
@@ -473,14 +482,32 @@ def settled_by(prices: Prices, as_of: datetime) -> Prices:
     return Prices(bars, prices.notes)
 
 
-def _not_dollars(filings: FilingStore, latest: FilingMeta, ticker: str) -> list[str]:
-    """Why a filing shows no numbers, when the reason is its currency: the metrics
-    count dollars only, so without this note the models would see a filing with
-    no figures and no reason."""
-    other = sorted({f.currency for f in filings.facts(latest) if f.currency} - {DOLLARS})
+METRIC_CONCEPTS = frozenset(c for m in BASE_METRICS for c in m.concepts)
+
+
+def _not_dollars(
+    filings: FilingStore, latest: FilingMeta, ticker: str, *, shown: bool
+) -> list[str]:
+    """A note when the filing tagged sheet figures (revenue, cash and the rest) in
+    another currency: the metrics count dollars only, so without it the models
+    would see figures missing and no reason. Other facts in other currencies (a
+    euro note, say) are not sheet figures and say nothing."""
+    other = sorted(
+        {
+            f.currency
+            for f in filings.facts(latest)
+            if f.concept in METRIC_CONCEPTS and f.currency and f.currency != DOLLARS
+        }
+    )
     if not other:
         return []
-    return [f"the {latest.form}'s figures for {ticker} are in {', '.join(other)}, not dollars"]
+    cur = ", ".join(other)
+    if shown:
+        return [
+            f"some of the {latest.form}'s figures for {ticker} are in {cur}, not dollars, "
+            "and are left out"
+        ]
+    return [f"the {latest.form}'s figures for {ticker} are in {cur}, not dollars"]
 
 
 def _no_items(form: str) -> str:
@@ -492,7 +519,12 @@ def excerpts(passages: list[Passage], k: int = EXCERPTS) -> tuple[Excerpt, ...]:
     """The first `k` passages of the first EX-99 exhibit, else of the report itself,
     skipping cover-page form text."""
     start = next((i for i, p in enumerate(passages) if EXHIBIT.fullmatch(p.text.strip())), None)
-    chosen = passages if start is None else passages[start + 1 :]
+    if start is None:  # the report's own text: skip its cover page as a block
+        head = passages[:COVER_SPAN]
+        cover = max((i for i, p in enumerate(head) if COVER.search(p.text)), default=-1)
+        chosen = passages[cover + 1 :]
+    else:
+        chosen = passages[start + 1 :]
     out = []
     for p in chosen:
         if len(p.text.split()) < 4 or COVER.search(p.text):  # a heading, page number or
@@ -547,8 +579,7 @@ def build(
             metrics = metrics_for(filings, ticker, latest.accession)
             shown = filing_numbers(ticker, metrics.to_dict())
             pack.numbers.extend(shown)
-            if not shown:
-                pack.notes.extend(_not_dollars(filings, latest, ticker))
+            pack.notes.extend(_not_dollars(filings, latest, ticker, shown=bool(shown)))
             pack.filing = replace(
                 pack.filing,
                 prior_period=metrics.prior_period,
@@ -557,8 +588,7 @@ def build(
         except Exception as exc:
             log.warning("filing metrics failed for %s (%s)", ticker, type(exc).__name__)
             pack.notes.append(f"filing metrics unavailable for {ticker}")
-    elif known is not None:
-        pack.notes.append(f"no 10-Q or 10-K on record for {ticker}")
+    no_filing = known is not None and not known
 
     try:
         reports = known_by(current.filings(ticker), as_of)
@@ -580,6 +610,15 @@ def build(
         pack.reports.append(
             Report(meta.doc, meta.filed, tuple(describe(meta.items)), quoted, meta.url, meta.form)
         )
+
+    if no_filing:
+        if any(r.form == "6-K" for r in pack.reports):
+            pack.notes.append(
+                f"{ticker} is a foreign company (it files 6-Ks and an annual 20-F or 40-F); "
+                "its reported figures are not on this sheet yet"
+            )
+        else:
+            pack.notes.append(f"no 10-Q or 10-K on record for {ticker}")
 
     for item in news:
         if item.ticker != ticker or item.published > as_of:

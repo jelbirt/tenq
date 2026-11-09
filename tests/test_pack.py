@@ -666,3 +666,136 @@ def test_a_record_from_before_l11_loads_its_reports_as_8ks(
     for r in old["reports"]:
         del r["form"]
     assert [r.form for r in pack.Pack.from_dict(old).reports] == ["8-K"]
+
+
+EIGHTK_COVER = [  # the real shape of an 8-K cover page, one short passage per line
+    "UNITED STATES",
+    "SECURITIES AND EXCHANGE COMMISSION",
+    "WASHINGTON, D.C. 20549",
+    "FORM 8-K",
+    "Pursuant to Section 13 or 15(d)",
+    "of the Securities Exchange Act of 1934",
+    "Date of Report (Date of earliest event reported): November 4, 2026",
+    "(Exact name of Registrant as Specified in Its Charter)",
+    "Check the appropriate box below if the Form 8-K filing is intended to simultaneously "
+    "satisfy the filing obligation of the registrant under any of the following provisions:",
+    "Securities registered pursuant to Section 12(b) of the Act:",
+    "Indicate by check mark whether the registrant is an emerging growth company.",
+    "Emerging growth company ☐",
+    "If an emerging growth company, indicate by check mark if the registrant has elected "
+    "not to use the extended transition period.",
+    "Item 5.02 Departure of Directors or Certain Officers.",
+    "On November 3, 2026, the chief financial officer told the company she will resign.",
+]
+SIXK_COVER = [
+    "UNITED STATES SECURITIES AND EXCHANGE COMMISSION Washington, D.C. 20549",
+    "REPORT OF FOREIGN PRIVATE ISSUER PURSUANT TO RULE 13a-16 OR 15d-16",
+    "For the month of October 2026",
+    "Commission File Number: 001-12345",
+    "Main Street 1, Amsterdam, The Netherlands (Address of principal executive office)",
+    "Indicate by check mark whether the registrant files or will file annual reports "
+    "under cover of Form 20-F or Form 40-F.",
+    "Form 20-F ☒ Form 40-F ☐",
+    "Acme N.V. announced today that its chief executive will retire next year.",
+    "Further details are in the annual report on Form 20-F filed with the SEC.",
+]
+
+
+@pytest.mark.parametrize(
+    ("texts", "first"),
+    [(EIGHTK_COVER, "Item 5.02"), (SIXK_COVER, "Acme N.V. announced")],
+    ids=["8-K", "6-K"],
+)
+def test_a_report_quoted_from_its_own_text_starts_after_the_whole_cover(
+    texts: list[str], first: str
+) -> None:
+    """A cover page runs to many short lines with no marker on most of them, so
+    the quote starts after the last marker, not just past the marked lines."""
+    from tenq.filings import Passage
+
+    passages = [Passage(f"X:{i}", "X", i, t) for i, t in enumerate(texts, 1)]
+    quoted = excerpts(passages)
+    assert quoted[0].text.startswith(first)
+    assert not any("Commission" in e.text or "registrant" in e.text for e in quoted)
+
+
+def test_a_press_release_citing_its_annual_report_keeps_its_text() -> None:
+    """Inside an exhibit nothing is skipped as a cover, and naming Form 20-F alone
+    is not cover text: a release often cites its annual report."""
+    from tenq.filings import Passage
+
+    texts = [
+        "FORM 6-K",
+        "EXHIBIT 99.1",
+        "Acme N.V. reports third quarter sales of EUR 7.5 billion.",
+        "Risk factors are described in our annual report on Form 20-F.",
+        "Bookings were the highest in two years.",
+    ]
+    passages = [Passage(f"X:{i}", "X", i, t) for i, t in enumerate(texts, 1)]
+    assert [e.id for e in excerpts(passages)] == ["X:3", "X:4", "X:5"]
+
+
+def _euro_filing(tmp_path: Path, *facts: object) -> FilingStore:
+    euros = FilingStore(tmp_path / "mixed")
+    meta = FilingMeta("CRWD", 1, "C", "10-Q", "0001-26-000001", "2026-09-01", "2026-07-31", "u")
+    euros.save(meta, "FORM 10-Q", list(facts))  # type: ignore[arg-type]
+    return euros
+
+
+def test_some_figures_in_another_currency_are_named_even_when_others_show(
+    tmp_path: Path, current: FilingStore
+) -> None:
+    from tenq.filings import Fact
+
+    revenue = Fact("us-gaap:Revenues", 9.0, "U1", "2026-05-01", "2026-07-31", None, -3, "EUR")
+    profit = Fact("us-gaap:GrossProfit", 5.0, "usd", "2026-05-01", "2026-07-31", None, -3, "USD")
+    built = _build(_euro_filing(tmp_path, revenue, profit), current)
+    assert [n.id for n in built.numbers if n.id.startswith("fin:")]
+    assert (
+        "some of the 10-Q's figures for CRWD are in EUR, not dollars, and are left out"
+        in built.notes
+    )
+
+
+def test_a_euro_fact_that_is_not_a_sheet_figure_says_nothing(
+    tmp_path: Path, current: FilingStore
+) -> None:
+    """A US company's euro notes are tagged in euros; they are not on the sheet,
+    so no note says its figures are not dollars."""
+    from tenq.filings import Fact
+
+    notes = Fact("us-gaap:LongTermDebt", 9.0, "U1", None, None, "2026-07-31", -3, "EUR")
+    profit = Fact("us-gaap:GrossProfit", 5.0, "usd", "2026-05-01", "2026-07-31", None, -3, "USD")
+    built = _build(_euro_filing(tmp_path, notes, profit), current)
+    assert not [n for n in built.notes if "not dollars" in n]
+
+
+def test_a_foreign_filer_without_a_10q_is_named_as_one(
+    tmp_path: Path, current: FilingStore
+) -> None:
+    """A 6-K filer has no 10-Q or 10-K; the sheet says why rather than reading
+    as missing data. A US company with neither keeps the plain note."""
+    empty = FilingStore(tmp_path / "none")
+    plain = _build(empty, current)
+    assert "no 10-Q or 10-K on record for CRWD" in plain.notes
+    six_k = replace(_eightk("0001535527-26-000060", "2026-10-21", items=""), form="6-K")
+    current.save(six_k, EIGHTK_TEXT, [])
+    foreign = _build(empty, current)
+    assert not [n for n in foreign.notes if "no 10-Q" in n]
+    assert (
+        "CRWD is a foreign company (it files 6-Ks and an annual 20-F or 40-F); "
+        "its reported figures are not on this sheet yet" in foreign.notes
+    )
+
+
+def test_an_unreadable_6k_is_named_as_a_6k(
+    store: FilingStore, current: FilingStore, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    six_k = replace(_eightk("0001535527-26-000060", "2026-10-21", items=""), form="6-K")
+    current.save(six_k, EIGHTK_TEXT, [])
+
+    def passages(meta: FilingMeta) -> list[object]:
+        raise OSError("gone")
+
+    monkeypatch.setattr(current, "passages", passages)
+    assert "6-K 0001535527-26-000060 text unavailable" in _build(store, current).notes
