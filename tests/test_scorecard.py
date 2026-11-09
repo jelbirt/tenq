@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 import random
 from dataclasses import replace
 from datetime import UTC, date, datetime, timedelta
@@ -10,11 +11,14 @@ from typing import Any
 import pytest
 from test_daily import Outbox, _ctx, _no_trace
 
+import tenq.scorecard
 from tenq.daily import main as daily_main
 from tenq.daily_email import render
 from tenq.prices import BENCHMARK, Bar, Prices
 from tenq.scorecard import (
     _lead_lines,
+    _luck_lines,
+    _verdict,
     calls_from,
     daily_records,
     day_totals,
@@ -22,7 +26,9 @@ from tenq.scorecard import (
     left_out,
     lines,
     load_config,
+    moved,
     next_session,
+    on_picks,
     outcome,
     paired,
     planned_entry,
@@ -31,6 +37,10 @@ from tenq.scorecard import (
     ranking,
     read_ledger,
     scorecard,
+    screen_groups,
+    screen_ledger_path,
+    screen_lines,
+    screened_from,
     spearman,
     standard_error,
     t95,
@@ -899,3 +909,643 @@ def test_fridays_email_names_the_old_shorts_before_anything_scores(tmp_path: Pat
     assert hubs.startswith("Left out: Opus's Short on HUBS from 2026-11-05.")
     assert hubs.endswith("which is what the card scores.")  # Jev made no call on HUBS
     assert "Short on TEAM from 2026-11-05" in email.html
+
+
+# --- the screen checks ----------------------------------------------------------
+
+
+def _screen(
+    chosen: tuple[str, ...] = ("PICK",),
+    over_cap: tuple[str, ...] = ("CUT",),
+    filled: tuple[str, ...] = ("DRAW",),
+    held: tuple[str, ...] = ("HELD", "CALM"),
+    unscreened: tuple[str, ...] = ("LOST",),
+    used: str = "screen",
+) -> dict[str, Any]:
+    def row(t: str) -> dict[str, Any]:
+        return {"ticker": t, "reasons": ["a new 8-K"]}
+
+    return {
+        "kind": "screen",
+        "ok": True,
+        "version": "screen-v6",
+        "day": "2026-11-05",
+        "chosen": [row(t) for t in chosen],
+        "over_cap": [row(t) for t in over_cap],
+        "filled": list(filled),
+        "held": list(held),
+        "unscreened": list(unscreened),
+        "used": used,
+    }
+
+
+def _screened(**kw: Any) -> dict[str, Any]:
+    """A screened day: both methods called the pick and the draw, Buy and Short."""
+    return _record("2026-11-05", MADE, _stock("PICK"), _stock("DRAW"), screen=_screen(**kw))
+
+
+# each stock's 20-session return; QQQ makes +2%, so the excess is 2 points less
+RETURNS = {"PICK": 0.12, "CUT": -0.08, "DRAW": 0.04, "HELD": -0.02, "CALM": 0.02, "LOST": 0.5}
+
+
+def _many(returns: dict[str, float] = RETURNS) -> dict[str, tuple[Bar, ...]]:
+    out = {t: _bars(_sessions(20), 100.0, 101.0, 100.0 * (1 + r)) for t, r in returns.items()}
+    return out | {BENCHMARK: _bars(_sessions(20), 200.0, 201.0, 204.0)}
+
+
+def _screen_card(runs: Path, fetch: Any = None, **kw: Any) -> dict[str, Any]:
+    return scorecard(runs, EXIT, CFG, fetch or _fetcher(_many()), **kw)
+
+
+def test_each_screened_stock_gets_its_group_and_unscreened_ones_get_none() -> None:
+    assert screen_groups(_screened()) == {
+        "PICK": "picked",
+        "CUT": "over_cap",
+        "DRAW": "random",
+        "HELD": "held",
+        "CALM": "held",
+    }
+    # a stock listed twice (never by the screen itself) takes its first group
+    assert screen_groups(_screened(held=("HELD", "PICK")))["PICK"] == "picked"
+
+
+@pytest.mark.parametrize(
+    "record",
+    [
+        _record(),  # before the screen
+        _record(screen=_screen(used="watchlist")),  # the screen failed: the watchlist ran
+        _record(screen=None),
+    ],
+)
+def test_a_day_the_screen_did_not_choose_has_no_groups(record: dict[str, Any]) -> None:
+    assert screen_groups(record) == {}
+    assert screened_from(record) == []
+    assert {m.group for m in calls_from(record)} == {None}
+
+
+def test_calls_carry_the_group_and_check_1_gets_every_screened_stock() -> None:
+    record = _screened()
+    assert {m.ticker: m.group for m in calls_from(record)} == {"PICK": "picked", "DRAW": "random"}
+    everyone = screened_from(record)
+    assert [(m.ticker, m.group) for m in everyone] == [
+        ("CALM", "held"),
+        ("CUT", "over_cap"),
+        ("DRAW", "random"),
+        ("HELD", "held"),
+        ("PICK", "picked"),
+    ]
+    assert {m.made_at for m in everyone} == {MADE}  # the same window as the calls
+    assert {m.jev for m in everyone} | {m.opus for m in everyone} == {None}
+    assert everyone[0].versions == {"screen": "screen-v6"}
+
+
+def test_check_1_sets_the_size_of_moves_that_passed_against_those_that_did_not(
+    tmp_path: Path,
+) -> None:
+    _save(tmp_path, _screened())
+    mv = _screen_card(tmp_path, save=False)["screen"]["moves"]
+    # excess: PICK +10%, CUT -10% passed; DRAW 2%, HELD -4%, CALM 0% did not
+    assert (mv["passed"], mv["not_passed"]) == (2, 3)
+    assert mv["passed_mean"] == pytest.approx(0.10)
+    assert mv["not_passed_mean"] == pytest.approx(0.02)
+    assert mv["gap"] == pytest.approx(0.08)
+    assert mv["days"] == 1
+    # the luck range: any 2 of the 5 could have passed; 1 pair in 10 gives +8.00%, 1 gives -7.00%
+    assert round(mv["luck"], 4) in (0.07, 0.08)
+
+
+def test_check_2_sets_each_methods_calls_on_the_picks_against_the_draw(tmp_path: Path) -> None:
+    _save(tmp_path, _screened())
+    c = _screen_card(tmp_path, save=False)["screen"]["calls"]
+    # Jev bought both: PICK +10%, DRAW +2%; Opus shorted both, weight -1
+    assert (c["jev"]["picks"], c["jev"]["draw"]) == (1, 1)
+    assert c["jev"]["picks_mean"] == pytest.approx(0.10)
+    assert c["jev"]["draw_mean"] == pytest.approx(0.02)
+    assert c["jev"]["gap"] == pytest.approx(0.08)
+    assert c["opus"]["gap"] == pytest.approx(-0.08)
+
+
+def test_a_watchlist_day_counts_in_neither_check(tmp_path: Path) -> None:
+    _save(tmp_path, _record("2026-11-05", MADE, _stock("PICK"), _stock("DRAW")))
+    sc = _screen_card(tmp_path, save=False)["screen"]
+    assert sc["moves"] == {
+        "passed": 0,
+        "not_passed": 0,
+        "days": 0,
+        "passed_mean": None,
+        "not_passed_mean": None,
+    }
+    assert sc["calls"]["jev"]["picks"] == sc["calls"]["jev"]["draw"] == 0
+    assert sc["open"] == 0 and sc["biggest_held"] == []
+
+
+def test_the_biggest_held_moves_are_the_ones_finished_this_time(tmp_path: Path) -> None:
+    _save(tmp_path, _screened(held=("HELD", "CALM", "PICK2")))
+    bars = _many(RETURNS | {"PICK2": 0.30, "HELD": -0.12})
+    sc = _screen_card(tmp_path, _fetcher(bars))["screen"]
+    assert [(x["ticker"], round(x["excess"], 4)) for x in sc["biggest_held"]] == [
+        ("PICK2", 0.28),
+        ("HELD", -0.14),
+        ("CALM", 0.0),
+    ]
+    again = _screen_card(tmp_path, _fetcher(bars))["screen"]
+    assert again["biggest_held"] == []  # already in the ledger: not news next week
+    assert again["moves"]["not_passed"] == 4
+
+
+def test_the_screen_ledger_is_one_row_a_line_and_read_back_without_a_new_fetch(
+    tmp_path: Path,
+) -> None:
+    _save(tmp_path, _screened())
+    _screen_card(tmp_path)
+    path = screen_ledger_path(tmp_path, CFG)
+    assert path.name == f"{CFG.version}-screen.json"
+    text = path.read_text()
+    assert len(text.splitlines()) == 2 + 5  # head, 5 rows, closing braces
+    rows = read_ledger(path, CFG)
+    assert rows["2026-11-05:CUT"] == {
+        "day": "2026-11-05",
+        "made_at": MADE.isoformat(),
+        "ticker": "CUT",
+        "group": "over_cap",
+        "versions": {"screen": "screen-v6"},
+        "status": "scored",
+        "reason": "",
+        "entry_day": ENTRY.isoformat(),
+        "exit_day": EXIT.isoformat(),
+        "excess": pytest.approx(-0.10),
+        "score_version": CFG.version,
+    }
+    asked: list[Any] = []
+    sc = _screen_card(tmp_path, _fetcher({}, asked))["screen"]
+    assert asked == [] and sc["moves"]["gap"] == pytest.approx(0.08)
+
+
+def test_call_rows_in_the_ledger_keep_their_group(tmp_path: Path) -> None:
+    _save(tmp_path, _screened())
+    _screen_card(tmp_path)
+    [row] = [
+        r
+        for k, r in read_ledger(tmp_path / "daily" / "scores" / f"{CFG.version}.json", CFG).items()
+        if k.endswith("DRAW")
+    ]
+    assert row["group"] == "random"
+
+
+def test_a_failed_screen_fetch_loses_check_1_only(tmp_path: Path) -> None:
+    _save(tmp_path, _screened())
+
+    def fetch(tickers: list[str], period: str) -> Prices:
+        if "HELD" in tickers:
+            raise RuntimeError("Yahoo is down")
+        return Prices(_many(), ())
+
+    card = _screen_card(tmp_path, fetch)
+    assert card["scored"] == 2  # the calls are scored
+    assert card["screen"]["error"] == "check 1 could not be made (RuntimeError)"
+    assert card["screen"]["calls"]["jev"]["gap"] == pytest.approx(0.08)
+    said = lines(card)
+    assert (
+        "Screen check 1 was not made this week: check 1 could not be made (RuntimeError)." in said
+    )
+    assert any(t.startswith("Screen check 2, are Jev's calls better") for t in said)
+    assert not screen_ledger_path(tmp_path, CFG).exists()
+
+
+def test_before_any_screened_stock_finishes_the_card_says_when_the_first_will(
+    tmp_path: Path,
+) -> None:
+    _save(tmp_path, _screened())
+    card = scorecard(tmp_path, EXIT - timedelta(days=1), CFG, _fetcher({}), save=False)
+    assert card["screen"]["finished"] == 0
+    said = [t for t in lines(card) if t.startswith("Screen")]
+    assert said == [
+        "Screen checks: no screened stock has finished its 20 sessions yet "
+        f"(5 stock-days open; the first finishes on {EXIT})."
+    ]
+
+
+def test_a_card_with_no_screened_day_says_nothing_of_the_screen(tmp_path: Path) -> None:
+    _save(tmp_path, _record())
+    card = _card(tmp_path, today=EXIT)
+    assert not [t for t in lines(card) if "creen" in t]
+
+
+def test_the_card_words_both_checks(tmp_path: Path) -> None:
+    _save(tmp_path, _screened())
+    said = lines(_screen_card(tmp_path, save=False))
+    said = said[said.index(next(t for t in said if t.startswith("Screen"))) : -1]
+    assert said == [
+        "Screen check 1, do the stocks that pass move more: over 20 sessions, up or down "
+        "against QQQ, those that passed moved 10.00% on average (2 stock-days), those that "
+        "did not 2.00% (3), comparing stocks screened the same day (1 day).",
+        "Gap (passed less not passed): +8.00%. Not settled (too early: 1 of 13 weeks "
+        "scored): 9 times in 10, luck alone gives a gap between -7.00% and +7.00%.",
+        "The gap is outside that range, but since the card is read every week a gap settles "
+        "only at 10.31%, and only once 13 weeks are scored.",
+        "Screen check 2, are Jev's calls better on the screen's picks: +10.00% a call on the "
+        "picks (1), +2.00% on the random draw (1), comparing picks and draws from the same "
+        "day (1 day).",
+        "Gap (picks less random draw): +8.00%. Not settled (too early: 1 of 13 weeks "
+        "scored): 9 times in 10, luck alone gives a gap between -13.79% and +13.79%.",
+        "Screen check 2, are Opus's calls better on the screen's picks: -10.00% a call on the "
+        "picks (1), -2.00% on the random draw (1), comparing picks and draws from the same "
+        "day (1 day).",
+        "Gap (picks less random draw): -8.00%. Not settled (too early: 1 of 13 weeks "
+        "scored): 9 times in 10, luck alone gives a gap between -13.79% and +13.79%.",
+        "Biggest moves against QQQ among stocks Hold by screen, newly scored: HELD -4.00% "
+        "(screened 2026-11-05), CALM +0.00% (screened 2026-11-05).",
+    ]
+
+
+def test_a_stock_day_with_no_price_is_named_and_left_out_of_check_1(tmp_path: Path) -> None:
+    _save(tmp_path, _screened())
+    bars = _many()
+    del bars["CALM"]
+    late = planned_exit(ENTRY, 20 + CFG.no_download_after)
+    bars[BENCHMARK] = _bars(_sessions(20 + CFG.no_download_after), 200.0, 201.0, 204.0)
+    card = scorecard(tmp_path, late, CFG, _fetcher(bars), save=False)
+    assert card["screen"]["unscored"] == 1 and card["screen"]["moves"]["not_passed"] == 2
+    assert card["screen"]["finished"] == 5  # the stock-day with no price finished too
+    assert "Screen check 1 leaves out 1 stock-day(s) with no price." in lines(card)
+
+
+def _run_rows(
+    sizes: dict[str, list[float]], passed: dict[str, list[bool | None]]
+) -> list[dict[str, Any]]:
+    """Check 1 rows: each stock's move day by day (every other one downward,
+    since only the size counts) and whether it passed the screen that day."""
+    days = [d.isoformat() for d in _sessions(len(next(iter(sizes.values()))))]
+    return [
+        {
+            "day": day,
+            "ticker": t,
+            "status": "scored",
+            "group": "picked" if ok else "held",
+            "excess": -x if i % 2 else x,
+        }
+        for t, xs in sizes.items()
+        for i, (day, x, ok) in enumerate(zip(days, xs, passed[t], strict=True))
+        if ok is not None
+    ]
+
+
+def test_check_1_sets_each_days_stocks_only_against_that_days() -> None:
+    # no skill: on the busy day every stock moves 10% and five of seven pass;
+    # on the quiet day every stock moves 4% and one passes. Pooled, the stocks
+    # that passed would look 3.5 points wilder, only because of the busy day.
+    sizes = {f"S{i}": [0.10, 0.04] for i in range(7)}
+    passed: dict[str, list[bool | None]] = {f"S{i}": [i < 5, i < 1] for i in range(7)}
+    mv = moved(_run_rows(sizes, passed), CFG)
+    assert (mv["passed"], mv["not_passed"], mv["days"]) == (6, 8, 2)
+    assert mv["passed_mean"] == pytest.approx(0.07)
+    assert mv["not_passed_mean"] == pytest.approx(0.07)
+    assert mv["gap"] == pytest.approx(0.0)
+
+
+def test_a_day_with_no_stock_on_one_side_sits_out_check_1() -> None:
+    sizes = {"A": [0.10, 0.30], "B": [0.02, 0.01]}
+    passed: dict[str, list[bool | None]] = {"A": [True, True], "B": [False, None]}
+    mv = moved(_run_rows(sizes, passed), CFG)
+    assert (mv["passed"], mv["not_passed"], mv["days"]) == (1, 1, 1)
+    assert mv["gap"] == pytest.approx(0.08)
+
+
+def test_check_1s_luck_hands_each_stocks_whole_run_of_results_to_another_stock() -> None:
+    # A passes every day and B never does, so a shuffle either keeps them or
+    # swaps them: the gap luck gives is this gap, one way round or the other.
+    # Shuffling single days instead would mix the days and widen the range.
+    sizes = {"A": [0.30, 0.02, 0.10, 0.06], "B": [0.01, 0.05, 0.02, 0.04]}
+    passed: dict[str, list[bool | None]] = {"A": [True] * 4, "B": [False] * 4}
+    mv = moved(_run_rows(sizes, passed), CFG)
+    assert mv["gap"] == pytest.approx(0.09)  # (0.29 - 0.03 + 0.08 + 0.02) / 4
+    assert mv["luck"] == pytest.approx(0.09) and mv["se"] == pytest.approx(0.09)
+
+
+def test_check_1s_luck_is_the_gap_9_shuffles_in_10_stay_within() -> None:
+    # one day, one stock passed: A or B passing gives +4.50%, C passing -9.00%,
+    # so 1 shuffle in 3 goes past 4.50% and the range reaches 9.00%
+    rows = _run_rows(
+        {"A": [0.10], "B": [0.10], "C": [0.01]}, {"A": [True], "B": [False], "C": [False]}
+    )
+    mv = moved(rows, CFG)
+    assert mv["gap"] == pytest.approx(0.045)
+    assert mv["luck"] == pytest.approx(0.09)
+    se = (2 / 3 * 0.045**2 + 1 / 3 * 0.09**2) ** 0.5
+    assert mv["se"] == pytest.approx(se, rel=0.05)
+    assert moved(rows, CFG) == mv  # seeded: the same card when made again
+
+
+def test_check_2_sets_each_days_picks_only_against_that_days_draw() -> None:
+    def row(day: date, t: str, group: str, excess: float) -> dict[str, Any]:
+        return {
+            "day": day.isoformat(),
+            "ticker": t,
+            "status": "scored",
+            "group": group,
+            "jev": "Buy",
+            "opus": None,
+            "excess": excess,
+            "exit_day": next_session(day).isoformat(),
+        }
+
+    one, two, three, four = _sessions(4)
+    rows = [
+        row(one, "P1", "picked", 0.10),
+        row(one, "P2", "picked", 0.06),
+        row(one, "R1", "random", 0.06),
+        row(two, "P3", "picked", -0.04),
+        row(two, "R2", "random", 0.00),
+        row(two, "R3", "random", 0.02),
+        row(two, "R4", "random", 0.04),
+        row(three, "P4", "picked", 0.50),  # no draw that day: it sits out
+        row(four, "R5", "random", 0.90),  # nothing passed that day: no picks, it sits out
+    ]
+    c = on_picks(rows, CFG)
+    jev = c["jev"]
+    # day one +8.00% against +6.00%, day two -4.00% against +2.00%; pooled,
+    # the picks would make +4.00% against +3.00%
+    assert (jev["picks"], jev["draw"], jev["days"]) == (3, 4, 2)
+    assert (jev["no_draw"], jev["no_picks"]) == (1, 1)
+    assert jev["picks_mean"] == pytest.approx(0.02)
+    assert jev["draw_mean"] == pytest.approx(0.04)
+    assert jev["gap"] == pytest.approx(-0.02)
+    assert c["opus"]["days"] == 0 and c["opus"]["picks_mean"] is None
+
+
+def test_check_2_never_counts_held_or_cut_stocks_even_with_a_call() -> None:
+    # The daily run calls only the picks and the random draw, so today a stock
+    # held by the screen or cut by the cap never has a call. If that ever
+    # changes, check 2 must still count as picks only what the screen sent
+    # (a stock the cap cut never got a call from the screen), and set them only
+    # against the random draw, or the draw stops being a fair sample of what
+    # the screen leaves out.
+    def row(day: date, t: str, group: str, excess: float) -> dict[str, Any]:
+        return {
+            "day": day.isoformat(),
+            "ticker": t,
+            "status": "scored",
+            "group": group,
+            "jev": "Buy",
+            "opus": None,
+            "excess": excess,
+            "exit_day": next_session(day).isoformat(),
+        }
+
+    one, two = _sessions(2)
+    rows = [
+        row(one, "P1", "picked", 0.04),
+        row(one, "R1", "random", 0.02),
+        row(one, "H1", "held", 0.50),
+        row(one, "C1", "over_cap", -0.50),
+        row(two, "P2", "picked", 0.30),
+        row(two, "H2", "held", -0.30),  # not a draw: the day has none, it sits out
+    ]
+    jev = on_picks(rows, CFG)["jev"]
+    assert (jev["picks"], jev["draw"], jev["days"], jev["no_draw"]) == (1, 1, 1, 1)
+    assert jev["picks_mean"] == pytest.approx(0.04)
+    assert jev["draw_mean"] == pytest.approx(0.02)
+
+
+def test_check_2s_luck_range_comes_from_the_daily_moves() -> None:
+    rows: list[dict[str, Any]] = []
+    for i, d in enumerate(_sessions(12)):
+        for t, group, call, size, shift in (
+            ("A", "picked", "Buy", 1.0, 0),
+            ("B", "random", "Short", -0.5, 1),  # not a mirror of A: the gap varies by day
+        ):
+            moves = [0.01 * size * ((i + j + shift) % 3 - 1) for j in range(3)]
+            rows.append(
+                {
+                    "day": d.isoformat(),
+                    "ticker": t,
+                    "status": "scored",
+                    "group": group,
+                    "jev": call,
+                    "opus": "Hold",
+                    "excess": sum(moves),
+                    "moves": moves,
+                    "move_days": [x.isoformat() for x in _sessions(3, d)],
+                }
+            )
+    c = on_picks(rows, CFG)["jev"]
+    w = CFG.weights
+    # one pick and one draw a day: each weighs 1 / 12 of the gap
+    parts = [((1 if r["group"] == "picked" else -1) * w[r["jev"]] / 12, r) for r in rows]
+    totals = list(day_totals(parts).values())
+    se = standard_error(totals, 1, CFG.carry_days)
+    assert se  # a real spread, not zero
+    assert c["days"] == 12 and len(totals) == 14  # spread over the move days
+    assert c["se"] == pytest.approx(se) and c["luck"] == pytest.approx(t95(13) * se)
+    assert c["gap"] == pytest.approx(c["picks_mean"] - c["draw_mean"])
+    assert on_picks(rows, CFG)["opus"]["gap"] == pytest.approx(0.0)  # Hold scores 0
+
+
+@pytest.mark.parametrize(
+    ("gap", "weeks", "settled"),
+    [
+        (0.05, 13, True),
+        (-0.05, 13, True),
+        (0.05, 12, False),  # too early, however big
+        (0.01, 13, False),  # under the settle bar
+    ],
+)
+def test_a_screen_gap_settles_only_after_13_weeks_and_past_the_bar(
+    gap: float, weeks: int, settled: bool
+) -> None:
+    g = _verdict(gap, 0.01, 0.0165, weeks, CFG)
+    assert g["bar"] == pytest.approx(CFG.settled_bar * 0.01)  # 2.40%
+    assert g["settled"] is settled
+
+
+def test_a_screen_gap_that_rounds_to_zero_never_settles_however_steady() -> None:
+    assert _verdict(0.00004, 1e-7, 1.6e-7, 13, CFG)["settled"] is False  # shows as +0.00%
+    assert _verdict(0.0001, 1e-7, 1.6e-7, 13, CFG)["settled"] is True  # shows as +0.01%
+    assert _verdict(0.05, None, None, 13, CFG)["settled"] is False  # luck not sized
+
+
+def test_the_settled_line_says_which_way() -> None:
+    g = {"gap": 0.03, "weeks": 13, "luck": 0.01, "bar": 0.015, "settled": True}
+    up = _luck_lines(g, 13, "a less b", "they move more", "they move less")
+    assert up == [
+        "Gap (a less b): +3.00%. Settled: they move more (a gap this size is unlikely to be "
+        "luck, even counting every weekly check)."
+    ]
+    down = _luck_lines(g | {"gap": -0.03}, 13, "a less b", "they move more", "they move less")
+    assert "Settled: they move less" in down[0]
+
+
+def test_a_gap_outside_the_luck_range_that_has_not_settled_says_why() -> None:
+    g = {"gap": 0.03, "weeks": 13, "luck": 0.01, "bar": 0.04, "settled": False}
+    head = (
+        "Gap (a less b): +3.00%. Not settled: 9 times in 10, luck alone gives a gap between "
+        "-1.00% and +1.00%."
+    )
+    assert _luck_lines(g, 13, "a less b", "x", "y") == [
+        head,
+        "The gap is outside that range, but since the card is read every week a gap settles "
+        "only at 4.00%.",
+    ]
+    early = _luck_lines(g | {"weeks": 2}, 13, "a less b", "x", "y")
+    assert early[1].endswith("settles only at 4.00%, and only once 13 weeks are scored.")
+    clears = _luck_lines(g | {"weeks": 2, "bar": 0.02}, 13, "a less b", "x", "y")
+    assert clears[1] == (
+        "The gap already clears the settle bar of 2.00%; a gap can settle only once 13 weeks "
+        "are scored."
+    )
+    assert _luck_lines(g | {"gap": 0.005}, 13, "a less b", "x", "y") == [
+        head.replace("+3.00%", "+0.50%")
+    ]
+
+
+def test_screened_stocks_waiting_for_a_price_are_counted_not_called_unfinished(
+    tmp_path: Path,
+) -> None:
+    _save(tmp_path, _screened())
+    qqq = {BENCHMARK: _many()[BENCHMARK]}  # QQQ's prices came, the stocks' did not
+
+    def fetch(tickers: list[str], period: str) -> Prices:
+        return Prices(qqq, ("price download failed (timeout)",))
+
+    card = _screen_card(tmp_path, fetch, save=False)
+    assert card["screen"]["waiting"] == 5 and card["screen"]["moves"]["days"] == 0
+    said = [t for t in lines(card) if t.startswith("Screen")]
+    assert said == ["Screen check 1: 5 stock-day(s) finished but are waiting for a price."]
+
+
+def test_a_screen_list_that_is_not_a_list_is_skipped() -> None:
+    record = _screened()
+    record["screen"]["held"] = 5
+    record["screen"]["filled"] = "DRAW"  # not read letter by letter
+    assert screen_groups(record) == {"PICK": "picked", "CUT": "over_cap"}
+
+
+def test_a_day_with_no_random_draw_sits_out_check_2_and_the_card_says_so(
+    tmp_path: Path,
+) -> None:
+    _save(tmp_path, _screened(filled=()))
+    card = _screen_card(tmp_path, save=False)
+    jev = card["screen"]["calls"]["jev"]
+    assert (jev["days"], jev["no_draw"], jev["no_picks"], jev["picks_mean"]) == (0, 1, 0, None)
+    assert (
+        "Screen check 2 for Jev's calls: no finished day had both picks and a random draw "
+        "yet. 1 day with no random draw sat out."
+    ) in lines(card)
+
+
+def test_check_2s_luck_weighs_each_stock_by_its_own_days_group_size() -> None:
+    # day one: 1 pick against 3 draws; day two: 2 picks against 1 draw. Each
+    # day counts the same, so a stock's weight is 1 / (its group that day x 2),
+    # and the daily moves add up to the gap exactly.
+    one, two = _sessions(2)
+    stocks = (
+        (one, "P1", "picked", "Buy", [0.03, -0.01, 0.02]),
+        (one, "R1", "random", "Buy", [0.01, 0.00, -0.02]),
+        (one, "R2", "random", "Sell", [-0.02, 0.01, 0.00]),
+        (one, "R3", "random", "Buy", [0.00, 0.02, 0.01]),
+        (two, "P2", "picked", "Buy", [0.02, 0.01, -0.03]),
+        (two, "P3", "picked", "Short", [-0.01, -0.02, 0.01]),
+        (two, "R4", "random", "Buy", [0.01, -0.01, 0.00]),
+    )
+    rows = [
+        {
+            "day": d.isoformat(),
+            "ticker": t,
+            "status": "scored",
+            "group": g,
+            "jev": call,
+            "opus": None,
+            "excess": sum(moves),
+            "moves": moves,
+            "move_days": [x.isoformat() for x in _sessions(3, d)],
+        }
+        for d, t, g, call, moves in stocks
+    ]
+    w = CFG.weights
+    size = {(one, "picked"): 1, (one, "random"): 3, (two, "picked"): 2, (two, "random"): 1}
+    parts = [
+        ((1 if g == "picked" else -1) * w[call] / (size[d, g] * 2), r)
+        for (d, _, g, call, _), r in zip(stocks, rows, strict=True)
+    ]
+    totals = list(day_totals(parts).values())
+    c = on_picks(rows, CFG)["jev"]
+    assert math.isclose(sum(totals), c["gap"])  # the parts are the gap, day by day
+    assert c["se"] == pytest.approx(standard_error(totals, 1, CFG.carry_days))
+
+
+def test_the_weeks_count_only_days_both_groups_were_there() -> None:
+    # three weeks screened; in the middle one only a stock that passed was
+    # priced, so that week did not compare anything
+    picked = [True, None, None, None, None, True, None, None, None, None, True]
+    held = [False, None, None, None, None, None, None, None, None, None, False]
+    sizes = {"A": [0.05] * 11, "B": [0.02] * 11}
+    mv = moved(_run_rows(sizes, {"A": picked, "B": held}), CFG)
+    assert (mv["days"], mv["weeks"]) == (2, 2)
+    rows = [
+        {
+            "day": d.isoformat(),
+            "ticker": t,
+            "status": "scored",
+            "group": g,
+            "jev": "Buy",
+            "opus": None,
+            "excess": 0.01,
+            "moves": [0.01],
+            "move_days": [d.isoformat()],
+        }
+        for i, d in enumerate(_sessions(11))
+        for t, g, on in (("P", "picked", (0, 5, 10)), ("R", "random", (0, 10)))
+        if i in on
+    ]
+    c = on_picks(rows, CFG)["jev"]
+    assert (c["days"], c["weeks"]) == (2, 2)
+
+
+def test_check_1s_luck_range_is_the_90th_percentile_of_the_shuffled_gaps(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    seen: list[tuple[float, float, int, int, list[int]] | None] = []
+    real = tenq.scorecard._size_gap
+
+    def spy(*a: Any) -> tuple[float, float, int, int, list[int]] | None:
+        got = real(*a)
+        seen.append(got)
+        return got
+
+    monkeypatch.setattr(tenq.scorecard, "_size_gap", spy)
+    sizes = {f"S{i}": [0.01 * (i + 1), 0.013 * (10 - i), 0.007 * (i + 3)] for i in range(10)}
+    passed: dict[str, list[bool | None]] = {
+        f"S{i}": [i % 3 == 0, i % 4 == 1, i < 4] for i in range(10)
+    }
+    mv = moved(_run_rows(sizes, passed), CFG, shuffles=20)
+    gaps = [g[0] - g[1] for g in seen[1:] if g is not None]
+    wide = sorted(abs(g) for g in gaps)
+    assert len(gaps) == 20 and wide[16] < wide[17] < wide[18]  # the 85th, 90th, 95th differ
+    assert mv["luck"] == pytest.approx(wide[17])
+    assert mv["se"] == pytest.approx(math.sqrt(sum(g * g for g in gaps) / len(gaps)))
+
+
+def test_check_2_says_which_days_sat_out_and_why() -> None:
+    sc = {"calls": {"jev": {"days": 0, "no_draw": 2, "no_picks": 1}}}
+    assert screen_lines(sc, CFG.weeks_first_verdict) == [
+        "Screen check 2 for Jev's calls: no finished day had both picks and a random draw "
+        "yet. 2 days with no random draw and 1 day with no picks sat out."
+    ]
+
+
+def test_finished_stocks_with_no_price_are_not_called_unfinished() -> None:
+    sc = {
+        "moves": {"days": 0},
+        "finished": 2,
+        "open": 5,
+        "waiting": 0,
+        "unscored": 2,
+        "calls": {},
+    }
+    got = screen_lines(sc, CFG.weeks_first_verdict)
+    assert not any("no screened stock has finished" in x for x in got)
+    assert got == [
+        "Screen check 1: no finished day has priced stocks both among those that passed "
+        "and those that did not yet.",
+        "Screen check 1 leaves out 2 stock-day(s) with no price.",
+    ]
