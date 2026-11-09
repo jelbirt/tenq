@@ -9,6 +9,7 @@ from __future__ import annotations
 import logging
 import math
 import os
+import re
 from collections.abc import Iterator
 from dataclasses import replace
 from datetime import datetime
@@ -100,9 +101,9 @@ def currencies_of(units: dict[str, Any]) -> dict[str, str]:
     out: dict[str, str] = {}
     for uid, info in units.items():
         if isinstance(info, dict) and info.get("type") == "simple":
-            measure = str(info.get("measure") or "")
-            if measure.startswith("iso4217:"):
-                out[str(uid)] = measure.removeprefix("iso4217:")
+            prefix, _, code = str(info.get("measure") or "").rpartition(":")
+            if "iso4217" in prefix.lower() and re.fullmatch(r"[A-Z]{3}", code):
+                out[str(uid)] = code  # any prefix the filer bound to ISO 4217
     return out
 
 

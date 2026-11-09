@@ -231,8 +231,7 @@ def test_an_8k_without_an_exhibit_is_quoted_from_its_start() -> None:
         "The board appointed a new chief financial officer effective today.\n",
     )
     out = excerpts(passages)
-    assert [e.text for e in out] == [
-        "Item 5.02 Departure of Directors or Certain Officers",
+    assert [e.text for e in out] == [  # the item's heading is on the report's line already
         "The board appointed a new chief financial officer effective today.",
     ]
 
@@ -703,7 +702,7 @@ SIXK_COVER = [
 
 @pytest.mark.parametrize(
     ("texts", "first"),
-    [(EIGHTK_COVER, "Item 5.02"), (SIXK_COVER, "Acme N.V. announced")],
+    [(EIGHTK_COVER, "On November 3, 2026"), (SIXK_COVER, "Acme N.V. announced")],
     ids=["8-K", "6-K"],
 )
 def test_a_report_quoted_from_its_own_text_starts_after_the_whole_cover(
@@ -799,3 +798,116 @@ def test_an_unreadable_6k_is_named_as_a_6k(
 
     monkeypatch.setattr(current, "passages", passages)
     assert "6-K 0001535527-26-000060 text unavailable" in _build(store, current).notes
+
+
+def _quoted(texts: list[str]) -> list[str]:
+    from tenq.filings import Passage
+
+    passages = [Passage(f"X:{i}", "X", i, t) for i, t in enumerate(texts, 1)]
+    return [e.text for e in excerpts(passages)]
+
+
+NEWS = "Acme N.V. announced today that its chief executive will retire next year."
+
+
+@pytest.mark.parametrize(
+    "box",
+    ["Form 20-F x Form 40-F ¨", "(Check One) Form 20-F ý Form 40-F D ¨", "Form 20-F  Form 40-F"],
+    ids=["x", "y-acute", "private-use"],
+)
+def test_the_6k_box_line_is_cover_whatever_mark_the_filer_uses(box: str) -> None:
+    """Real 6-Ks tick the box with "x", "ý" or a private-use glyph, not only ☒."""
+    assert _quoted(["Commission File Number 001-1", box, NEWS]) == [NEWS]
+
+
+def test_cover_words_wrapped_across_lines_still_mark_the_cover() -> None:
+    texts = ["If an emerging growth company, indicate\n by check mark if the registrant", NEWS]
+    assert _quoted(texts) == [NEWS]
+
+
+def test_a_6k_issuer_line_after_the_box_is_cover_too() -> None:
+    """CCEP's 6-K repeats "pursuant to Rule 13a-16" after the box line."""
+    texts = [
+        "Form 20-F ý Form 40-F ¨",
+        "List identifying information required to be furnished",
+        "pursuant to Rule 13a-16 or 15d-16 of The Securities Exchange Act",
+        NEWS,
+    ]
+    assert _quoted(texts) == [NEWS]
+
+
+def test_form_text_is_skipped_only_when_it_opens_the_passage() -> None:
+    """Incorporation and signing lines are form text; news that merely ends with
+    "... filed with the Securities and Exchange Commission" is still news."""
+    late = (
+        "ISSAQUAH, Wash. - Costco reported net sales of $21 billion for the month, and "
+        "noted other risks identified in reports filed with the Securities and Exchange "
+        "Commission."
+    )
+    texts = [
+        NEWS,
+        "THIS REPORT ON FORM 6-K IS HEREBY INCORPORATED BY REFERENCE INTO THE REGISTRANT'S",
+        "• REGISTRATION STATEMENT ON FORM S-8 OF ACME N.V. (REGISTRATION NO. 333-1);",
+        "The press release is furnished and shall not be deemed filed for any purpose.",
+        late,
+    ]
+    assert _quoted(texts) == [NEWS, late]
+
+
+def test_item_headings_page_lines_and_repeats_are_skipped() -> None:
+    texts = [
+        "Item 5.07 Submission of Matters to a Vote of Security Holders.",
+        "P a g e | 1",
+        NEWS,
+        NEWS,
+        "The holders elected all eleven directors at the annual meeting today.",
+    ]
+    assert _quoted(texts) == [NEWS, texts[4]]
+
+
+def test_a_quote_stops_at_the_signatures_or_the_next_exhibit() -> None:
+    assert _quoted([NEWS, "SIGNATURES", "The registrant has signed this report below."]) == [NEWS]
+    assert _quoted(
+        ["EXHIBIT 99.1", NEWS, "EXHIBIT 99.2", "A second release about a rival bid."]
+    ) == [NEWS]
+
+
+def test_an_earlier_filing_in_another_currency_is_named(
+    tmp_path: Path, current: FilingStore
+) -> None:
+    """The metrics pool the year-ago filing too: if it is in euros, the changes
+    go blank, and the sheet should say why."""
+    from tenq.filings import Fact
+
+    store = FilingStore(tmp_path / "older")
+    old = FilingMeta("CRWD", 1, "C", "10-Q", "0001-25-000001", "2025-09-01", "2025-07-31", "u")
+    new = FilingMeta("CRWD", 1, "C", "10-Q", "0001-26-000001", "2026-09-01", "2026-07-31", "u")
+    store.save(
+        old,
+        "FORM 10-Q",
+        [Fact("us-gaap:Revenues", 8.0, "U", "2025-05-01", "2025-07-31", None, -3, "EUR")],
+    )
+    store.save(
+        new,
+        "FORM 10-Q",
+        [Fact("us-gaap:Revenues", 9.0, "u", "2026-05-01", "2026-07-31", None, -3, "USD")],
+    )
+    notes = _build(store, current).notes
+    assert (
+        "some of CRWD's earlier filings report in EUR, not dollars, so changes against "
+        "those quarters are left out" in notes
+    )
+    assert not [n for n in notes if "10-Q's figures" in n]
+
+
+def test_a_sheet_figure_with_no_currency_is_logged(
+    tmp_path: Path, current: FilingStore, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Fresh facts always carry a currency; one without means the unit reading
+    broke, and the figure counts as dollars, so it must at least show in the log."""
+    from tenq.filings import Fact
+
+    revenue = Fact("us-gaap:Revenues", 9.0, "usd", "2026-05-01", "2026-07-31", None, -3)
+    with caplog.at_level("WARNING", logger="tenq.pack"):
+        _build(_euro_filing(tmp_path, revenue), current)
+    assert "1 sheet figures in CRWD-0001-26-000001 have no currency" in caplog.text

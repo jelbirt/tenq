@@ -166,6 +166,13 @@ def test_a_facts_currency_comes_from_the_filings_unit_definition() -> None:
         },
     }
     assert currencies_of(units) == {"usd": "USD", "U1": "EUR"}
+    other_prefix = {  # a filer may bind ISO 4217 to its own prefix name
+        "a": {"type": "simple", "measure": "ISO4217:GBP"},
+        "b": {"type": "simple", "measure": "iso4217-2:CAD"},
+        "c": {"type": "simple", "measure": "us-gaap:USD"},  # not the ISO namespace
+        "d": {"type": "simple", "measure": "iso4217:usdollar"},  # not a code
+    }
+    assert currencies_of(other_prefix) == {"a": "GBP", "b": "CAD"}
     row = {"concept": "us-gaap:Revenues", "period_start": "2026-07-01", "period_end": "2026-09-30"}
     rows = [
         row | {"numeric_value": 10.0, "unit_ref": "usd"},

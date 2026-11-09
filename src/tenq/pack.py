@@ -43,12 +43,13 @@ from pathlib import Path
 from typing import Any, Literal
 
 from tenq.current import describe
-from tenq.filings import FilingMeta, FilingStore, Passage
+from tenq.filings import Fact, FilingMeta, FilingStore, Passage
 from tenq.metrics import (
     BASE_METRICS,
     CHANGE_FIELDS,
     DOLLARS,
     FIELDS,
+    POOL_DEPTH,
     STEADY_GROWTH,
     growth_reading,
     metrics_for,
@@ -81,13 +82,34 @@ EXHIBIT = re.compile(r"EXHIBIT 99(?:\.[0-9]+)?")  # the block edgar.fetch_curren
 # a report quoted from its own text starts after the last of these markers seen
 # in its first COVER_SPAN passages. "Form 20-F ... Form 40-F" is the 6-K's box
 # line; the two names together, not either alone, since a release may cite its
-# annual report on Form 20-F.
+# annual report on Form 20-F. The box between them is any one character: real
+# 6-Ks write "x", "ý", "☒" or a private-use glyph. Words may wrap across lines.
 COVER = re.compile(
-    r"indicate by check mark|check the appropriate box|commission file number"
-    r"|form\s+20-f\W{0,12}form\s+40-f",
+    r"indicate\s+by\s+check\s+mark|check\s+the\s+appropriate\s+box"
+    r"|commission\s+file\s+number|rule\s+13a-16"
+    r"|form\s+20-f\W{0,12}(?:\w\W{1,12})?form\s+40-f",
     re.IGNORECASE,
 )
 COVER_SPAN = 40
+# Lines of a report's own text that say nothing the sheet does not already show:
+# an item's heading (the items are on the report's line), and the signature
+# block, where the news has ended.
+ITEM_HEADING = re.compile(r"item\s+\d+\.\d+\b", re.IGNORECASE)
+HEADING_WORDS = 15  # an item heading this short is a heading, not the news
+SIGNATURES = re.compile(r"signatures?", re.IGNORECASE)
+# Legal form text that can also sit just after the news (so it never marks where
+# a cover ends): it is skipped one passage at a time, and only when it opens the
+# passage, since news often ends with the same words ("... filed with the
+# Securities and Exchange Commission").
+BOILERPLATE = re.compile(
+    r"pursuant\s+to\s+the\s+requirements\s+of\s+the\s+securities"
+    r"|incorporated\s+by\s+reference\s+in(?:to)?\b|registration\s+statements?\s+on\s+form"
+    r"|filed\s+with\s+the\s+securities\s+and\s+exchange\s+commission"
+    r"|shall\s+not\s+be\s+deemed",
+    re.IGNORECASE,
+)
+BOILERPLATE_LEAD = 120  # characters: where form text names what it is
+PAGE = re.compile(r"p\s*a\s*g\s*e\s*\|?\s*\d+(?:\s+of\s+\d+)?", re.IGNORECASE)
 
 
 @dataclass(frozen=True)
@@ -485,29 +507,46 @@ def settled_by(prices: Prices, as_of: datetime) -> Prices:
 METRIC_CONCEPTS = frozenset(c for m in BASE_METRICS for c in m.concepts)
 
 
+def _currencies(facts: list[Fact]) -> set[str]:
+    """The non-dollar currencies of a filing's sheet figures (revenue, cash and the
+    rest). Other facts in other currencies (a euro note, say) are not sheet figures."""
+    return {
+        f.currency
+        for f in facts
+        if f.concept in METRIC_CONCEPTS and f.currency and f.currency != DOLLARS
+    }
+
+
 def _not_dollars(
     filings: FilingStore, latest: FilingMeta, ticker: str, *, shown: bool
 ) -> list[str]:
-    """A note when the filing tagged sheet figures (revenue, cash and the rest) in
-    another currency: the metrics count dollars only, so without it the models
-    would see figures missing and no reason. Other facts in other currencies (a
-    euro note, say) are not sheet figures and say nothing."""
-    other = sorted(
-        {
-            f.currency
-            for f in filings.facts(latest)
-            if f.concept in METRIC_CONCEPTS and f.currency and f.currency != DOLLARS
-        }
-    )
-    if not other:
-        return []
-    cur = ", ".join(other)
-    if shown:
+    """A note when the sheet's filings tagged figures in another currency: the
+    metrics count dollars only, so without it the models would see figures (or
+    comparisons) missing and no reason. Looks at every filing the metrics pool,
+    since a year-ago filing in euros leaves the changes blank too."""
+    metas = filings.filings(ticker)
+    at = next((i for i, m in enumerate(metas) if m.accession == latest.accession), 0)
+    own = filings.facts(latest)
+    unknown = sum(1 for f in own if f.concept in METRIC_CONCEPTS and f.currency is None)
+    if unknown:  # fresh facts always carry one: a library change would show here
+        log.warning("%d sheet figures in %s have no currency", unknown, latest.doc)
+    now = _currencies(own)
+    before = set().union(*(_currencies(filings.facts(m)) for m in metas[at + 1 : at + POOL_DEPTH]))
+    if now:
+        cur = ", ".join(sorted(now))
+        if shown:
+            return [
+                f"some of the {latest.form}'s figures for {ticker} are in {cur}, not dollars, "
+                "and are left out"
+            ]
+        return [f"the {latest.form}'s figures for {ticker} are in {cur}, not dollars"]
+    if before:
+        cur = ", ".join(sorted(before))
         return [
-            f"some of the {latest.form}'s figures for {ticker} are in {cur}, not dollars, "
-            "and are left out"
+            f"some of {ticker}'s earlier filings report in {cur}, not dollars, so changes "
+            "against those quarters are left out"
         ]
-    return [f"the {latest.form}'s figures for {ticker} are in {cur}, not dollars"]
+    return []
 
 
 def _no_items(form: str) -> str:
@@ -517,7 +556,8 @@ def _no_items(form: str) -> str:
 
 def excerpts(passages: list[Passage], k: int = EXCERPTS) -> tuple[Excerpt, ...]:
     """The first `k` passages of the first EX-99 exhibit, else of the report itself,
-    skipping cover-page form text."""
+    skipping cover-page form text, item headings and repeats, and stopping at the
+    next exhibit or the signature block."""
     start = next((i for i, p in enumerate(passages) if EXHIBIT.fullmatch(p.text.strip())), None)
     if start is None:  # the report's own text: skip its cover page as a block
         head = passages[:COVER_SPAN]
@@ -525,10 +565,23 @@ def excerpts(passages: list[Passage], k: int = EXCERPTS) -> tuple[Excerpt, ...]:
         chosen = passages[cover + 1 :]
     else:
         chosen = passages[start + 1 :]
-    out = []
+    out: list[Excerpt] = []
+    seen: set[str] = set()
     for p in chosen:
-        if len(p.text.split()) < 4 or COVER.search(p.text):  # a heading, page number or
-            continue  # cover-page form text says nothing
+        text = p.text.strip()
+        if EXHIBIT.fullmatch(text) or SIGNATURES.fullmatch(text):
+            break  # the next exhibit, or the signatures: this one's news has ended
+        words = len(text.split())
+        if words < 4 or PAGE.fullmatch(text) or COVER.search(text):
+            continue  # a heading, page number, form text or signing line says nothing
+        if BOILERPLATE.search(text[:BOILERPLATE_LEAD]):
+            continue
+        if ITEM_HEADING.match(text) and words <= HEADING_WORDS:
+            continue
+        key = " ".join(text.split()).lower()[:60]
+        if key in seen:  # the same headline again (a repeated release, say)
+            continue
+        seen.add(key)
         out.append(Excerpt(p.id, _cut(p.text, EXCERPT_CHARS)))
         if len(out) == k:
             break
