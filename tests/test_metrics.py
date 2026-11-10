@@ -339,6 +339,12 @@ def test_a_filing_holds_a_quarter_only_with_a_dollar_flow_ending_at_its_date(
     assert tags_period([fact], "2026-09-30", days) is holds
 
 
+@pytest.mark.parametrize("period", ["None", ""])
+def test_a_report_with_no_readable_date_holds_nothing_and_never_crashes(period: str) -> None:
+    """edgartools gives "None" for a header without a period of report."""
+    assert tags_period([_dollars(REV, "2025-10-01", "2026-09-30")], period, YEAR_DAYS) is False
+
+
 def test_a_foreign_companys_fourth_quarter_is_its_20f_year_less_its_nine_months() -> None:
     """L11 step 3: ARM's 20-F and tagged 6-Ks pool like a 10-K and 10-Qs."""
     year = (

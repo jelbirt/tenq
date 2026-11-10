@@ -3,6 +3,8 @@ from __future__ import annotations
 import math
 from pathlib import Path
 
+import pytest
+
 from tenq.edgar import facts_from_frame
 from tenq.fetch import sync, sync_foreign, sync_reports
 from tenq.filings import Fact, FilingMeta, FilingStore
@@ -284,3 +286,27 @@ def test_a_foreign_listing_that_fails_costs_only_the_sheet(tmp_path: Path) -> No
     store = FilingStore(tmp_path)
     assert sync_reports(Down([Q2, FY], FACTS), store, "ARM", depth=6) == []
     assert store.filings("ARM") == []
+
+
+def test_a_20f_with_no_readable_period_is_passed_over_alone(tmp_path: Path) -> None:
+    """One bad report never costs the rest: the 6-Ks around it are still saved."""
+    undated = _arm("fy-none", "20-F", "None", "2026-05-26")
+    store = FilingStore(tmp_path)
+    source = Foreign([Q2, Q1, undated, Q3, Q2_25], {**FACTS, "fy-none": FACTS["fy"]})
+    saved = sync_reports(source, store, "ARM", depth=6)
+    assert [m.accession for m in saved] == ["q2", "q1", "q3", "q2-25"]
+    assert _saved(store) == [(m, "6-K") for m in ("q2", "q1", "q3", "q2-25")]
+
+
+def test_a_us_listing_that_fails_still_fails_the_pack(tmp_path: Path) -> None:
+    """Only the foreign leg is caught: a US company's failure is raised as before,
+    and never mistaken for a foreign company with nothing to list."""
+
+    class Down(Foreign):
+        def list_filings(self, ticker: str, limit: int) -> list[FilingMeta]:
+            raise OSError("EDGAR is down")
+
+    source = Down([Q2, FY], FACTS)
+    with pytest.raises(OSError, match="EDGAR is down"):
+        sync_reports(source, FilingStore(tmp_path), "ARM", depth=6)
+    assert source.listed == []

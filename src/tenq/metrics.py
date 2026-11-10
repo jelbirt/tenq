@@ -113,9 +113,13 @@ def tags_period(facts: Iterable[Fact], period: str, days: range) -> bool:
     cash flow) for a span of `days` ending at its own report date.
 
     This is how a 6-K proves it holds a quarter's results (QUARTER_DAYS), not
-    just a cover page or a half-year, and a 20-F a year's (YEAR_DAYS).
+    just a cover page or a half-year, and a 20-F a year's (YEAR_DAYS). A report
+    with no readable date of its own proves nothing, so it is passed over alone.
     """
-    end = _d(period)
+    try:
+        end = _d(period)
+    except ValueError:
+        return False
     for f in facts:
         if f.concept not in FLOW_CONCEPTS or f.currency not in (None, DOLLARS):
             continue
