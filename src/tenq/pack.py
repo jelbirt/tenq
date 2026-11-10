@@ -668,8 +668,8 @@ def build(
         if any(r.form == "6-K" for r in pack.reports):
             pack.notes.append(
                 f"{ticker} is a foreign company (it files 6-Ks and an annual 20-F or 40-F) "
-                "that does not tag its quarterly figures in dollars, so they are not on "
-                "this sheet"
+                "whose quarterly figures in dollars could not be read from its tagged "
+                "filings, so they are not on this sheet"
             )
         else:
             pack.notes.append(f"no 10-Q or 10-K on record for {ticker}")

@@ -228,7 +228,7 @@ class EdgarSource:
         return self._list(ticker, forms, limit)
 
     def list_foreign(self, ticker: str, limit: int) -> list[FilingMeta]:
-        return self._list(ticker, FOREIGN_FORMS, limit, keep=_periodic)
+        return self._list(ticker, FOREIGN_FORMS, limit, keep=_periodic, row_dates=True)
 
     def _list(
         self,
@@ -236,7 +236,11 @@ class EdgarSource:
         forms: tuple[str, ...],
         limit: int,
         keep: Callable[[dict[str, Any]], bool] | None = None,
+        row_dates: bool = False,
     ) -> list[FilingMeta]:
+        """With `row_dates`, a filing's period is the listing's report date, the
+        one `keep` judged it on, rather than the date read from its header (a
+        download per filing), whenever the listing has one."""
         from edgar import Company
 
         company = Company(ticker)
@@ -247,6 +251,7 @@ class EdgarSource:
                 continue
             f = filings[i]
             self._by_accession[str(f.accession_no)] = f
+            listed = _day(row["reportDate"]) if row_dates else None
             out.append(
                 FilingMeta(
                     ticker=ticker.upper(),
@@ -255,7 +260,7 @@ class EdgarSource:
                     form=str(f.form),
                     accession=str(f.accession_no),
                     filed=str(f.filing_date),
-                    period=str(f.period_of_report),
+                    period=listed.isoformat() if listed else str(f.period_of_report),
                     url=str(f.homepage_url),
                     items=(_opt_str(getattr(f, "items", None)) or "") if f.form == CURRENT else "",
                 )

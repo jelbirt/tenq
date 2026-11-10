@@ -52,11 +52,16 @@ def sync_reports(
 ) -> list[FilingMeta]:
     """The 10-Q/10-Ks, or for a company that files none, its foreign periodic
     reports. Judged by the forms saved, not by an empty store, so a foreign
-    company's later 6-Ks are still synced where the store persists."""
+    company's later 6-Ks are still synced where the store persists. A failure
+    in the foreign reports costs only the sheet, never the stock's pack."""
     new = sync(source, store, ticker, depth)
     if any(m.form in FORMS for m in store.filings(ticker)):
         return new
-    return new + sync_foreign(source, store, ticker, depth)
+    try:
+        return new + sync_foreign(source, store, ticker, depth)
+    except Exception:  # failures degrade: the pack still has its prices, news and reports
+        log.exception("%s: foreign periodic reports could not be synced", ticker)
+        return new
 
 
 def sync_foreign(

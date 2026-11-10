@@ -783,8 +783,8 @@ def test_a_foreign_filer_without_a_10q_is_named_as_one(
     assert not [n for n in foreign.notes if "no 10-Q" in n]
     assert (
         "CRWD is a foreign company (it files 6-Ks and an annual 20-F or 40-F) "
-        "that does not tag its quarterly figures in dollars, so they are not on "
-        "this sheet" in foreign.notes
+        "whose quarterly figures in dollars could not be read from its tagged "
+        "filings, so they are not on this sheet" in foreign.notes
     )
 
 

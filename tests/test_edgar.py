@@ -32,6 +32,7 @@ class FakeFiling:
     attachments: list[Att] = field(default_factory=list)
     header: Any = None
     is_xbrl: Any = False
+    report_date: Any = None  # the listing's own date, when it differs from the header's
 
     def text(self) -> str:
         return "FORM 8-K"
@@ -52,7 +53,9 @@ class FakeTable:
         self.num_rows = len(filings)
         self.columns = {
             "form": [f.form for f in filings],
-            "reportDate": [f.period_of_report for f in filings],
+            "reportDate": [
+                f.period_of_report if f.report_date is None else f.report_date for f in filings
+            ],
             "isXBRL": [f.is_xbrl for f in filings],
             "filing_date": [f.filing_date for f in filings],
         }
@@ -354,3 +357,20 @@ def test_a_foreign_companys_periodic_reports_list_without_a_download(source: Edg
     ]
     assert [m.accession for m in source.list_foreign("arm", 2)] == ["results", "twenty-f"]
     assert FakeFilings.built == ["results", "twenty-f"]  # rows passed over are never built
+
+
+def test_a_foreign_report_is_dated_by_the_listing_it_was_judged_on(source: EdgarSource) -> None:
+    """The listing's report date is both what a 6-K is kept on and its period,
+    so its header is never downloaded for a date; a 20-F the listing leaves
+    undated falls back to its header. 10-Qs keep the header's date as before."""
+    FakeCompany.filings = [
+        FakeFiling(
+            "6-K", "results", items="", period_of_report="None", report_date="2026-09-30", is_xbrl=1
+        ),
+        FakeFiling("20-F", "twenty-f", items="", period_of_report="2026-03-31", report_date=""),
+    ]
+    assert [m.period for m in source.list_foreign("arm", 10)] == ["2026-09-30", "2026-03-31"]
+    FakeCompany.filings = [
+        FakeFiling("10-Q", "ten-q", period_of_report="2026-07-31", report_date="2026-08-01")
+    ]
+    assert [m.period for m in source.list_filings("crwd", 10)] == ["2026-07-31"]

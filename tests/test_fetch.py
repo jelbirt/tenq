@@ -258,3 +258,29 @@ def test_a_foreign_company_keeps_syncing_its_6ks_once_some_are_saved(tmp_path: P
     later = Foreign([Q2, Q1, FY], FACTS)
     assert [m.accession for m in sync_reports(later, store, "ARM", 6)] == ["q2"]
     assert later.listed == [12]
+
+
+def test_a_new_20f_is_saved_beside_6ks_saved_on_earlier_runs(tmp_path: Path) -> None:
+    """Where the store persists, a run whose only new report is the 20-F still
+    saves it (so the fourth quarter can be derived), and the 6-Ks already saved
+    fill the window without fetching any older one."""
+    store = FilingStore(tmp_path)
+    for meta in (Q3, Q2_25):
+        store.save(meta, "FORM 6-K", FACTS[meta.accession])
+    older = _arm("q1-25", "6-K", "2025-06-30", "2025-07-30")
+    facts = {**FACTS, "q1-25": [_rev("2025-04-01", "2025-06-30")]}
+    source = Foreign([FY, Q3, Q2_25, older], facts)
+    assert [m.accession for m in sync_reports(source, store, "ARM", depth=3)] == ["fy"]
+    assert source.fetched == ["fy"]
+
+
+def test_a_foreign_listing_that_fails_costs_only_the_sheet(tmp_path: Path) -> None:
+    """Failures degrade: the facts pack still gets its prices, news and reports."""
+
+    class Down(Foreign):
+        def list_foreign(self, ticker: str, limit: int) -> list[FilingMeta]:
+            raise OSError("EDGAR is down")
+
+    store = FilingStore(tmp_path)
+    assert sync_reports(Down([Q2, FY], FACTS), store, "ARM", depth=6) == []
+    assert store.filings("ARM") == []
