@@ -22,5 +22,8 @@ PLAN-recommendations.md, approved 2026-11-04, for the daily Buy/Hold/Sell/Short 
 - Every model call goes through one adapter module, so an API key can replace the
   subscription CLI later as a settings change.
 - Failures degrade, they do not crash: if Claude fails, the email still goes out numbers-only.
+- Jev's rules: no part, and no new Jev question, gets a weight until a history test over the
+  universe shows an edge beyond its luck range. A part that shows none comes out, as the
+  filing-trend part did in rules-v9.
 - SEC EDGAR fair access: User-Agent with a contact email (`EDGAR_IDENTITY`), under 10 req/s.
 - Nothing from Jake's employer: no data, code or time.
