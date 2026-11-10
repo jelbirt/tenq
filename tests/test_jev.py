@@ -106,7 +106,7 @@ def test_the_committed_question_file_loads() -> None:
 def test_jev_reads_text_only_and_judges_surprise_not_cheer() -> None:
     """jev-q8: no question asks Jev to compare figures; routine news is neutral both ways."""
     by_key = {x.key: x for x in load_questions().questions}
-    assert "fundamentals" not in by_key  # the filing trend is read in code (rules.trend)
+    assert "fundamentals" not in by_key  # Jev answers only about text
     for q in by_key.values():
         assert "points" not in q.instructions and "%" not in q.instructions, q.key
     direction = by_key["direction"].instructions

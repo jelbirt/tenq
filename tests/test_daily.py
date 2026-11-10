@@ -630,7 +630,8 @@ def test_a_check_says_so_in_its_subject_and_its_traces(tmp_path: Path) -> None:
 def test_the_email_shows_both_calls_and_escapes_untrusted_text(tmp_path: Path) -> None:
     email = render(_day_record(tmp_path))
     assert email.subject == "tenq daily, session 2026-11-04: the two calls agree on 0 of 20"
-    assert "CRWD | Buy 83% | Hold 50% | differ" in email.text
+    # Jev: 0.559 of the 0.70 its news and guidance can reach (rules-v9)
+    assert "CRWD | Buy 80% | Hold 50% | differ" in email.text
     assert "The outlook was raised <script>." in email.text
     assert "<script>" not in email.html and "&lt;script&gt;" in email.html
     assert "&lt;b&gt;Outlook&lt;/b&gt;" in email.html

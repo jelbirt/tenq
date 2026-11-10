@@ -1088,12 +1088,18 @@ def scorecard(
         for r in records
         if date.fromisoformat(r["day"]).isocalendar()[:2] == today.isocalendar()[:2]
     ]
+    # Which prompt made each scored Opus call, and which rules made each scored
+    # Jev call, so a mix of versions is named rather than read as one method
     versions: dict[str, int] = {}
+    rules: dict[str, int] = {}
     for r in scored:
-        if not r.get("opus"):
-            continue  # no Opus call scored on this stock-day
-        v = (r.get("versions") or {}).get("call_prompt", "?")
-        versions[v] = versions.get(v, 0) + 1
+        made = r.get("versions") or {}
+        if r.get("opus"):
+            v = str(made.get("call_prompt", "?"))
+            versions[v] = versions.get(v, 0) + 1
+        if r.get("jev"):
+            v = str(made.get("rules", "?"))
+            rules[v] = rules.get(v, 0) + 1
     return {
         "as_of": today.isoformat(),
         "version": cfg.version,
@@ -1116,6 +1122,7 @@ def scorecard(
         "disagreements": disagreements(scored, cfg),
         "baselines": baselines(scored),
         "call_prompts": versions,
+        "jev_rules": rules,
         "left_out": [x for r in records for x in left_out(r)],
         "screen": screen_check(
             runs, today, cfg, scored, prices, save=save, current=current_screen(records)
@@ -1361,6 +1368,9 @@ def lines(card: dict[str, Any]) -> list[str]:
         if len(card["call_prompts"]) > 1:
             mix = ", ".join(f"{v} {n}" for v, n in sorted(card["call_prompts"].items()))
             out.append(f"Opus prompts among the scored calls: {mix}.")
+        if len(card.get("jev_rules", {})) > 1:
+            mix = ", ".join(f"{v} {n}" for v, n in sorted(card["jev_rules"].items()))
+            out.append(f"Jev's rules among the scored calls: {mix}.")
     groups: dict[tuple[str, str], list[str]] = {}
     for u in card["unscored"]:
         groups.setdefault((u["ticker"], u["reason"]), []).append(u["day"])

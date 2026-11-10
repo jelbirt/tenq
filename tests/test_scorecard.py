@@ -1650,3 +1650,26 @@ def test_a_failed_check_1_still_says_which_screen_check_2_judges(tmp_path: Path)
         "left out (2 by screen-v6)."
     ) in text
     assert not any(t.startswith("Screen checks are on") for t in text)
+
+
+def test_the_card_names_a_mix_of_jevs_rules(tmp_path: Path) -> None:
+    """rules-v9 dropped the filing-trend part, so Jev's calls made before and
+    after it are named apart rather than read as one method."""
+    bars = _prices() | {"DDOG": _prices()["CRWD"]}
+    v8 = {"rules": "rules-v8", "call_prompt": "call-v12"}
+    v9 = {"rules": "rules-v9", "call_prompt": "call-v12"}
+    _save(tmp_path, _record("2026-11-05", MADE, _stock(), _stock("DDOG"), versions=v8))
+    _save(tmp_path, _record("2026-11-06", MADE, _stock(), _stock("DDOG", jev=None), versions=v9))
+    card = scorecard(tmp_path, EXIT, CFG, _fetcher(bars), save=False)
+    assert card["scored"] == 4
+    assert card["jev_rules"] == {"rules-v8": 2, "rules-v9": 1}  # only Jev's own calls
+    assert card["call_prompts"] == {"call-v12": 4}
+    said = lines(card)
+    assert "Jev's rules among the scored calls: rules-v8 2, rules-v9 1." in said
+    assert not any(t.startswith("Opus prompts among") for t in said)  # one prompt
+
+
+def test_one_rules_version_needs_no_line(tmp_path: Path) -> None:
+    card = _card(tmp_path, _record())
+    assert len(card["jev_rules"]) == 1
+    assert not any(t.startswith("Jev's rules among") for t in lines(card))

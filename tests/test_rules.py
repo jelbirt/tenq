@@ -28,7 +28,6 @@ from tenq.rules import (
     load_rules,
     name_call,
     reaction,
-    trend,
 )
 
 QUESTIONS = load_questions()
@@ -51,6 +50,9 @@ KNOWN_RULES = {
     "rules-v7": "abd8f7f459135a8d171faef67f43c0d261774046c69e3606edb9c1fe2db68da4",
     # v8: the same settings as v7; only comments changed (Short defined against QQQ)
     "rules-v8": "e5c58c81f3a964dddf9810a5a0c13d4006622c4380efcfaf49a26c7de3a86a2a",
+    # v9: the filing-trend part dropped (no edge on history); its 0.15 is not
+    # handed to the other parts
+    "rules-v9": "6221d81b9aaf94cce33bdbb34671d4f5638ba6c68e5f4a6bfc3f49e27f3f4550",
 }
 
 
@@ -85,7 +87,8 @@ def _good(**over: Answer) -> Result:
 
 
 def _pack(*numbers: Number, fin: bool = True, growth: float = 0.03) -> Pack:
-    """A pack whose filing shows revenue growth `growth` faster (3 points: improving)."""
+    """A pack whose filing shows revenue growth `growth` faster (3 points:
+    improving), a line rules-v9 no longer reads: tests keep it to show that."""
     day = date(2026, 11, 3)
     as_of = datetime(2026, 11, 4, 1, 0, tzinfo=UTC)
     trend = [_growth(growth)] if fin else []
@@ -103,7 +106,8 @@ USUAL_5D = 0.40 * math.sqrt(5 / 252)  # one usual 5-session move at 40% volatili
 
 
 def test_the_committed_rules_fit_the_committed_questions() -> None:
-    assert sum(RULES.weights.values()) == pytest.approx(1.0)
+    # the dropped filing-trend part's 0.15 was not handed to the other parts
+    assert sum(RULES.weights.values()) == pytest.approx(0.85)
 
 
 def test_a_rules_edit_needs_a_new_version() -> None:
@@ -118,15 +122,15 @@ def test_good_news_is_a_buy_worked_by_hand() -> None:
     # news: good 0.9 x material 0.8 x evidence 1.0 = 0.72, weight 0.45
     assert parts["news"] == pytest.approx(0.324)
     assert parts["guidance"] == pytest.approx(0.25)  # raised, weight 0.25
-    assert parts["fundamentals"] == pytest.approx(0.15)  # revenue growth faster: +1, by code
     assert parts["risk"] == pytest.approx(-0.015)  # 10% risk, none of it bad news yet
-    assert call.raw == pytest.approx(0.709) and call.score == pytest.approx(0.709)
-    # the most the parts could reach upward is 0.45 + 0.25 + 0.15
-    assert call.call == "Buy" and call.confidence == pytest.approx(0.709 / 0.85)
+    assert set(parts) == {"news", "guidance", "risk"}  # no filing-trend part since v9
+    assert call.raw == pytest.approx(0.559) and call.score == pytest.approx(0.559)
+    # the most the parts could reach upward is 0.45 + 0.25
+    assert call.call == "Buy" and call.confidence == pytest.approx(0.559 / 0.70)
     # coverage: material 80% sits 0.6 from a coin flip (the news part's least
-    # decisive answer), 10% risk sits 0.8 from one, the rest are one-sided
-    assert call.coverage == pytest.approx(0.45 * 0.6 + 0.25 + 0.15 + 0.15 * 0.8)
-    assert call.version == "rules-v8" and call.rules_sha == RULES.sha256
+    # decisive answer), 10% risk sits 0.8 from one, guidance is one-sided
+    assert call.coverage == pytest.approx((0.45 * 0.6 + 0.25 + 0.15 * 0.8) / 0.85)
+    assert call.version == "rules-v9" and call.rules_sha == RULES.sha256
     assert call.day == "2026-11-03"
     assert call.notes == ["no price move to weigh the market's reaction"]
 
@@ -142,9 +146,9 @@ def test_bad_news_is_not_counted_again_as_risk() -> None:
     assert call is not None
     (risk,) = [p for p in call.parts if p.name == "risk"]
     assert risk.contribution == 0.0  # the news part already scored it as bad
-    # -0.45 - 0.25 - 0.15 (revenue growth slower); down, news and risk never
-    # both count, so the reach is 0.85
-    assert call.score == pytest.approx(-0.85) and call.call == "Short"
+    # -0.45 - 0.25, with revenue growth slower read by nothing; down, news and
+    # risk never both count, so the reach is 0.45 + 0.25 = 0.70
+    assert call.score == pytest.approx(-0.70) and call.call == "Short"
     assert call.confidence == pytest.approx(1.0)
 
 
@@ -267,8 +271,8 @@ def test_a_missing_answer_counts_as_nothing_and_is_named() -> None:
     parts = {p.name: p for p in call.parts}
     assert parts["news"].contribution == 0.0 and parts["news"].detail == "no answer for source"
     assert parts["guidance"].detail == "no answer for guidance"
-    assert call.score == pytest.approx(0.135) and call.call == "Hold"
-    assert call.coverage == pytest.approx(0.15 + 0.15 * 0.8)  # fundamentals and risk only
+    assert call.score == pytest.approx(-0.015) and call.call == "Hold"  # risk alone
+    assert call.coverage == pytest.approx(0.15 * 0.8 / 0.85)  # risk only
 
 
 def test_an_answer_of_the_wrong_type_is_missing_and_noted() -> None:
@@ -280,13 +284,20 @@ def test_an_answer_of_the_wrong_type_is_missing_and_noted() -> None:
     assert "risk answer is a choice, the rules read a noul" in call.notes
 
 
-def test_no_filing_numbers_leaves_fundamentals_out() -> None:
-    call = decide(_pack(fin=False), _good(), RULES, QUESTIONS)
-    assert call is not None
-    (part,) = [p for p in call.parts if p.name == "fundamentals"]
-    assert part.weight == 0.0 and part.detail == "no growth lines to compare"
-    assert call.score == pytest.approx(0.559)
-    assert call.confidence == pytest.approx(0.559 / 0.70)  # news and guidance reach 0.70
+@pytest.mark.parametrize("growth", [0.10, -0.10, 0.0])
+def test_the_filing_trend_no_longer_moves_jevs_call(growth: float) -> None:
+    """rules-v9: revenue growth speeding up or slowing changes nothing."""
+    plain = decide(_pack(fin=False), _good(), RULES, QUESTIONS)
+    trend = decide(
+        _pack(_growth(growth), _growth(growth, "deferred_revenue"), fin=False),
+        _good(),
+        RULES,
+        QUESTIONS,
+    )
+    assert plain is not None and trend is not None
+    assert trend.score == plain.score == pytest.approx(0.559)
+    assert trend.confidence == plain.confidence == pytest.approx(0.559 / 0.70)
+    assert [p.name for p in trend.parts] == ["news", "guidance", "risk"]
 
 
 def test_no_answers_is_no_call() -> None:
@@ -313,11 +324,12 @@ def test_a_jev_that_knew_nothing_is_a_hold_without_confidence() -> None:
     assert call is not None
     assert call.call == "Hold" and call.score == pytest.approx(0.0)
     assert call.coverage == 0.0 and call.confidence == 0.0
-    # with a steady growth line, code's own trend reading is all the evidence
-    call = decide(_pack(growth=0.0), result, RULES, QUESTIONS)
-    assert call is not None
-    assert call.call == "Hold" and call.score == pytest.approx(0.0)
-    assert call.coverage == pytest.approx(0.15) and call.confidence == pytest.approx(0.15)
+    # a growth line in the filing is no evidence since rules-v9 (it once was)
+    for growth in (0.0, 0.05):
+        call = decide(_pack(growth=growth), result, RULES, QUESTIONS)
+        assert call is not None
+        assert call.call == "Hold" and call.score == pytest.approx(0.0)
+        assert call.coverage == 0.0 and call.confidence == 0.0
 
 
 @pytest.mark.parametrize(
@@ -335,7 +347,7 @@ def test_a_move_either_way_shrinks_the_score(moves: float, cut: float) -> None:
     call = decide(_pack(*_move(moves * USUAL_5D)), _good(), RULES, QUESTIONS)
     assert call is not None
     assert call.reaction == pytest.approx(cut)
-    assert call.score == pytest.approx(0.709 * (1 - cut))
+    assert call.score == pytest.approx(0.559 * (1 - cut))
     assert call.notes == []
 
 
@@ -413,16 +425,16 @@ def test_the_record_and_the_email_lines_show_every_part() -> None:
     call = decide(_pack(*_move(2.0 * USUAL_5D)), _good(), RULES, QUESTIONS)
     assert call is not None
     d = call.to_dict()
-    assert [p["name"] for p in d["parts"]] == ["news", "guidance", "fundamentals", "risk"]
+    assert [p["name"] for p in d["parts"]] == ["news", "guidance", "risk"]
     assert d["parts"][0]["contribution"] == pytest.approx(0.324)
-    assert d["rules_sha"] == RULES.sha256 and d["coverage"] == pytest.approx(0.79)
+    assert d["rules_sha"] == RULES.sha256 and d["coverage"] == pytest.approx(0.64 / 0.85)
     lines = call.explain()
     assert lines[0] == (
         "news: +0.32 (good +0.90, material 80%, evidence 1.00; weight 0.45, certainty 100%)"
     )
     assert lines[-2:] == [
         "market reaction: score cut by 50% (moved with the signal over the last 5 sessions, partly priced in)",
-        "score +0.35: Buy (confidence 42%)",
+        "score +0.28: Buy (confidence 40%)",  # 0.559 halved, of a reach of 0.70
     ]
 
 
@@ -448,7 +460,8 @@ def _rules_file(tmp_path: Path, change: dict[str, Any]) -> Path:
         {"version": ""},
         {"extra": 1},
         {"weights.news": 0.9},  # adds up past 1
-        {"weights.news": 0, "weights.guidance": 0, "weights.fundamentals": 0, "weights.risk": 0},
+        {"weights.news": 0, "weights.guidance": 0, "weights.risk": 0},
+        {"weights.fundamentals": 0.15},  # the part rules-v9 dropped
         {"weights.risk": ...},
         {"weights.news": -0.1},
         {"weights.news": True},
@@ -458,7 +471,7 @@ def _rules_file(tmp_path: Path, change: dict[str, Any]) -> Path:
         {"calls.buy": -0.1},
         {"calls.buy": 0.0},
         {"calls.sell": 0.0},
-        {"calls.buy": 0.9},  # more than news, guidance and fundamentals can reach
+        {"calls.buy": 0.75},  # more than news and guidance can reach (0.70)
         {"weights.risk": 0.05, "calls.short": -0.95},  # more than all parts can reach
         {"calls.short": -0.1},  # short must sit below sell
         {"calls.extra": 0.3},
@@ -547,7 +560,7 @@ def test_a_jev_that_knew_nothing_every_round_is_a_hold_with_no_confidence(risk: 
     # flat ties pick the same label every round, so agreement alone looked sure
     assert all(answers[k].agreed == answers[k].repeats for k in ("direction", "source"))
     # a confident "no risk" is the only decisive answer, so it is all the coverage
-    # (of news, guidance and risk: no filing, so no fundamentals part)
+    # (of news, guidance and risk)
     assert call.coverage == pytest.approx(0.15 * abs(2 * risk - 1) / 0.85)
     assert call.confidence <= 0.15 / 0.85
 
@@ -662,12 +675,10 @@ def test_an_unexpected_failure_is_no_call(monkeypatch: pytest.MonkeyPatch) -> No
 
 
 def test_sell_and_short_confidence_use_the_downward_reach() -> None:
-    tilted = dataclasses.replace(
-        RULES, weights={"news": 0.2, "guidance": 0.25, "fundamentals": 0.15, "risk": 0.4}
-    )
+    tilted = dataclasses.replace(RULES, weights={"news": 0.2, "guidance": 0.4, "risk": 0.4})
     call = decide(_pack(), _good(), RULES, QUESTIONS)
     assert call is not None
-    # up: 0.25 + 0.15 + 0.2 = 0.6; down: 0.25 + 0.15 + max(0.2, 0.4) = 0.8
+    # up: 0.4 + 0.2 = 0.6; down: 0.4 + max(0.2, 0.4) = 0.8
     assert confidence(0.3, "Buy", tilted, call.parts) == pytest.approx(0.5)
     assert confidence(-0.4, "Sell", tilted, call.parts) == pytest.approx(0.5)
     assert confidence(-0.6, "Short", tilted, call.parts) == pytest.approx(0.75)
@@ -698,42 +709,13 @@ def test_a_one_session_reaction_reads_in_the_singular() -> None:
     assert "over the last session," in line and "1 sessions" not in line
 
 
-@pytest.mark.parametrize(
-    ("revenue", "deferred", "value", "detail"),
-    [
-        (0.03, -0.05, 1.0, "revenue growth faster (code)"),
-        (-0.03, 0.05, -1.0, "revenue growth slower (code)"),
-        (0.02, None, 1.0, "revenue growth faster (code)"),  # 2 points is past steady
-        (0.0199, None, 0.0, "revenue growth steady (code)"),
-        (0.01, 0.04, 1.0, "revenue growth steady; total deferred revenue growth faster (code)"),
-        (-0.01, -0.04, -1.0, "revenue growth steady; total deferred revenue growth slower (code)"),
-        (0.0, 0.0, 0.0, "revenue growth steady; total deferred revenue growth steady (code)"),
-        (None, -0.03, -1.0, "total deferred revenue growth slower (code)"),
-        (math.nan, 0.03, 1.0, "total deferred revenue growth faster (code)"),
-    ],
-)
-def test_code_reads_the_filing_trend_from_the_growth_lines(
-    revenue: float | None, deferred: float | None, value: float, detail: str
-) -> None:
-    lines = [_growth(revenue)] if revenue is not None else []
-    if deferred is not None:
-        lines.append(_growth(deferred, "deferred_revenue"))
-    part = trend(_pack(*lines, fin=False), 0.15)
-    assert part.value == value and part.detail == detail
-    assert part.weight == 0.15 and part.certainty == 1.0 and part.decisive == 1.0
-
-
-def test_no_growth_line_leaves_the_trend_out_and_jev_is_not_asked() -> None:
-    other = Number("fin:ACME:revenue:yoy_pct", "Revenue change from a year ago", 0.2, "percent")
-    part = trend(_pack(other, fin=False), 0.15)
-    assert part.weight == 0.0 and part.detail == "no growth lines to compare"
-    assert "fundamentals" not in {q.key for q in QUESTIONS.questions}
-
-
 def test_a_jev_fundamentals_answer_is_ignored() -> None:
-    """Even a stray one in a stored record: the filing trend is code's alone."""
-    stray = {"fundamentals": Answer("fundamentals", "score", 0.0, {}, 0.0, 4, balanced=True)}
+    """Even a stray one in a stored record: Jev is never asked about the
+    filing's figures, and no part reads such an answer."""
+    stray = {"fundamentals": Answer("fundamentals", "score", 1.0, {}, 0.0, 4, balanced=True)}
+    assert "fundamentals" not in {q.key for q in QUESTIONS.questions}
     call = decide(_pack(), _good(**stray), RULES, QUESTIONS)
-    assert call is not None
-    (part,) = [p for p in call.parts if p.name == "fundamentals"]
-    assert part.value == 1.0 and part.detail == "revenue growth faster (code)"
+    plain = decide(_pack(), _good(), RULES, QUESTIONS)
+    assert call is not None and plain is not None
+    assert [p.name for p in call.parts] == ["news", "guidance", "risk"]
+    assert call.score == plain.score
