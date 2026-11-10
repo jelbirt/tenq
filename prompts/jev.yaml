@@ -4,8 +4,7 @@
 # item's age was computed in code. Rules (task 6) combine the answers into
 # the call; anything that needs a threshold (how big a move is, whether news
 # is already in the price) is decided there, in code, not asked here. Jev
-# reads text only: no question asks it to compare or combine figures, so the
-# filing's trend is read in code too (rules.trend).
+# reads text only: no question asks it to compare or combine figures.
 #
 # "Recent" is decided in code: the pack prints recent 8-K or 6-K reports and headlines
 # (7 days old or less) in their own sections, apart from older context.

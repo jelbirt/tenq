@@ -1,11 +1,11 @@
 """Rules: Jev's averaged answers and the pack's price move to one call.
 
 config/rules.yaml holds every setting and reads top to bottom: a news part
-(direction times materiality times evidence strength), guidance, the filing
-trend and recent risk, each from -1 to +1 and weighted. Jev answers only about
-text; the filing trend is read here, in code, from the sheet's own growth
-readings (`metrics.growth_reading`), so no model compares figures. A choice's doubt is
-counted once, in its expected value under Jev's averaged probabilities; a
+(direction times materiality times evidence strength), guidance and recent
+risk, each from -1 to +1 and weighted. Jev answers only about text, so no model
+compares figures. A filing-trend part, read in code, counted until rules-v8;
+rules-v9 dropped it after it showed no edge on history (see the rules file). A
+choice's doubt is counted once, in its expected value under Jev's averaged probabilities; a
 yes/no or a score is also scaled by 1 less its spread across rounds; and every
 part is scaled by the share of its planned rounds that came back, so an unsure
 or half-answered Jev drifts toward Hold rather than hitting a cut-off. A
@@ -22,7 +22,7 @@ the included parts could reach that way; for Hold, how close the score sits to
 the weighted certainty that came in, each part also scaled by how decisive its
 answers were (how far from a coin flip, and for a choice how many rounds picked
 its winner). A Jev that knew nothing, flat answers every round, is a Hold with
-no confidence beyond what code's own reading of the filing trend supplies.
+no confidence.
 
 A Jev result with no answers is no call (Opus's call goes out alone); a
 missing answer, one of the wrong type, or an unreadable one (a NaN, a wrong
@@ -47,7 +47,6 @@ import yaml
 
 from tenq.config import REPO_ROOT
 from tenq.jev import Answer, QuestionSet, Result
-from tenq.metrics import growth_reading
 from tenq.pack import Pack
 from tenq.prices import SESSIONS_PER_YEAR, WINDOWS
 
@@ -56,7 +55,7 @@ log = logging.getLogger(__name__)
 DEFAULT_RULES = REPO_ROOT / "config" / "rules.yaml"
 MAX_ROUNDS = 64  # far above any planned round count; more is a corrupt record
 CallName = Literal["Buy", "Hold", "Sell", "Short"]
-PARTS = ("news", "guidance", "fundamentals", "risk")
+PARTS = ("news", "guidance", "risk")
 TOP_LEVEL = {"version", "direction", "evidence", "guidance", "weights", "reaction", "calls"}
 # which question each label map belongs to, and the type each used question must have
 LABEL_MAPS = {"direction": "direction", "evidence": "source", "guidance": "guidance"}
@@ -224,21 +223,21 @@ def load_rules(questions: QuestionSet, path: Path = DEFAULT_RULES) -> Rules:
     )
     if not rules.short < rules.sell < 0.0 < rules.buy:
         raise ValueError("rules calls must order short < sell < 0 < buy")
-    up, down = _reach(weights, with_fundamentals=True)
+    up, down = _reach(weights)
     if rules.buy > up + 1e-9 or rules.short < -down - 1e-9:
         raise ValueError("rules calls must be reachable: buy at most the parts that can")
     check_against(rules, questions)
     return rules
 
 
-def _reach(weights: dict[str, float], *, with_fundamentals: bool) -> tuple[float, float]:
+def _reach(weights: dict[str, float]) -> tuple[float, float]:
     """The highest and the lowest (as a size) score the parts can reach.
 
     Down, news and risk never both count in full: fully bad news switches the
     risk part off, so the lower bound takes the larger of the two.
     """
-    shared = weights["guidance"] + (weights["fundamentals"] if with_fundamentals else 0.0)
-    return shared + weights["news"], shared + max(weights["news"], weights["risk"])
+    g = weights["guidance"]
+    return g + weights["news"], g + max(weights["news"], weights["risk"])
 
 
 def check_against(rules: Rules, questions: QuestionSet) -> None:
@@ -404,8 +403,6 @@ def _parts(pack: Pack, result: Result, rules: Rules, questions: QuestionSet) -> 
             )
         )
 
-    out.append(trend(pack, w["fundamentals"]))
-
     if "risk" not in a:
         out.append(_missing("risk", w["risk"], ["risk"]))
     else:
@@ -424,34 +421,6 @@ def _parts(pack: Pack, result: Result, rules: Rules, questions: QuestionSet) -> 
             )
         )
     return out
-
-
-TREND_LINES = (("revenue", "revenue"), ("deferred_revenue", "total deferred revenue"))
-TREND_VALUE = {"faster": 1.0, "steady": 0.0, "slower": -1.0}
-
-
-def trend(pack: Pack, weight: float) -> Part:
-    """The filing part, read in code: revenue growth's reading, or total
-    deferred revenue's when revenue's is steady or missing.
-
-    Improving (+1) when growth from a year ago sped up past `STEADY_GROWTH`,
-    worsening (-1) when it slowed past it, otherwise steady (0). Left out,
-    weight and all, when the pack has neither line. Code's reading is a fact
-    of the filing, so it is certain and decisive.
-    """
-    said: list[str] = []
-    word = None
-    for metric, name in TREND_LINES:
-        n = pack.number(f"fin:{pack.ticker}:{metric}:growth_change")
-        if n is None or not _finite(n.value):
-            continue
-        word = growth_reading(n.value)
-        said.append(f"{name} growth {word}")
-        if word != "steady":
-            break
-    if word is None:
-        return Part("fundamentals", 0.0, 0.0, 0.0, "no growth lines to compare")
-    return Part("fundamentals", TREND_VALUE[word], weight, 1.0, "; ".join(said) + " (code)")
 
 
 def reaction(pack: Pack, raw: float, rules: Rules) -> tuple[float, str | None]:
@@ -500,8 +469,7 @@ def coverage(parts: list[Part]) -> float:
 
 def confidence(score: float, call: CallName, rules: Rules, parts: list[Part]) -> float:
     """How strongly the evidence backs the call (see the module docstring)."""
-    included = any(p.name == "fundamentals" and p.weight > 0 for p in parts)
-    up, down = _reach(rules.weights, with_fundamentals=included)
+    up, down = _reach(rules.weights)
     if call == "Buy":
         return min(1.0, score / up)
     if call in ("Sell", "Short"):

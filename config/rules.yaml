@@ -2,7 +2,7 @@
 # setting. Any edit, even to a comment, bumps the version so the scorecard
 # can tell rule sets apart (a test pins this file's hash for each version). src/tenq/rules.py applies it, and checks every label below against
 # prompts/jev.yaml.
-version: rules-v8
+version: rules-v9
 
 # 1. News: Jev's direction answer as an expected value from -1 (bad for the
 #    business) to +1 (good), times the probability the recent news is
@@ -30,12 +30,14 @@ guidance:
   mixed: 0.0
   none: 0.0
 
-# 3. Fundamentals, read in code, not asked of Jev: +1 when revenue growth
-#    from a year ago sped up by 2 points or more against the prior quarter's,
-#    -1 when it slowed by that much, 0 when steady. When revenue's is steady
-#    or missing, total deferred revenue's decides the same way. The 2 points
-#    is metrics.STEADY_GROWTH, the reading the sheet itself shows. Left out
-#    (weight and all) when the pack has neither line.
+# 3. No filing-trend part. Until rules-v8, code added +1 when revenue growth
+#    (else total deferred revenue's) sped up by 2 points or more and -1 when
+#    it slowed, worth 0.15. On the 113 stocks the screen covers (the
+#    Nasdaq-100 and the watchlist), Dec 2024 to Oct 2026, stocks whose growth
+#    sped up did 0.68 points worse over the next 20 sessions than those whose
+#    growth slowed, inside what luck gives, and the gap stayed inside luck at
+#    every filing age; yet the part decided 11 of the first 60 calls. The
+#    sheet still shows the numbers.
 # 4. Risk: the probability of a recent risk event, counted against the stock,
 #    less the bad news the news part already scored (direction times
 #    materiality times evidence times the news part's certainty), so one
@@ -47,7 +49,6 @@ guidance:
 weights:
   news: 0.45
   guidance: 0.25
-  fundamentals: 0.15
   risk: 0.15
 
 # 5. Certainty: a choice's doubt is already in its expected value above, so it
@@ -70,8 +71,8 @@ reaction:
   per_move: 0.25
   most: 0.75
 
-# 7. The call, from the final score (-1 to +1). Fundamentals alone (at most
-#    0.15) never cross a line: a quiet day with no recent news is a Hold.
+# 7. The call, from the final score (-1 to +1). A quiet day with no recent
+#    news is a Hold.
 calls:
   buy: 0.20     # at or above: expect it to beat QQQ
   sell: -0.20   # at or below: get out if you own it

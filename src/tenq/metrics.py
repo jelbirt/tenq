@@ -143,8 +143,8 @@ PERIOD_FIELDS = ("current", "prior_quarter", "year_ago")
 # prior_yoy_pct is the prior quarter's own change from a year before it, and
 # growth_change is yoy_pct less prior_yoy_pct, in points: code does the
 # subtraction, so no reader has to.
-# The sheet shows code's reading of each one and the rules score the filing
-# from it, so the two can never disagree and no model does the subtraction.
+# The sheet shows code's reading of each one, so no model does the
+# subtraction (the rules stopped scoring it in rules-v9).
 STEADY_GROWTH = 0.02  # a growth_change under 2 points either way reads as steady
 CHANGE_FIELDS = (
     "qoq_change",
