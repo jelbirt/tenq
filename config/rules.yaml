@@ -32,11 +32,12 @@ guidance:
 
 # 3. No filing-trend part. Until rules-v8, code added +1 when revenue growth
 #    (else total deferred revenue's) sped up by 2 points or more and -1 when
-#    it slowed, worth 0.15. On 113
-#    Nasdaq-100 stocks, Dec 2024 to Oct 2026, stocks whose growth sped up did
-#    not beat those whose growth slowed over the next 20 sessions (0.68 points
-#    worse, inside what luck gives), however old the filing was, yet the part
-#    decided 11 of the first 60 calls. The sheet still shows the numbers.
+#    it slowed, worth 0.15. On the 113 stocks the screen covers (the
+#    Nasdaq-100 and the watchlist), Dec 2024 to Oct 2026, stocks whose growth
+#    sped up did 0.68 points worse over the next 20 sessions than those whose
+#    growth slowed, inside what luck gives, and the gap stayed inside luck at
+#    every filing age; yet the part decided 11 of the first 60 calls. The
+#    sheet still shows the numbers.
 # 4. Risk: the probability of a recent risk event, counted against the stock,
 #    less the bad news the news part already scored (direction times
 #    materiality times evidence times the news part's certainty), so one

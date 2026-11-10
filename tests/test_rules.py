@@ -52,7 +52,7 @@ KNOWN_RULES = {
     "rules-v8": "e5c58c81f3a964dddf9810a5a0c13d4006622c4380efcfaf49a26c7de3a86a2a",
     # v9: the filing-trend part dropped (no edge on history); its 0.15 is not
     # handed to the other parts
-    "rules-v9": "6221d81b9aaf94cce33bdbb34671d4f5638ba6c68e5f4a6bfc3f49e27f3f4550",
+    "rules-v9": "526d4d0deff65450b3f9aada9d67100e1ee1ebfa297de9a1737cff424a08d004",
 }
 
 
