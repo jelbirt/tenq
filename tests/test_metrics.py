@@ -3,7 +3,16 @@ from __future__ import annotations
 import pytest
 
 from tenq.filings import Fact, FilingMeta, FilingStore
-from tenq.metrics import MetricRow, Value, build_table, growth_reading, metrics_for
+from tenq.metrics import (
+    QUARTER_DAYS,
+    YEAR_DAYS,
+    MetricRow,
+    Value,
+    build_table,
+    growth_reading,
+    metrics_for,
+    tags_period,
+)
 
 REV = "us-gaap:RevenueFromContractWithCustomerExcludingAssessedTax"
 OCF = "us-gaap:NetCashProvidedByUsedInOperatingActivities"
@@ -293,3 +302,63 @@ def test_a_figure_in_another_currency_is_left_out() -> None:
     assert both.number("revenue", "current") == 90.0
     old = build_table([(_meta("a-26-2", q[1]), [_flow(REV, *q, 70.0)])])
     assert old.number("revenue", "current") == 70.0
+
+
+def _dollars(concept: str, start: str, end: str, currency: str | None = "USD") -> Fact:
+    return Fact(concept, 1.0, "usd", start, end, None, -3, currency)
+
+
+@pytest.mark.parametrize(
+    ("fact", "days", "holds"),
+    [
+        (_dollars(REV, "2026-07-01", "2026-09-30"), QUARTER_DAYS, True),
+        (_dollars(OCF, "2026-07-01", "2026-09-30"), QUARTER_DAYS, True),
+        # a day or two off the report date, as a 52/53-week calendar has
+        (_dollars(REV, "2026-06-29", "2026-09-27"), QUARTER_DAYS, True),
+        (_dollars(REV, "2026-06-26", "2026-09-25"), QUARTER_DAYS, False),
+        # a half-year is not a quarter (MNDY's tagged 6-K), and a quarter not a year
+        (_dollars(REV, "2026-04-01", "2026-09-30"), QUARTER_DAYS, False),
+        (_dollars(REV, "2026-07-01", "2026-09-30"), YEAR_DAYS, False),
+        (_dollars(REV, "2025-10-01", "2026-09-30"), YEAR_DAYS, True),
+        # euros are left out like everywhere on the sheet; no currency counts as dollars
+        (_dollars(REV, "2026-07-01", "2026-09-30", "EUR"), QUARTER_DAYS, False),
+        (_dollars(REV, "2026-07-01", "2026-09-30", None), QUARTER_DAYS, True),
+        # a balance is not a period's results, and a name the sheet does not read
+        # (IFRS revenue, TRI's tagged 6-K) proves nothing
+        (Fact(REV, 1.0, "usd", None, None, "2026-09-30", -3, "USD"), QUARTER_DAYS, False),
+        # an end with no start is no span at all, and never a crash
+        (Fact(REV, 1.0, "usd", None, "2026-09-30", None, -3, "USD"), QUARTER_DAYS, False),
+        (_dollars("us-gaap:CashAndCashEquivalentsAtCarryingValue", "2026-07-01", "2026-09-30"),
+         QUARTER_DAYS, False),
+        (_dollars("ifrs-full:Revenue", "2026-07-01", "2026-09-30"), QUARTER_DAYS, False),
+    ],
+)  # fmt: skip
+def test_a_filing_holds_a_quarter_only_with_a_dollar_flow_ending_at_its_date(
+    fact: Fact, days: range, holds: bool
+) -> None:
+    assert tags_period([fact], "2026-09-30", days) is holds
+
+
+@pytest.mark.parametrize("period", ["None", ""])
+def test_a_report_with_no_readable_date_holds_nothing_and_never_crashes(period: str) -> None:
+    """edgartools gives "None" for a header without a period of report."""
+    assert tags_period([_dollars(REV, "2025-10-01", "2026-09-30")], period, YEAR_DAYS) is False
+
+
+def test_a_foreign_companys_fourth_quarter_is_its_20f_year_less_its_nine_months() -> None:
+    """L11 step 3: ARM's 20-F and tagged 6-Ks pool like a 10-K and 10-Qs."""
+    year = (
+        _meta("arm-20f", "2026-03-31", "20-F"),
+        [_flow(REV, "2025-04-01", "2026-03-31", 4900.0)],
+    )
+    q3 = (
+        _meta("arm-q3", "2025-12-31", "6-K"),
+        [
+            _flow(REV, "2025-04-01", "2025-12-31", 3600.0),
+            _flow(REV, "2025-10-01", "2025-12-31", 1240.0),
+        ],
+    )
+    t = build_table([year, q3])
+    assert t.form == "20-F"
+    assert t.number("revenue", "current") == 1300.0
+    assert t.number("revenue", "prior_quarter") == 1240.0

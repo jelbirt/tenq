@@ -782,9 +782,29 @@ def test_a_foreign_filer_without_a_10q_is_named_as_one(
     foreign = _build(empty, current)
     assert not [n for n in foreign.notes if "no 10-Q" in n]
     assert (
-        "CRWD is a foreign company (it files 6-Ks and an annual 20-F or 40-F); "
-        "its reported figures are not on this sheet yet" in foreign.notes
+        "CRWD is a foreign company (it files 6-Ks and an annual 20-F or 40-F) "
+        "whose quarterly figures in dollars could not be read from its tagged "
+        "filings, so they are not on this sheet" in foreign.notes
     )
+
+
+def test_a_tagged_quarterly_6k_is_the_sheets_filing_and_drops_the_foreign_note(
+    tmp_path: Path, current: FilingStore
+) -> None:
+    """L11 step 3: ARM's results 6-K, saved like a 10-Q, fills the sheet."""
+    from tenq.filings import Fact
+
+    reports = FilingStore(tmp_path / "arm")
+    meta = FilingMeta("CRWD", 1, "C", "6-K", "0001-26-000002", "2026-09-01", "2026-07-31", "u")
+    revenue = Fact("us-gaap:Revenues", 9.0, "usd", "2026-05-01", "2026-07-31", None, -3, "USD")
+    reports.save(meta, "FORM 6-K", [revenue])
+    six_k = replace(_eightk("0001535527-26-000060", "2026-09-01", items=""), form="6-K")
+    current.save(six_k, EIGHTK_TEXT, [])
+    built = _build(reports, current)
+    assert built.filing is not None and built.filing.form == "6-K"
+    assert "Latest filing: 6-K for the period ended 2026-07-31" in built.render()
+    assert built.number("fin:CRWD:revenue:current") is not None
+    assert not [n for n in built.notes if "foreign company" in n]
 
 
 def test_an_unreadable_6k_is_named_as_a_6k(

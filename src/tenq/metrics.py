@@ -22,7 +22,7 @@ given when it means something: from a positive base without a sign change.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
 from datetime import date, timedelta
 from typing import Literal
@@ -104,6 +104,31 @@ BASE_METRICS: tuple[Metric, ...] = (
         ("us-gaap:CashAndCashEquivalentsAtCarryingValue",),
     ),
 )
+
+FLOW_CONCEPTS = frozenset(c for m in BASE_METRICS if m.kind == "flow" for c in m.concepts)
+
+
+def tags_period(facts: Iterable[Fact], period: str, days: range) -> bool:
+    """Whether a filing tags a dollar figure the sheet reads (revenue, income,
+    cash flow) for a span of `days` ending at its own report date.
+
+    This is how a 6-K proves it holds a quarter's results (QUARTER_DAYS), not
+    just a cover page or a half-year, and a 20-F a year's (YEAR_DAYS). A report
+    with no readable date of its own proves nothing, so it is passed over alone.
+    """
+    try:
+        end = _d(period)
+    except ValueError:
+        return False
+    for f in facts:
+        if f.concept not in FLOW_CONCEPTS or f.currency not in (None, DOLLARS):
+            continue
+        if not (f.start and f.end) or abs((_d(f.end) - end).days) > PERIOD_TOLERANCE:
+            continue
+        if (_d(f.end) - _d(f.start)).days in days:
+            return True
+    return False
+
 
 # (name, label, unit) of metrics computed from base values in build_table; a
 # derived value is None when any input is missing, never built from a partial set

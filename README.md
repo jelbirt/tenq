@@ -166,8 +166,12 @@ top saying why. A check on named stocks (`--ticker`) skips the screen and takes 
 the universe. The manual `screen` workflow runs the screen alone.
 
 The facts pack reads a foreign company's 6-K the way it reads an 8-K (its text and
-press-release exhibits). A 20-F or 40-F is not read yet. The pack's numbers are in dollars: a
-figure a filing tags in another currency (euros, yuan) is left out rather than mixed in.
+press-release exhibits). A foreign company that tags its quarterly results in dollars (of the
+universe, only ARM, as of 2026-11-09) gets the same sheet as a US company: a 6-K that tags a
+quarter counts like a 10-Q and its 20-F or 40-F like a 10-K, so the fourth quarter is the year
+less the nine months. The others tag only their yearly report, so their sheet has no figures
+and says why. The pack's numbers are in dollars: a figure a filing tags in another currency
+(euros, yuan) is left out rather than mixed in.
 
 ## Guardrails
 

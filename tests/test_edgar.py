@@ -31,9 +31,51 @@ class FakeFiling:
     acceptance_datetime: Any = None
     attachments: list[Att] = field(default_factory=list)
     header: Any = None
+    is_xbrl: Any = False
+    report_date: Any = None  # the listing's own date, when it differs from the header's
 
     def text(self) -> str:
         return "FORM 8-K"
+
+
+class FakeColumn:
+    def __init__(self, values: list[Any]) -> None:
+        self.values = values
+
+    def to_pylist(self) -> list[Any]:
+        return self.values
+
+
+class FakeTable:
+    """EDGAR's listing table: the columns a row is judged on."""
+
+    def __init__(self, filings: list[FakeFiling]) -> None:
+        self.num_rows = len(filings)
+        self.columns = {
+            "form": [f.form for f in filings],
+            "reportDate": [
+                f.period_of_report if f.report_date is None else f.report_date for f in filings
+            ],
+            "isXBRL": [f.is_xbrl for f in filings],
+            "filing_date": [f.filing_date for f in filings],
+        }
+
+    def column(self, name: str) -> FakeColumn:
+        return FakeColumn(self.columns[name])
+
+
+class FakeFilings(list[FakeFiling]):
+    built: ClassVar[list[str]] = []  # accessions built from a row, in order
+
+    @property
+    def data(self) -> FakeTable:
+        return FakeTable(list(self))
+
+    def __getitem__(self, i: Any) -> Any:
+        got = super().__getitem__(i)
+        if isinstance(got, FakeFiling):
+            FakeFilings.built.append(got.accession_no)
+        return got
 
 
 class FakeCompany:
@@ -42,9 +84,10 @@ class FakeCompany:
     def __init__(self, ticker: str) -> None:
         pass
 
-    def get_filings(self, form: list[str], amendments: bool) -> list[FakeFiling]:
+    def get_filings(self, form: list[str], amendments: bool) -> FakeFilings:
         assert amendments is False
-        return [f for f in self.filings if f.form in form]
+        FakeFilings.built = []
+        return FakeFilings(f for f in self.filings if f.form in form)
 
 
 @pytest.fixture
@@ -281,3 +324,53 @@ def test_a_real_xbrl_parse_gives_each_fact_its_currency(
         ("us-gaap:Revenues", "EUR"),
         ("us-gaap:GrossProfit", "USD"),
     }
+
+
+def test_a_foreign_companys_periodic_reports_list_without_a_download(source: EdgarSource) -> None:
+    """L11 step 3: EDGAR's listing tells a results 6-K (tagged, dated to its
+    quarter's end) from any other 6-K (dated to the day it was filed), so only
+    the first kind is ever fetched. 20-Fs and 40-Fs always list; 10-Qs, 8-Ks
+    and 6-Ks with a missing or unreadable date never do."""
+
+    def six_k(acc: str, period: Any, filed: str = "2026-11-04", xbrl: Any = 1) -> FakeFiling:
+        return FakeFiling(
+            "6-K", acc, items="", filing_date=filed, period_of_report=period, is_xbrl=xbrl
+        )
+
+    FakeCompany.filings = [
+        six_k("results", "2026-09-30"),
+        six_k("cover-page", "2026-11-04"),
+        six_k("untagged", "2026-09-30", xbrl=0),
+        six_k("no-date", None),
+        six_k("bad-date", "September"),
+        six_k("later", "2026-11-05"),
+        FakeFiling("8-K", "eight-k", filing_date="2026-11-03", period_of_report="2026-11-01"),
+        FakeFiling("10-Q", "ten-q", period_of_report="2026-09-30"),
+        FakeFiling("20-F", "twenty-f", items="", period_of_report="2026-03-31"),
+        FakeFiling("40-F", "forty-f", items="", period_of_report="2025-12-31"),
+    ]
+    listed = source.list_foreign("arm", 10)
+    assert [(m.ticker, m.form, m.accession, m.period) for m in listed] == [
+        ("ARM", "6-K", "results", "2026-09-30"),
+        ("ARM", "20-F", "twenty-f", "2026-03-31"),
+        ("ARM", "40-F", "forty-f", "2025-12-31"),
+    ]
+    assert [m.accession for m in source.list_foreign("arm", 2)] == ["results", "twenty-f"]
+    assert FakeFilings.built == ["results", "twenty-f"]  # rows passed over are never built
+
+
+def test_a_foreign_report_is_dated_by_the_listing_it_was_judged_on(source: EdgarSource) -> None:
+    """The listing's report date is both what a 6-K is kept on and its period,
+    so its header is never downloaded for a date; a 20-F the listing leaves
+    undated falls back to its header. 10-Qs keep the header's date as before."""
+    FakeCompany.filings = [
+        FakeFiling(
+            "6-K", "results", items="", period_of_report="None", report_date="2026-09-30", is_xbrl=1
+        ),
+        FakeFiling("20-F", "twenty-f", items="", period_of_report="2026-03-31", report_date=""),
+    ]
+    assert [m.period for m in source.list_foreign("arm", 10)] == ["2026-09-30", "2026-03-31"]
+    FakeCompany.filings = [
+        FakeFiling("10-Q", "ten-q", period_of_report="2026-07-31", report_date="2026-08-01")
+    ]
+    assert [m.period for m in source.list_filings("crwd", 10)] == ["2026-07-31"]
