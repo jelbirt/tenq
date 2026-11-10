@@ -667,8 +667,9 @@ def build(
     if no_filing:
         if any(r.form == "6-K" for r in pack.reports):
             pack.notes.append(
-                f"{ticker} is a foreign company (it files 6-Ks and an annual 20-F or 40-F); "
-                "its reported figures are not on this sheet yet"
+                f"{ticker} is a foreign company (it files 6-Ks and an annual 20-F or 40-F) "
+                "that does not tag its quarterly figures in dollars, so they are not on "
+                "this sheet"
             )
         else:
             pack.notes.append(f"no 10-Q or 10-K on record for {ticker}")
@@ -732,13 +733,15 @@ def build_all(
 def gather(ticker: str, now: datetime) -> Pack | None:
     """Fetch everything live for one stock and build its pack as of `now`.
 
-    Syncs its 10-Q/10-Ks and recent 8-Ks or 6-Ks from EDGAR (needs EDGAR_IDENTITY),
-    downloads its prices and reads the news feeds. None when it has no prices.
+    Syncs its 10-Q/10-Ks (for a foreign company without any, its tagged quarterly
+    6-Ks and yearly 20-F or 40-F) and recent 8-Ks or 6-Ks from EDGAR (needs
+    EDGAR_IDENTITY), downloads its prices and reads the news feeds. None when it
+    has no prices.
     """
     from tenq.current import CURRENT_TAG, sync_current
     from tenq.current import DEFAULT_ROOT as CURRENT_ROOT
     from tenq.edgar import EdgarSource
-    from tenq.fetch import DEFAULT_DEPTH, sync
+    from tenq.fetch import DEFAULT_DEPTH, sync_reports
     from tenq.news import collect
     from tenq.prices import YahooPrices, fetch
     from tenq.screen import universe_names
@@ -754,7 +757,7 @@ def gather(ticker: str, now: datetime) -> Pack | None:
         names = load_watchlist().names
     source = EdgarSource()
     filings, current = FilingStore(Path("data/filings")), FilingStore(CURRENT_ROOT, tag=CURRENT_TAG)
-    sync(source, filings, ticker, DEFAULT_DEPTH)
+    sync_reports(source, filings, ticker, DEFAULT_DEPTH)
     synced = sync_current(source, current, ticker, (now - timedelta(days=CURRENT_DAYS)).date())
     prices = fetch([ticker], YahooPrices(), now=now)
     news = collect({ticker: names.get(ticker)}, now - timedelta(hours=72))

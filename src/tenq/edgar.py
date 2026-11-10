@@ -10,9 +10,9 @@ import logging
 import math
 import os
 import re
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from dataclasses import replace
-from datetime import datetime
+from datetime import date, datetime
 from typing import Any, Protocol
 from zoneinfo import ZoneInfo
 
@@ -27,6 +27,14 @@ CURRENT = "8-K"
 # notices). A 6-K lists no items; its text and EX-99 exhibits are read the same way.
 CURRENT_FORMS = (CURRENT, "6-K")
 EXHIBIT_PREFIX = "EX-99"  # press releases and other material a current report furnishes
+# A foreign company's periodic reports: the yearly 20-F (40-F for a Canadian
+# one) and, from the few that tag them, quarterly results in a 6-K. EDGAR's
+# listing tells the two kinds of 6-K apart without a download: a results 6-K
+# is tagged and dated to the quarter's end, any other 6-K to the day it was
+# filed (ARM's on 2026-11-09: 2026-09-30 for its results, the filing day for
+# the rest).
+YEARLY_FOREIGN = ("20-F", "40-F")
+FOREIGN_FORMS = (*YEARLY_FOREIGN, "6-K")
 
 
 class CurrentSource(Protocol):
@@ -54,6 +62,13 @@ class FilingSource(Protocol):
 
     def accepted_at(self, meta: FilingMeta) -> str:
         """EDGAR's acceptance time, ISO with offset; "" when not known."""
+        ...
+
+
+class ForeignSource(FilingSource, Protocol):
+    def list_foreign(self, ticker: str, limit: int) -> list[FilingMeta]:
+        """A foreign company's 20-F/40-F reports and the 6-Ks that may hold a
+        quarter's results (tagged, dated to a period end), newest first."""
         ...
 
 
@@ -105,6 +120,38 @@ def currencies_of(units: dict[str, Any]) -> dict[str, str]:
             if "iso4217" in prefix.lower() and re.fullmatch(r"[A-Z]{3}", code):
                 out[str(uid)] = code  # any prefix the filer bound to ISO 4217
     return out
+
+
+def _day(value: Any) -> date | None:
+    try:
+        return date.fromisoformat(str(value)[:10])
+    except ValueError:
+        return None
+
+
+# The listing columns a row is judged on, read straight from EDGAR's table.
+LISTING_COLUMNS = ("form", "reportDate", "isXBRL", "filing_date")
+
+
+def _rows(filings: Any) -> list[dict[str, Any]]:
+    """The listing as plain rows, read from its table. Building each filing
+    costs about half a second, and a foreign company can have hundreds of
+    6-Ks to walk past (ASML and CCEP took 27 s and 70 s that way, on
+    2026-11-09), so a filing is built only once its row is kept."""
+    data = filings.data
+    cols = {k: data.column(k).to_pylist() for k in LISTING_COLUMNS}
+    return [{k: v[i] for k, v in cols.items()} for i in range(data.num_rows)]
+
+
+def _periodic(row: dict[str, Any]) -> bool:
+    """A yearly report always; a 6-K only when EDGAR marks it tagged and dates
+    it to a period that ended before it was filed (its quarter, not its day)."""
+    if row["form"] != "6-K":
+        return True
+    period, filed = _day(row["reportDate"]), _day(row["filing_date"])
+    if period is None or filed is None:
+        return False
+    return bool(row["isXBRL"]) and period < filed
 
 
 def _currency(value: Any) -> str | None:
@@ -180,15 +227,25 @@ class EdgarSource:
         """The newest filings of any of `forms` together, in one company lookup."""
         return self._list(ticker, forms, limit)
 
-    def _list(self, ticker: str, forms: tuple[str, ...], limit: int) -> list[FilingMeta]:
+    def list_foreign(self, ticker: str, limit: int) -> list[FilingMeta]:
+        return self._list(ticker, FOREIGN_FORMS, limit, keep=_periodic)
+
+    def _list(
+        self,
+        ticker: str,
+        forms: tuple[str, ...],
+        limit: int,
+        keep: Callable[[dict[str, Any]], bool] | None = None,
+    ) -> list[FilingMeta]:
         from edgar import Company
 
         company = Company(ticker)
         filings = company.get_filings(form=list(forms), amendments=False)
         out: list[FilingMeta] = []
-        for f in filings:
-            if f.form not in forms:
+        for i, row in enumerate(_rows(filings)):
+            if row["form"] not in forms or (keep is not None and not keep(row)):
                 continue
+            f = filings[i]
             self._by_accession[str(f.accession_no)] = f
             out.append(
                 FilingMeta(
