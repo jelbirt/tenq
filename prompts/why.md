@@ -1,4 +1,4 @@
-<!-- prompt-version: why-v11 -->
+<!-- prompt-version: why-v12 -->
 Another system made a call on one stock from the facts sheet below. That
 system is Jev, a decision model that answered narrow questions about the
 sheet, and a fixed rules file that turned its answers into the call. You are
@@ -25,7 +25,7 @@ Rules, which code checks before anything is sent:
   latest quarter" or "the quarter just reported", never "a quarter" or its
   name.
   Your own words are for what the headlines and 8-K or 6-K excerpts report; how
-  the rules read and weighed each part (the news, the latest filing, the
+  the rules read and weighed each part (the news, guidance, risk, the
   market's move), with any sheet number in it as its placeholder, for
   example "{px:TICKER:excess_5d}, so the rules took the news as partly
   priced in"; and how each point bears on the call. For the market's move

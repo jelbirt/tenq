@@ -1658,12 +1658,13 @@ def test_the_card_names_a_mix_of_jevs_rules(tmp_path: Path) -> None:
     bars = _prices() | {"DDOG": _prices()["CRWD"]}
     v8 = {"rules": "rules-v8", "call_prompt": "call-v12"}
     v9 = {"rules": "rules-v9", "call_prompt": "call-v12"}
-    _save(tmp_path, _record("2026-11-05", MADE, _stock(), _stock("DDOG"), versions=v8))
+    # DDOG: only Jev called on 11-05 (Claude down), only Opus on 11-06
+    _save(tmp_path, _record("2026-11-05", MADE, _stock(), _stock("DDOG", opus=None), versions=v8))
     _save(tmp_path, _record("2026-11-06", MADE, _stock(), _stock("DDOG", jev=None), versions=v9))
     card = scorecard(tmp_path, EXIT, CFG, _fetcher(bars), save=False)
     assert card["scored"] == 4
     assert card["jev_rules"] == {"rules-v8": 2, "rules-v9": 1}  # only Jev's own calls
-    assert card["call_prompts"] == {"call-v12": 4}
+    assert card["call_prompts"] == {"call-v12": 3}
     said = lines(card)
     assert "Jev's rules among the scored calls: rules-v8 2, rules-v9 1." in said
     assert not any(t.startswith("Opus prompts among") for t in said)  # one prompt
