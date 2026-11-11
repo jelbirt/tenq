@@ -1,3 +1,4 @@
+import hashlib
 import json
 import logging
 from pathlib import Path
@@ -7,6 +8,13 @@ import pytest
 
 from tenq import jev
 from tenq.jev import QuestionSet, ask, average, load_questions
+
+# Every question-file version Jev has been sent since pinning began, by the
+# sha256 of the file, so the file edited without a version bump fails here.
+# Versions before these predate the pin.
+KNOWN_QUESTIONS = {
+    "jev-q9": "d98f60a603a3ed9c170aaac39abda886e509eee244f1864c8cbcaddaf410b1aa",
+}
 
 QUESTIONS = """\
 version: test-q1
@@ -98,6 +106,10 @@ def _ask(questions: QuestionSet, server: Server, **kw: Any) -> jev.Result:
 def test_the_committed_question_file_loads() -> None:
     q = load_questions()
     assert q.version == "jev-q9"
+    assert q.version in KNOWN_QUESTIONS, "new question version: add it and its hash above"
+    assert q == load_questions(jev.QUESTIONS_PATH)  # the file hashed is the file read
+    got = hashlib.sha256(jev.QUESTIONS_PATH.read_bytes()).hexdigest()
+    assert got == KNOWN_QUESTIONS[q.version], "jev.yaml changed: bump its version"
     assert len(q.questions) == 5
     assert {x.type for x in q.questions} == {"noul", "choice"}
     assert "\u2014" not in jev.QUESTIONS_PATH.read_text(encoding="utf-8")
