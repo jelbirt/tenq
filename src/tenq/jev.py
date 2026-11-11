@@ -25,6 +25,7 @@ resolved model, e.g. typesafe/jev-1.13-20260917, is recorded per run).
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import math
@@ -136,6 +137,7 @@ class Question:
 class QuestionSet:
     version: str
     questions: tuple[Question, ...]
+    sha256: str  # of the file's bytes as read, so a test can pin the questions to their version
 
     def rounds(self) -> int:
         return max(q.rounds() for q in self.questions)
@@ -151,7 +153,8 @@ class QuestionSet:
 
 def load_questions(path: Path = QUESTIONS_PATH) -> QuestionSet:
     """Validate the question file; a malformed one is a ValueError, never a guess."""
-    raw = yaml.safe_load(path.read_text(encoding="utf-8"))
+    data = path.read_bytes()
+    raw = yaml.safe_load(data.decode("utf-8"))
     if not isinstance(raw, dict) or set(raw) != {"version", "questions"}:
         raise ValueError("question file must hold exactly version and questions")
     version, items = raw["version"], raw["questions"]
@@ -195,7 +198,7 @@ def load_questions(path: Path = QUESTIONS_PATH) -> QuestionSet:
         else:
             raise ValueError(f"question {key}: unknown type {kind!r}")
         out.append(Question(key, kind, text.strip(), criteria))
-    return QuestionSet(version, tuple(out))
+    return QuestionSet(version, tuple(out), hashlib.sha256(data).hexdigest())
 
 
 @dataclass

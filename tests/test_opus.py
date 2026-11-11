@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import hashlib
 import json
 import re
 from typing import Any
@@ -10,7 +9,6 @@ from test_reasons import NEWS, PACK
 from test_rules import QUESTIONS, RULES, USUAL_5D, _good, _move, _pack
 
 from tenq import opus
-from tenq.brief import load_prompt
 from tenq.llm import INFRA, AgentRun
 from tenq.opus import explain_call, opus_call, parse_call, parse_why
 from tenq.reasons import MAX_REASON_CHARS, Reason, check_reasons
@@ -233,11 +231,9 @@ def test_prompts_are_versioned() -> None:
     [(opus.CALL_PROMPT, opus.load_call_prompt), (opus.WHY_PROMPT, opus.load_why_prompt)],
 )
 def test_a_prompt_cannot_change_without_a_new_version(path: Any, load: Any) -> None:
-    assert load() == load_prompt(path)  # the file hashed is the file the code reads
-    version = load().version
-    assert version in KNOWN_PROMPTS, "new prompt version: add it and its hash above"
-    got = hashlib.sha256(path.read_bytes()).hexdigest()
-    assert got == KNOWN_PROMPTS[version], f"{path.name} changed: bump its version"
+    p = load()  # hashed by the loader from the bytes it read, so the pin follows the code
+    assert p.version in KNOWN_PROMPTS, "new prompt version: add it and its hash above"
+    assert p.sha256 == KNOWN_PROMPTS[p.version], f"{path.name} changed: bump its version"
 
 
 def test_a_short_is_judged_against_qqq_like_every_call() -> None:

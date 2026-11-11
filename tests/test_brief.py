@@ -29,14 +29,24 @@ KNOWN_BRIEF_PROMPTS = {
 def test_the_shipped_prompt_has_a_version_and_names_every_tool() -> None:
     p = load_prompt()
     assert p.version == "brief-v4"
-    assert p == load_prompt(PROMPT_PATH)  # the file hashed is the file the code reads
+    # hashed by the loader from the bytes it read, so the pin follows the code
     assert p.version in KNOWN_BRIEF_PROMPTS, "new prompt version: add it and its hash above"
-    got = hashlib.sha256(PROMPT_PATH.read_bytes()).hexdigest()
-    assert got == KNOWN_BRIEF_PROMPTS[p.version], "brief.md changed: bump its version"
+    assert p.sha256 == KNOWN_BRIEF_PROMPTS[p.version], "brief.md changed: bump its version"
     assert "prompt-version" not in p.text
     for tool in ("get_metrics", "search_filing", "read_passage"):
         assert tool in p.text
     assert "\u2014" not in p.text
+
+
+def test_a_prompts_hash_is_of_the_file_bytes_and_line_endings_do_not_change_its_text(
+    tmp_path: Path,
+) -> None:
+    data = PROMPT_PATH.read_bytes()
+    crlf = tmp_path / "crlf.md"
+    crlf.write_bytes(data.replace(b"\n", b"\r\n"))
+    p, q = load_prompt(PROMPT_PATH), load_prompt(crlf)
+    assert p.sha256 == hashlib.sha256(data).hexdigest()
+    assert q.sha256 != p.sha256 and q.text == p.text and q.version == p.version
 
 
 def test_a_prompt_without_a_version_is_refused(tmp_path: Path) -> None:

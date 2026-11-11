@@ -103,13 +103,19 @@ def _ask(questions: QuestionSet, server: Server, **kw: Any) -> jev.Result:
     return ask("Facts for CrowdStrike (CRWD).", questions, post=server, sleep=lambda s: None, **kw)
 
 
+def test_the_question_sets_hash_is_of_the_file_bytes_it_read(tmp_path: Path) -> None:
+    data = jev.QUESTIONS_PATH.read_bytes() + b"# a comment still changes the file\n"
+    f = tmp_path / "q.yaml"
+    f.write_bytes(data)
+    assert load_questions(f).sha256 == hashlib.sha256(data).hexdigest()
+
+
 def test_the_committed_question_file_loads() -> None:
     q = load_questions()
     assert q.version == "jev-q9"
     assert q.version in KNOWN_QUESTIONS, "new question version: add it and its hash above"
-    assert q == load_questions(jev.QUESTIONS_PATH)  # the file hashed is the file read
-    got = hashlib.sha256(jev.QUESTIONS_PATH.read_bytes()).hexdigest()
-    assert got == KNOWN_QUESTIONS[q.version], "jev.yaml changed: bump its version"
+    # hashed by the loader from the bytes it read, so the pin follows the code
+    assert q.sha256 == KNOWN_QUESTIONS[q.version], "jev.yaml changed: bump its version"
     assert len(q.questions) == 5
     assert {x.type for x in q.questions} == {"noul", "choice"}
     assert "\u2014" not in jev.QUESTIONS_PATH.read_text(encoding="utf-8")
