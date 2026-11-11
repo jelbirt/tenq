@@ -107,6 +107,7 @@ def test_the_committed_question_file_loads() -> None:
     q = load_questions()
     assert q.version == "jev-q9"
     assert q.version in KNOWN_QUESTIONS, "new question version: add it and its hash above"
+    assert q == load_questions(jev.QUESTIONS_PATH)  # the file hashed is the file read
     got = hashlib.sha256(jev.QUESTIONS_PATH.read_bytes()).hexdigest()
     assert got == KNOWN_QUESTIONS[q.version], "jev.yaml changed: bump its version"
     assert len(q.questions) == 5

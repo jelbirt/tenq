@@ -10,6 +10,7 @@ from test_reasons import NEWS, PACK
 from test_rules import QUESTIONS, RULES, USUAL_5D, _good, _move, _pack
 
 from tenq import opus
+from tenq.brief import load_prompt
 from tenq.llm import INFRA, AgentRun
 from tenq.opus import explain_call, opus_call, parse_call, parse_why
 from tenq.reasons import MAX_REASON_CHARS, Reason, check_reasons
@@ -232,6 +233,7 @@ def test_prompts_are_versioned() -> None:
     [(opus.CALL_PROMPT, opus.load_call_prompt), (opus.WHY_PROMPT, opus.load_why_prompt)],
 )
 def test_a_prompt_cannot_change_without_a_new_version(path: Any, load: Any) -> None:
+    assert load() == load_prompt(path)  # the file hashed is the file the code reads
     version = load().version
     assert version in KNOWN_PROMPTS, "new prompt version: add it and its hash above"
     got = hashlib.sha256(path.read_bytes()).hexdigest()
