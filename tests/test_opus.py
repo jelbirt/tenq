@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 from typing import Any
@@ -13,6 +14,14 @@ from tenq.llm import INFRA, AgentRun
 from tenq.opus import explain_call, opus_call, parse_call, parse_why
 from tenq.reasons import MAX_REASON_CHARS, Reason, check_reasons
 from tenq.rules import decide
+
+# Every prompt version Opus has been sent since pinning began, by the sha256 of
+# its file, so a prompt edited without a version bump fails here. Versions
+# before these predate the pin.
+KNOWN_PROMPTS = {
+    "call-v12": "f360db6e1decc8b1df88ee61f32c39e4bcc3b3d8e27f9b818bfd2c78077826c5",
+    "why-v12": "8095a7f3c9cd4e050642687f26f85db531f878f3ca4583712729cb628876af5f",
+}
 
 
 class FakeClaude:
@@ -216,6 +225,17 @@ def test_a_failed_why_run_says_why() -> None:
 def test_prompts_are_versioned() -> None:
     assert opus.load_call_prompt().version == "call-v12"
     assert opus.load_why_prompt().version == "why-v12"
+
+
+@pytest.mark.parametrize(
+    ("path", "load"),
+    [(opus.CALL_PROMPT, opus.load_call_prompt), (opus.WHY_PROMPT, opus.load_why_prompt)],
+)
+def test_a_prompt_cannot_change_without_a_new_version(path: Any, load: Any) -> None:
+    version = load().version
+    assert version in KNOWN_PROMPTS, "new prompt version: add it and its hash above"
+    got = hashlib.sha256(path.read_bytes()).hexdigest()
+    assert got == KNOWN_PROMPTS[version], f"{path.name} changed: bump its version"
 
 
 def test_a_short_is_judged_against_qqq_like_every_call() -> None:
