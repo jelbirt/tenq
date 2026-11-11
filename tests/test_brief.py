@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import sys
 from pathlib import Path
@@ -8,6 +9,7 @@ import pytest
 
 from tenq.brief import (
     ALLOWED_TOOLS,
+    PROMPT_PATH,
     Claim,
     load_prompt,
     mcp_servers,
@@ -16,14 +18,43 @@ from tenq.brief import (
 )
 from tenq.filings import FilingStore
 
+# Every brief prompt version since pinning began, by the sha256 of its file, so
+# the prompt edited without a version bump fails here. Versions before this
+# predate the pin.
+KNOWN_BRIEF_PROMPTS = {
+    "brief-v4": "dc6c6a27d1d434350345d6dde046f0a6679ccc9028349a08809ba3945253150c",
+}
+
+# The text brief-v4 sends, after the loader drops the version line and the outer
+# blank lines, so a change to the loader shows up too.
+KNOWN_BRIEF_TEXT = {
+    "brief-v4": "43d3da9ad7df3f09c97537fe5041e724e6fe80cccf01657da6abf285363ec1b7",
+}
+
 
 def test_the_shipped_prompt_has_a_version_and_names_every_tool() -> None:
     p = load_prompt()
     assert p.version == "brief-v4"
+    # hashed by the loader from the bytes it read, so the pin follows the code
+    assert p.version in KNOWN_BRIEF_PROMPTS, "new prompt version: add it and its hash above"
+    assert p.sha256 == KNOWN_BRIEF_PROMPTS[p.version], "brief.md changed: bump its version"
+    sent = hashlib.sha256(p.text.encode()).hexdigest()
+    assert sent == KNOWN_BRIEF_TEXT[p.version], "the text sent changed: bump the version"
     assert "prompt-version" not in p.text
     for tool in ("get_metrics", "search_filing", "read_passage"):
         assert tool in p.text
     assert "\u2014" not in p.text
+
+
+def test_a_prompts_hash_is_of_the_file_bytes_and_line_endings_do_not_change_its_text(
+    tmp_path: Path,
+) -> None:
+    data = PROMPT_PATH.read_bytes()
+    crlf = tmp_path / "crlf.md"
+    crlf.write_bytes(data.replace(b"\n", b"\r\n"))
+    p, q = load_prompt(PROMPT_PATH), load_prompt(crlf)
+    assert p.sha256 == hashlib.sha256(data).hexdigest()
+    assert q.sha256 != p.sha256 and q.text == p.text and q.version == p.version
 
 
 def test_a_prompt_without_a_version_is_refused(tmp_path: Path) -> None:

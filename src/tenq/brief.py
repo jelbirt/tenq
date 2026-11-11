@@ -7,6 +7,7 @@ trace and the run record. The model's answer is untrusted until the checker
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 import sys
@@ -30,14 +31,17 @@ VERSION_LINE = re.compile(r"<!--\s*prompt-version:\s*([\w.\-]+)\s*-->")
 class Prompt:
     version: str
     text: str
+    sha256: str  # of the file's bytes as read, so a test can pin the text to its version
 
 
 def load_prompt(path: Path = PROMPT_PATH) -> Prompt:
-    text = path.read_text(encoding="utf-8")
+    data = path.read_bytes()
+    text = data.decode("utf-8").replace("\r\n", "\n").replace("\r", "\n")
     m = VERSION_LINE.search(text)
     if m is None:
         raise ValueError(f"{path} has no prompt-version line")
-    return Prompt(m.group(1), VERSION_LINE.sub("", text, count=1).strip())
+    body = VERSION_LINE.sub("", text, count=1).strip()
+    return Prompt(m.group(1), body, hashlib.sha256(data).hexdigest())
 
 
 @dataclass(frozen=True)

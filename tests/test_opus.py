@@ -10,7 +10,6 @@ from test_reasons import NEWS, PACK
 from test_rules import QUESTIONS, RULES, USUAL_5D, _good, _move, _pack
 
 from tenq import opus
-from tenq.brief import load_prompt
 from tenq.llm import INFRA, AgentRun
 from tenq.opus import explain_call, opus_call, parse_call, parse_why
 from tenq.reasons import MAX_REASON_CHARS, Reason, check_reasons
@@ -22,6 +21,13 @@ from tenq.rules import decide
 KNOWN_PROMPTS = {
     "call-v12": "f360db6e1decc8b1df88ee61f32c39e4bcc3b3d8e27f9b818bfd2c78077826c5",
     "why-v12": "8095a7f3c9cd4e050642687f26f85db531f878f3ca4583712729cb628876af5f",
+}
+
+# The text each prompt version sends, after the loader drops the version line
+# and the outer blank lines, so a change to the loader shows up too.
+KNOWN_PROMPT_TEXT = {
+    "call-v12": "1c44b2a9d5e5f238eb375fde5c1d8242dc5775bb81eb8bad7d6b7fc508f9b806",
+    "why-v12": "6c682c71f8dd2413a1f8da9c382199952a0ced3905bba6bb08ef9b9fe6ec82e8",
 }
 
 
@@ -233,11 +239,11 @@ def test_prompts_are_versioned() -> None:
     [(opus.CALL_PROMPT, opus.load_call_prompt), (opus.WHY_PROMPT, opus.load_why_prompt)],
 )
 def test_a_prompt_cannot_change_without_a_new_version(path: Any, load: Any) -> None:
-    assert load() == load_prompt(path)  # the file hashed is the file the code reads
-    version = load().version
-    assert version in KNOWN_PROMPTS, "new prompt version: add it and its hash above"
-    got = hashlib.sha256(path.read_bytes()).hexdigest()
-    assert got == KNOWN_PROMPTS[version], f"{path.name} changed: bump its version"
+    p = load()  # hashed by the loader from the bytes it read, so the pin follows the code
+    assert p.version in KNOWN_PROMPTS, "new prompt version: add it and its hash above"
+    assert p.sha256 == KNOWN_PROMPTS[p.version], f"{path.name} changed: bump its version"
+    sent = hashlib.sha256(p.text.encode()).hexdigest()
+    assert sent == KNOWN_PROMPT_TEXT[p.version], "the text sent changed: bump the version"
 
 
 def test_a_short_is_judged_against_qqq_like_every_call() -> None:

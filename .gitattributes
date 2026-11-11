@@ -1,0 +1,5 @@
+# Prompt files and most config yaml files are pinned by sha256, nearly all over
+# their raw bytes, so they keep LF line endings on every checkout, whatever
+# core.autocrlf says.
+prompts/* text eol=lf
+config/*.yaml text eol=lf

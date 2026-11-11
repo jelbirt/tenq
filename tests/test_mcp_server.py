@@ -1,16 +1,32 @@
 from __future__ import annotations
 
+import hashlib
+import inspect
 import json
 from typing import Any
 
 import anyio
 from mcp.types import CallToolResult
 
-from tenq.filings import FilingStore
+from tenq.brief import load_prompt, user_message
+from tenq.filings import FilingMeta, FilingStore
 from tenq.mcp_server import build_server
 from tenq.search import SearchHit
 
 LATEST = "CRWD-0001535527-26-000031"
+
+# Code tells the brief model more than brief.md: the server's instructions, each
+# tool's name, title, description and arguments, and the user turn that orders
+# the brief. Their sha256 is pinned to brief.md's version, so changing any of
+# them needs a new brief version. Tools and their arguments are hashed in the
+# order the server sends them; other schema keys in pydantic's own order, which
+# only has to be stable. Descriptions are hashed through inspect.cleandoc, which
+# absorbs the indent stripping Python 3.13 and later do at compile time, so the
+# hash is the same on any Python; only a uniform re-indent, or blank lines added
+# or removed at either end, goes unseen.
+KNOWN_BRIEF_CODE_TEXT = {
+    "brief-v4": "b37a96cc817f4b79ce345c6bd9a9683ee7ef31d031cb63786fc84ce753fc9be4",
+}
 
 
 class FakeSearch:
@@ -125,3 +141,31 @@ def test_the_real_entrypoint_serves_over_stdio(store: FilingStore) -> None:
     tools, got = anyio.run(go)
     assert tools == {"get_metrics", "search_filing", "read_passage"}
     assert isinstance(got, CallToolResult) and not got.is_error
+
+
+def test_what_code_tells_the_brief_model_cannot_change_without_a_new_version(
+    store: FilingStore,
+) -> None:
+    server = build_server(store, "CRWD", FakeSearch(store))
+    tools = anyio.run(server.list_tools)  # in the order the server sends them
+    meta = FilingMeta(
+        "CRWD",
+        1535527,
+        "CrowdStrike Holdings, Inc.",
+        "10-Q",
+        "0001535527-26-000031",
+        "2026-09-03",
+        "2026-07-31",
+        "https://www.sec.gov/",
+    )
+    told = {
+        "instructions": server.instructions,
+        "tools": [
+            [t.name, t.title, inspect.cleandoc(t.description or ""), t.input_schema] for t in tools
+        ],
+        "user": user_message(meta),
+    }
+    got = hashlib.sha256(json.dumps(told).encode()).hexdigest()
+    version = load_prompt().version
+    assert version in KNOWN_BRIEF_CODE_TEXT, "new brief version: add its hash above"
+    assert got == KNOWN_BRIEF_CODE_TEXT[version], "what code tells the brief changed: bump brief.md"
