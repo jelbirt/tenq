@@ -18,11 +18,13 @@ LATEST = "CRWD-0001535527-26-000031"
 # Code tells the brief model more than brief.md: the server's instructions, each
 # tool's name, title, description and arguments, and the user turn that orders
 # the brief. Their sha256 is pinned to brief.md's version, so changing any of
-# them needs a new brief version. Descriptions are hashed as inspect.cleandoc
-# leaves them, which is how Python 3.13 and later store docstrings, so the hash
-# is the same on any Python; only an indent-only edit goes unseen.
+# them needs a new brief version. Tools, their arguments and every key stay in
+# the order the server lists them. Descriptions are hashed through
+# inspect.cleandoc, which absorbs the indent stripping Python 3.13 and later do
+# at compile time, so the hash is the same on any Python; edits only to
+# indentation or to blank lines at either end go unseen.
 KNOWN_BRIEF_CODE_TEXT = {
-    "brief-v4": "5ec6627abd3f9e24d1155f2dc0383e0aa75d1cb83328f9eae3bd73ece521cb49",
+    "brief-v4": "b37a96cc817f4b79ce345c6bd9a9683ee7ef31d031cb63786fc84ce753fc9be4",
 }
 
 
@@ -144,7 +146,7 @@ def test_what_code_tells_the_brief_model_cannot_change_without_a_new_version(
     store: FilingStore,
 ) -> None:
     server = build_server(store, "CRWD", FakeSearch(store))
-    tools = sorted(anyio.run(server.list_tools), key=lambda t: t.name)
+    tools = anyio.run(server.list_tools)  # in the order the model is shown them
     meta = FilingMeta(
         "CRWD",
         1535527,
@@ -162,7 +164,7 @@ def test_what_code_tells_the_brief_model_cannot_change_without_a_new_version(
         ],
         "user": user_message(meta),
     }
-    got = hashlib.sha256(json.dumps(told, sort_keys=True).encode()).hexdigest()
+    got = hashlib.sha256(json.dumps(told).encode()).hexdigest()
     version = load_prompt().version
     assert version in KNOWN_BRIEF_CODE_TEXT, "new brief version: add its hash above"
     assert got == KNOWN_BRIEF_CODE_TEXT[version], "what code tells the brief changed: bump brief.md"

@@ -16,10 +16,11 @@ KNOWN_QUESTIONS = {
     "jev-q9": "d98f60a603a3ed9c170aaac39abda886e509eee244f1864c8cbcaddaf410b1aa",
 }
 
-# What each question version sends Jev over all its rounds, options in the
-# order each round shows them, so a change to how questions are built shows up.
+# What each question version sends Jev over all its rounds, serialized as ask()
+# does, with no key sorting: question order and each round's option order are
+# part of what Jev reads, so a change to either shows up.
 KNOWN_QUESTIONS_SENT = {
-    "jev-q9": "867b2c8f3fbd27dc3f1c4fe26fd9f20b010d484d1775ae960afdb339203f920d",
+    "jev-q9": "601567b28c44feeb83107127800fe76a8701f00634258fa80d6f3ba101863f31",
 }
 
 QUESTIONS = """\
@@ -123,7 +124,7 @@ def test_the_committed_question_file_loads() -> None:
     # hashed by the loader from the bytes it read, so the pin follows the code
     assert q.sha256 == KNOWN_QUESTIONS[q.version], "jev.yaml changed: bump its version"
     rounds = [q.to_request(i) for i in range(q.rounds())]
-    sent = hashlib.sha256(json.dumps(rounds, sort_keys=True).encode()).hexdigest()
+    sent = hashlib.sha256(json.dumps(rounds).encode()).hexdigest()
     assert sent == KNOWN_QUESTIONS_SENT[q.version], "what Jev is sent changed: bump the version"
     assert len(q.questions) == 5
     assert {x.type for x in q.questions} == {"noul", "choice"}

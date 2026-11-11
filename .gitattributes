@@ -1,4 +1,5 @@
-# The prompt and settings files are pinned by the sha256 of their bytes, so
-# they keep LF line endings on every checkout, whatever core.autocrlf says.
+# Prompt and settings files are pinned by sha256, most of them over their raw
+# bytes, so they keep LF line endings on every checkout, whatever core.autocrlf
+# says.
 prompts/* text eol=lf
 config/*.yaml text eol=lf
