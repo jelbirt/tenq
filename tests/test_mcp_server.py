@@ -1,16 +1,26 @@
 from __future__ import annotations
 
+import hashlib
 import json
 from typing import Any
 
 import anyio
 from mcp.types import CallToolResult
 
+from tenq.brief import load_prompt
 from tenq.filings import FilingStore
 from tenq.mcp_server import build_server
 from tenq.search import SearchHit
 
 LATEST = "CRWD-0001535527-26-000031"
+
+# The brief model reads these tools' instructions as well as brief.md, so they
+# are pinned to brief.md's version: the sha256 of the server's instructions and
+# each tool's name, description and arguments. Changing any of them means a new
+# brief version, here and in brief.md.
+KNOWN_TOOL_TEXT = {
+    "brief-v4": "6eb8caf607a5ea8bc3295f28e0364aaa6a125a2a2fdfd1acb77faa0d39871b64",
+}
 
 
 class FakeSearch:
@@ -125,3 +135,16 @@ def test_the_real_entrypoint_serves_over_stdio(store: FilingStore) -> None:
     tools, got = anyio.run(go)
     assert tools == {"get_metrics", "search_filing", "read_passage"}
     assert isinstance(got, CallToolResult) and not got.is_error
+
+
+def test_the_tools_words_cannot_change_without_a_new_brief_version(store: FilingStore) -> None:
+    server = build_server(store, "CRWD", FakeSearch(store))
+    tools = sorted(anyio.run(server.list_tools), key=lambda t: t.name)
+    told = {
+        "instructions": server.instructions,
+        "tools": [[t.name, t.description, t.input_schema] for t in tools],
+    }
+    got = hashlib.sha256(json.dumps(told, sort_keys=True).encode()).hexdigest()
+    version = load_prompt().version
+    assert version in KNOWN_TOOL_TEXT, "new brief version: add its tool text hash above"
+    assert got == KNOWN_TOOL_TEXT[version], "the tools' words changed: bump brief.md's version"
