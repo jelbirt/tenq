@@ -18,11 +18,12 @@ LATEST = "CRWD-0001535527-26-000031"
 # Code tells the brief model more than brief.md: the server's instructions, each
 # tool's name, title, description and arguments, and the user turn that orders
 # the brief. Their sha256 is pinned to brief.md's version, so changing any of
-# them needs a new brief version. Tools, their arguments and every key stay in
-# the order the server lists them. Descriptions are hashed through
-# inspect.cleandoc, which absorbs the indent stripping Python 3.13 and later do
-# at compile time, so the hash is the same on any Python; edits only to
-# indentation or to blank lines at either end go unseen.
+# them needs a new brief version. Tools and their arguments are hashed in the
+# order the server sends them; other schema keys in pydantic's own order, which
+# only has to be stable. Descriptions are hashed through inspect.cleandoc, which
+# absorbs the indent stripping Python 3.13 and later do at compile time, so the
+# hash is the same on any Python; only a uniform re-indent, or blank lines added
+# or removed at either end, goes unseen.
 KNOWN_BRIEF_CODE_TEXT = {
     "brief-v4": "b37a96cc817f4b79ce345c6bd9a9683ee7ef31d031cb63786fc84ce753fc9be4",
 }
@@ -146,7 +147,7 @@ def test_what_code_tells_the_brief_model_cannot_change_without_a_new_version(
     store: FilingStore,
 ) -> None:
     server = build_server(store, "CRWD", FakeSearch(store))
-    tools = anyio.run(server.list_tools)  # in the order the model is shown them
+    tools = anyio.run(server.list_tools)  # in the order the server sends them
     meta = FilingMeta(
         "CRWD",
         1535527,
