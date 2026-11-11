@@ -25,6 +25,12 @@ KNOWN_BRIEF_PROMPTS = {
     "brief-v4": "dc6c6a27d1d434350345d6dde046f0a6679ccc9028349a08809ba3945253150c",
 }
 
+# The text brief-v4 sends, after the loader drops the version line and the outer
+# blank lines, so a change to the loader shows up too.
+KNOWN_BRIEF_TEXT = {
+    "brief-v4": "43d3da9ad7df3f09c97537fe5041e724e6fe80cccf01657da6abf285363ec1b7",
+}
+
 
 def test_the_shipped_prompt_has_a_version_and_names_every_tool() -> None:
     p = load_prompt()
@@ -32,6 +38,8 @@ def test_the_shipped_prompt_has_a_version_and_names_every_tool() -> None:
     # hashed by the loader from the bytes it read, so the pin follows the code
     assert p.version in KNOWN_BRIEF_PROMPTS, "new prompt version: add it and its hash above"
     assert p.sha256 == KNOWN_BRIEF_PROMPTS[p.version], "brief.md changed: bump its version"
+    sent = hashlib.sha256(p.text.encode()).hexdigest()
+    assert sent == KNOWN_BRIEF_TEXT[p.version], "the text sent changed: bump the version"
     assert "prompt-version" not in p.text
     for tool in ("get_metrics", "search_filing", "read_passage"):
         assert tool in p.text

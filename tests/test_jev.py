@@ -16,6 +16,12 @@ KNOWN_QUESTIONS = {
     "jev-q9": "d98f60a603a3ed9c170aaac39abda886e509eee244f1864c8cbcaddaf410b1aa",
 }
 
+# What each question version sends Jev over all its rounds, options in the
+# order each round shows them, so a change to how questions are built shows up.
+KNOWN_QUESTIONS_SENT = {
+    "jev-q9": "867b2c8f3fbd27dc3f1c4fe26fd9f20b010d484d1775ae960afdb339203f920d",
+}
+
 QUESTIONS = """\
 version: test-q1
 questions:
@@ -116,6 +122,9 @@ def test_the_committed_question_file_loads() -> None:
     assert q.version in KNOWN_QUESTIONS, "new question version: add it and its hash above"
     # hashed by the loader from the bytes it read, so the pin follows the code
     assert q.sha256 == KNOWN_QUESTIONS[q.version], "jev.yaml changed: bump its version"
+    rounds = [q.to_request(i) for i in range(q.rounds())]
+    sent = hashlib.sha256(json.dumps(rounds, sort_keys=True).encode()).hexdigest()
+    assert sent == KNOWN_QUESTIONS_SENT[q.version], "what Jev is sent changed: bump the version"
     assert len(q.questions) == 5
     assert {x.type for x in q.questions} == {"noul", "choice"}
     assert "\u2014" not in jev.QUESTIONS_PATH.read_text(encoding="utf-8")

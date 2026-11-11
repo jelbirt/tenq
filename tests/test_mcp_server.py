@@ -1,25 +1,28 @@
 from __future__ import annotations
 
 import hashlib
+import inspect
 import json
 from typing import Any
 
 import anyio
 from mcp.types import CallToolResult
 
-from tenq.brief import load_prompt
-from tenq.filings import FilingStore
+from tenq.brief import load_prompt, user_message
+from tenq.filings import FilingMeta, FilingStore
 from tenq.mcp_server import build_server
 from tenq.search import SearchHit
 
 LATEST = "CRWD-0001535527-26-000031"
 
-# The brief model reads these tools' instructions as well as brief.md, so they
-# are pinned to brief.md's version: the sha256 of the server's instructions and
-# each tool's name, description and arguments. Changing any of them means a new
-# brief version, here and in brief.md.
-KNOWN_TOOL_TEXT = {
-    "brief-v4": "6eb8caf607a5ea8bc3295f28e0364aaa6a125a2a2fdfd1acb77faa0d39871b64",
+# Code tells the brief model more than brief.md: the server's instructions, each
+# tool's name, title, description and arguments, and the user turn that orders
+# the brief. Their sha256 is pinned to brief.md's version, so changing any of
+# them needs a new brief version. Descriptions are hashed as inspect.cleandoc
+# leaves them, which is how Python 3.13 and later store docstrings, so the hash
+# is the same on any Python; only an indent-only edit goes unseen.
+KNOWN_BRIEF_CODE_TEXT = {
+    "brief-v4": "5ec6627abd3f9e24d1155f2dc0383e0aa75d1cb83328f9eae3bd73ece521cb49",
 }
 
 
@@ -137,14 +140,29 @@ def test_the_real_entrypoint_serves_over_stdio(store: FilingStore) -> None:
     assert isinstance(got, CallToolResult) and not got.is_error
 
 
-def test_the_tools_words_cannot_change_without_a_new_brief_version(store: FilingStore) -> None:
+def test_what_code_tells_the_brief_model_cannot_change_without_a_new_version(
+    store: FilingStore,
+) -> None:
     server = build_server(store, "CRWD", FakeSearch(store))
     tools = sorted(anyio.run(server.list_tools), key=lambda t: t.name)
+    meta = FilingMeta(
+        "CRWD",
+        1535527,
+        "CrowdStrike Holdings, Inc.",
+        "10-Q",
+        "0001535527-26-000031",
+        "2026-09-03",
+        "2026-07-31",
+        "https://www.sec.gov/",
+    )
     told = {
         "instructions": server.instructions,
-        "tools": [[t.name, t.description, t.input_schema] for t in tools],
+        "tools": [
+            [t.name, t.title, inspect.cleandoc(t.description or ""), t.input_schema] for t in tools
+        ],
+        "user": user_message(meta),
     }
     got = hashlib.sha256(json.dumps(told, sort_keys=True).encode()).hexdigest()
     version = load_prompt().version
-    assert version in KNOWN_TOOL_TEXT, "new brief version: add its tool text hash above"
-    assert got == KNOWN_TOOL_TEXT[version], "the tools' words changed: bump brief.md's version"
+    assert version in KNOWN_BRIEF_CODE_TEXT, "new brief version: add its hash above"
+    assert got == KNOWN_BRIEF_CODE_TEXT[version], "what code tells the brief changed: bump brief.md"
