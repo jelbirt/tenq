@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import sys
 from pathlib import Path
@@ -8,6 +9,7 @@ import pytest
 
 from tenq.brief import (
     ALLOWED_TOOLS,
+    PROMPT_PATH,
     Claim,
     load_prompt,
     mcp_servers,
@@ -16,10 +18,21 @@ from tenq.brief import (
 )
 from tenq.filings import FilingStore
 
+# Every brief prompt version since pinning began, by the sha256 of its file, so
+# the prompt edited without a version bump fails here. Versions before this
+# predate the pin.
+KNOWN_BRIEF_PROMPTS = {
+    "brief-v4": "dc6c6a27d1d434350345d6dde046f0a6679ccc9028349a08809ba3945253150c",
+}
+
 
 def test_the_shipped_prompt_has_a_version_and_names_every_tool() -> None:
     p = load_prompt()
     assert p.version == "brief-v4"
+    assert p == load_prompt(PROMPT_PATH)  # the file hashed is the file the code reads
+    assert p.version in KNOWN_BRIEF_PROMPTS, "new prompt version: add it and its hash above"
+    got = hashlib.sha256(PROMPT_PATH.read_bytes()).hexdigest()
+    assert got == KNOWN_BRIEF_PROMPTS[p.version], "brief.md changed: bump its version"
     assert "prompt-version" not in p.text
     for tool in ("get_metrics", "search_filing", "read_passage"):
         assert tool in p.text
