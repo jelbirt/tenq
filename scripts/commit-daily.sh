@@ -28,6 +28,10 @@ case "$dir" in
   *) echo "not a records folder: $dir"; exit 2 ;;
 esac
 pause="${TENQ_RETRY_SLEEP:-5}"
+# commits are made as GitHub's own Actions bot, so GitHub credits them to it
+# (an address of the form <name>@users.noreply.github.com credits that account)
+as_bot=(-c "user.name=github-actions[bot]"
+  -c "user.email=41898282+github-actions[bot]@users.noreply.github.com")
 
 if [ ! -d "$dir" ]; then
   echo "no record in $dir"
@@ -97,7 +101,7 @@ names=""
 while IFS= read -r -d '' f; do
   names+="${f##*/} "
 done < <(git -C "$copy" diff --cached --name-only -z)
-git -C "$copy" -c user.name=tenq-bot -c user.email=bot@users.noreply.github.com \
+git -C "$copy" "${as_bot[@]}" \
   commit -q -m "runs: ${dir#runs/} record $names"
 
 # the version this job last saw, for the next save: its base, plus this save's files
@@ -111,7 +115,7 @@ note_saved() {
   done
   local tree saved
   tree="$(GIT_INDEX_FILE="$idx" git write-tree)" || return 1
-  saved="$(git -c user.name=tenq-bot -c user.email=bot@users.noreply.github.com \
+  saved="$(git "${as_bot[@]}" \
     commit-tree "$tree" -m "files this job saved")" || return 1
   git update-ref refs/tenq/saved "$saved"
 }
@@ -119,7 +123,7 @@ note_saved() {
 # other jobs also commit runs/ (other files): rebase onto them, retry once. A
 # rebase that touches this run's files conflicts, and the save fails.
 for attempt in 1 2; do
-  if git -C "$copy" -c user.name=tenq-bot -c user.email=bot@users.noreply.github.com \
+  if git -C "$copy" "${as_bot[@]}" \
     pull -q --rebase "$url" main && git -C "$copy" push -q "$url" HEAD:main; then
     note_saved || echo "saved, but could not note it: the next save will refuse"
     exit 0
