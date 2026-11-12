@@ -744,7 +744,7 @@ def gather(ticker: str, now: datetime) -> Pack | None:
     from tenq.current import CURRENT_TAG, sync_current
     from tenq.current import DEFAULT_ROOT as CURRENT_ROOT
     from tenq.edgar import EdgarSource
-    from tenq.fetch import DEFAULT_DEPTH, YEARLY_REPORT_DAYS, sync_reports
+    from tenq.fetch import DEFAULT_DEPTH, sync_reports
     from tenq.news import collect
     from tenq.prices import YahooPrices, fetch
     from tenq.screen import universe_names
@@ -760,8 +760,7 @@ def gather(ticker: str, now: datetime) -> Pack | None:
         names = load_watchlist().names
     source = EdgarSource()
     filings, current = FilingStore(Path("data/filings")), FilingStore(CURRENT_ROOT, tag=CURRENT_TAG)
-    since = (now - timedelta(days=YEARLY_REPORT_DAYS)).date()
-    reports = sync_reports(source, filings, ticker, DEFAULT_DEPTH, yearly_since=since)
+    reports = sync_reports(source, filings, ticker, DEFAULT_DEPTH)
     synced = sync_current(source, current, ticker, (now - timedelta(days=CURRENT_DAYS)).date())
     prices = fetch([ticker], YahooPrices(), now=now)
     news = collect({ticker: names.get(ticker)}, now - timedelta(hours=72))

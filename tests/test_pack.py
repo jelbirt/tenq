@@ -470,7 +470,7 @@ def test_the_cli_prints_a_pack(
     )
     monkeypatch.setattr(tenq.screen, "universe_names", lambda: {"CRWD": "Crowd"})
     monkeypatch.setattr(tenq.edgar, "EdgarSource", lambda: object())
-    monkeypatch.setattr(tenq.fetch, "sync", lambda *_a: [])
+    monkeypatch.setattr(tenq.fetch, "sync_reports", lambda *_a: tenq.fetch.Reports([]))
     monkeypatch.setattr(tenq.current, "sync_current", lambda *_a: Synced([], [], ["8-K x"]))
     monkeypatch.setattr(tenq.prices, "fetch", lambda *_a, **_k: _prices("CRWD"))
     monkeypatch.setattr(tenq.news, "collect", lambda *_a, **_k: News({}, ("feed down",)))

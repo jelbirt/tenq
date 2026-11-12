@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import math
-from datetime import date
 from pathlib import Path
 
 import pytest
@@ -347,19 +346,27 @@ def test_a_foreign_company_whose_reports_fail_to_save_is_still_known_as_foreign(
     assert sync_reports(Foreign([Q2, FY], FACTS), Full(tmp_path), "ARM", 6) == Reports([], True)
 
 
-def test_only_a_recent_yearly_report_makes_a_company_foreign_today(tmp_path: Path) -> None:
-    """A company that moved from the 40-F to 10-Ks (here, every 10-Q fetch failed
-    this run) is not named foreign by its old yearly reports."""
-    since = date(2025, 4, 28)
+def test_a_company_that_lists_10qs_is_never_foreign_even_when_every_fetch_fails(
+    tmp_path: Path,
+) -> None:
+    """A company that moved from the 40-F to 10-Ks still lists its old 40-Fs. A
+    run where its 10-Q fetch failed must not call it foreign, or read old 6-Ks."""
+    q = FilingMeta("SHOP", 5, "Shopify", "10-Q", "shop-q", "2026-08-06", "2026-06-30", "u")
     old = FilingMeta("SHOP", 5, "Shopify", "40-F", "shop-fy", "2023-02-14", "2022-12-31", "u")
-    on_the_day = FilingMeta("PDD", 3, "PDD", "20-F", "pdd-fy-25", "2025-04-28", "2024-12-31", "u")
-    day_before = FilingMeta("PDD", 3, "PDD", "20-F", "pdd-fy-24", "2025-04-27", "2024-12-31", "u")
+    source = Foreign([q, old], {})
+    source.broken.add("shop-q")
+    assert sync_reports(source, FilingStore(tmp_path), "SHOP", 6) == Reports([])
+    assert source.listed == []
 
-    def foreign(listed: list[FilingMeta], name: str) -> bool:
-        store = FilingStore(tmp_path / name)
-        return sync_reports(Foreign(listed, {}), store, "X", 6, yearly_since=since).foreign
 
-    assert not foreign([old], "old")
-    assert foreign([on_the_day], "on")
-    assert not foreign([day_before], "before")
-    assert foreign([PDD_FY, old], "both")
+def test_a_company_with_10qs_saved_on_earlier_runs_is_never_read_as_foreign(
+    tmp_path: Path,
+) -> None:
+    """Where the store persists, a 10-Q saved before is enough even if today's
+    listing came back empty."""
+    store = FilingStore(tmp_path)
+    q = FilingMeta("ARM", 2, "Arm", "10-Q", "10q", "2026-08-06", "2026-06-30", "u")
+    store.save(q, "FORM 10-Q", [])
+    source = Foreign([Q2, FY], FACTS)
+    assert sync_reports(source, store, "ARM", 6) == Reports([])
+    assert source.listed == []

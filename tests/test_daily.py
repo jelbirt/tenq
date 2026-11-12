@@ -1090,11 +1090,7 @@ def _spy_on_gather(monkeypatch: pytest.MonkeyPatch, foreign: bool = False) -> di
 
     monkeypatch.setattr("tenq.edgar.EdgarSource", Source)
 
-    def sync_reports(*a: Any, yearly_since: date, **k: Any) -> Reports:
-        seen["yearly_since"] = yearly_since
-        return Reports([], foreign)
-
-    monkeypatch.setattr("tenq.fetch.sync_reports", sync_reports)
+    monkeypatch.setattr("tenq.fetch.sync_reports", lambda *a, **k: Reports([], foreign))
     monkeypatch.setattr("tenq.current.sync_current", lambda *a, **k: type("S", (), {"notes": ()})())
     monkeypatch.setattr("tenq.prices.fetch", lambda *a, **k: Prices({}, ()))
     monkeypatch.setattr("tenq.news.collect", collect)
@@ -1110,7 +1106,6 @@ def test_the_facts_pack_and_news_get_the_company_of_any_screened_stock(
     seen = _spy_on_gather(monkeypatch)
     assert pack_module.gather("AAPL", NOW) == "pack"  # type: ignore[comparison-overlap]
     assert seen == {
-        "yearly_since": date(2025, 5, 5),  # 548 days before NOW
         "news": {"AAPL": "Apple"},
         "pack": "Apple",
         "foreign": False,
