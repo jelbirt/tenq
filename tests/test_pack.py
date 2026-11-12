@@ -470,7 +470,7 @@ def test_the_cli_prints_a_pack(
     )
     monkeypatch.setattr(tenq.screen, "universe_names", lambda: {"CRWD": "Crowd"})
     monkeypatch.setattr(tenq.edgar, "EdgarSource", lambda: object())
-    monkeypatch.setattr(tenq.fetch, "sync", lambda *_a: [])
+    monkeypatch.setattr(tenq.fetch, "sync_reports", lambda *_a: tenq.fetch.Reports([]))
     monkeypatch.setattr(tenq.current, "sync_current", lambda *_a: Synced([], [], ["8-K x"]))
     monkeypatch.setattr(tenq.prices, "fetch", lambda *_a, **_k: _prices("CRWD"))
     monkeypatch.setattr(tenq.news, "collect", lambda *_a, **_k: News({}, ("feed down",)))
@@ -786,6 +786,21 @@ def test_a_foreign_filer_without_a_10q_is_named_as_one(
         "whose quarterly figures in dollars could not be read from its tagged "
         "filings, so they are not on this sheet" in foreign.notes
     )
+
+
+def test_a_foreign_filer_with_no_recent_6k_is_still_named_as_one(
+    tmp_path: Path, store: FilingStore, current: FilingStore
+) -> None:
+    """PDD: its last 6-K is months old, but EDGAR lists its 20-F, so the sheet
+    still says why its figures are missing. A sheet with figures needs no note."""
+    old = replace(_eightk("0001535527-26-000061", "2026-08-01", items=""), form="6-K")
+    current.save(old, EIGHTK_TEXT, [])
+    empty = FilingStore(tmp_path / "none")
+    assert "no 10-Q or 10-K on record for CRWD" in _build(empty, current).notes  # 6-K too old
+    built = _build(empty, current, foreign=True)
+    assert not [n for n in built.notes if "no 10-Q" in n]
+    assert [n for n in built.notes if n.startswith("CRWD is a foreign company (it files")]
+    assert not [n for n in _build(store, current, foreign=True).notes if "foreign" in n]
 
 
 def test_a_tagged_quarterly_6k_is_the_sheets_filing_and_drops_the_foreign_note(

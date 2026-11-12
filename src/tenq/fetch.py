@@ -3,13 +3,16 @@
 A foreign company files no 10-Q or 10-K. Where it tags its quarterly results
 in 6-Ks (ARM does; the other foreign stocks the screen can pick put their
 quarter in report text only, which the sheet never reads for numbers), those
-6-Ks count like 10-Qs and its yearly 20-F or 40-F like a 10-K: `sync_foreign`.
+6-Ks count like 10-Qs and its yearly 20-F or 40-F like a 10-K: `sync_reports`.
+Either way the listing tells the sheet the company is foreign, so its note can
+say why the figures are missing even with no recent 6-K: `Reports.foreign`.
 """
 
 from __future__ import annotations
 
 import argparse
 import logging
+from dataclasses import dataclass
 from pathlib import Path
 
 from tenq.edgar import FORMS, YEARLY_FOREIGN, FilingSource, ForeignSource, stamped
@@ -29,10 +32,26 @@ DEFAULT_DEPTH = 6
 FOREIGN_LIST = 2 * DEFAULT_DEPTH
 
 
+@dataclass(frozen=True)
+class Reports:
+    """What `sync_reports` saved this run, and whether the company's EDGAR
+    listing shows a yearly 20-F or 40-F, so it is a foreign filer. False for a
+    company that lists or has saved a 10-Q or 10-K, and when its foreign listing
+    could not be read."""
+
+    new: list[FilingMeta]
+    foreign: bool = False
+
+
 def sync(source: FilingSource, store: FilingStore, ticker: str, depth: int) -> list[FilingMeta]:
     """Save the latest `depth` filings; return the ones that were new this run."""
+    return _save(source, store, source.list_filings(ticker, depth))
+
+
+def _save(source: FilingSource, store: FilingStore, listed: list[FilingMeta]) -> list[FilingMeta]:
+    """`sync` on a listing already made."""
     new: list[FilingMeta] = []
-    for meta in source.list_filings(ticker, depth):
+    for meta in listed:
         if store.has(meta.ticker, meta.accession):
             continue
         try:
@@ -47,21 +66,27 @@ def sync(source: FilingSource, store: FilingStore, ticker: str, depth: int) -> l
     return new
 
 
-def sync_reports(
-    source: ForeignSource, store: FilingStore, ticker: str, depth: int
-) -> list[FilingMeta]:
-    """The 10-Q/10-Ks, or for a company that files none, its foreign periodic
-    reports. Judged by the forms saved, not by an empty store, so a foreign
-    company's later 6-Ks are still synced where the store persists. A failure
-    in the foreign reports costs only the sheet, never the stock's pack."""
-    new = sync(source, store, ticker, depth)
-    if any(m.form in FORMS for m in store.filings(ticker)):
-        return new
+def sync_reports(source: ForeignSource, store: FilingStore, ticker: str, depth: int) -> Reports:
+    """The 10-Q/10-Ks, or for a company that lists none, its foreign periodic
+    reports. Judged by the forms listed and saved, not by an empty store: a
+    company that lists 10-Qs is never read as foreign even when every fetch
+    fails (a former foreign filer's old 20-Fs stay listed for years), and a
+    foreign company's later 6-Ks are still synced where the store persists. A
+    failure in the foreign reports costs only the sheet, never the stock's pack.
+
+    Returns what was new and whether its foreign listing shows a 20-F or 40-F."""
+    listed = source.list_filings(ticker, depth)
+    new = _save(source, store, listed)
+    if listed or any(m.form in FORMS for m in store.filings(ticker)):
+        return Reports(new)
+    foreign = False
     try:
-        return new + sync_foreign(source, store, ticker, depth)
+        found = source.list_foreign(ticker, FOREIGN_LIST)
+        foreign = any(m.form in YEARLY_FOREIGN for m in found)
+        return Reports(new + _save_foreign(source, store, found, depth), foreign)
     except Exception:  # failures degrade: the pack still has its prices, news and reports
         log.exception("%s: foreign periodic reports could not be synced", ticker)
-        return new
+        return Reports(new, foreign)
 
 
 def sync_foreign(
@@ -75,8 +100,17 @@ def sync_foreign(
     report: a sheet built on a 20-F alone would show year-old balances as the
     latest quarter's. With one, the 20-F or 40-F counts like a 10-K, so the
     fourth quarter is the year less the nine months, as for a US company.
+
+    The daily run goes through `sync_reports`, which lists once for both the
+    foreign sign and the save; this lists and saves alone, for the tests.
     """
-    listed = source.list_foreign(ticker, FOREIGN_LIST)
+    return _save_foreign(source, store, source.list_foreign(ticker, FOREIGN_LIST), depth)
+
+
+def _save_foreign(
+    source: ForeignSource, store: FilingStore, listed: list[FilingMeta], depth: int
+) -> list[FilingMeta]:
+    """`sync_foreign` on a listing already made."""
     fetched: dict[str, tuple[str, list[Fact]]] = {}
     quarters: list[FilingMeta] = []
     slots = 0  # the window's reports so far: a yearly one takes a slot unfetched

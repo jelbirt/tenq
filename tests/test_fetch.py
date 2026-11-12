@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 
 from tenq.edgar import facts_from_frame
-from tenq.fetch import sync, sync_foreign, sync_reports
+from tenq.fetch import Reports, sync, sync_foreign, sync_reports
 from tenq.filings import Fact, FilingMeta, FilingStore
 
 
@@ -247,18 +247,20 @@ def test_a_company_with_10qs_never_reads_its_6ks(tmp_path: Path) -> None:
     store = FilingStore(tmp_path)
     tenq = FilingMeta("ARM", 2, "Arm", "10-Q", "10q", "2026-11-04", "2026-09-30", "https://x")
     source = Foreign([tenq, Q2, FY], FACTS)
-    assert [m.accession for m in sync_reports(source, store, "ARM", depth=6)] == ["10q"]
+    assert [m.accession for m in sync_reports(source, store, "ARM", depth=6).new] == ["10q"]
     assert source.listed == []
+    assert not sync_reports(source, store, "ARM", depth=6).foreign
 
 
 def test_a_foreign_company_keeps_syncing_its_6ks_once_some_are_saved(tmp_path: Path) -> None:
     store = FilingStore(tmp_path)
-    assert [m.accession for m in sync_reports(Foreign([Q1, FY], FACTS), store, "ARM", 6)] == [
+    assert [m.accession for m in sync_reports(Foreign([Q1, FY], FACTS), store, "ARM", 6).new] == [
         "q1",
         "fy",
     ]
     later = Foreign([Q2, Q1, FY], FACTS)
-    assert [m.accession for m in sync_reports(later, store, "ARM", 6)] == ["q2"]
+    got = sync_reports(later, store, "ARM", 6)
+    assert ([m.accession for m in got.new], got.foreign) == (["q2"], True)
     assert later.listed == [12]
 
 
@@ -272,7 +274,7 @@ def test_a_new_20f_is_saved_beside_6ks_saved_on_earlier_runs(tmp_path: Path) -> 
     older = _arm("q1-25", "6-K", "2025-06-30", "2025-07-30")
     facts = {**FACTS, "q1-25": [_rev("2025-04-01", "2025-06-30")]}
     source = Foreign([FY, Q3, Q2_25, older], facts)
-    assert [m.accession for m in sync_reports(source, store, "ARM", depth=3)] == ["fy"]
+    assert [m.accession for m in sync_reports(source, store, "ARM", depth=3).new] == ["fy"]
     assert source.fetched == ["fy"]
 
 
@@ -284,7 +286,7 @@ def test_a_foreign_listing_that_fails_costs_only_the_sheet(tmp_path: Path) -> No
             raise OSError("EDGAR is down")
 
     store = FilingStore(tmp_path)
-    assert sync_reports(Down([Q2, FY], FACTS), store, "ARM", depth=6) == []
+    assert sync_reports(Down([Q2, FY], FACTS), store, "ARM", depth=6) == Reports([])
     assert store.filings("ARM") == []
 
 
@@ -293,7 +295,7 @@ def test_a_20f_with_no_readable_period_is_passed_over_alone(tmp_path: Path) -> N
     undated = _arm("fy-none", "20-F", "None", "2026-05-26")
     store = FilingStore(tmp_path)
     source = Foreign([Q2, Q1, undated, Q3, Q2_25], {**FACTS, "fy-none": FACTS["fy"]})
-    saved = sync_reports(source, store, "ARM", depth=6)
+    saved = sync_reports(source, store, "ARM", depth=6).new
     assert [m.accession for m in saved] == ["q2", "q1", "q3", "q2-25"]
     assert _saved(store) == [(m, "6-K") for m in ("q2", "q1", "q3", "q2-25")]
 
@@ -309,4 +311,62 @@ def test_a_us_listing_that_fails_still_fails_the_pack(tmp_path: Path) -> None:
     source = Down([Q2, FY], FACTS)
     with pytest.raises(OSError, match="EDGAR is down"):
         sync_reports(source, FilingStore(tmp_path), "ARM", depth=6)
+    assert source.listed == []
+
+
+# PDD's pattern: a yearly 20-F, and 6-Ks whose tags hold no quarter in dollars.
+PDD_FY = FilingMeta("PDD", 3, "PDD Holdings", "20-F", "pdd-fy", "2026-04-28", "2025-12-31", "u")
+PDD_6K = FilingMeta("PDD", 3, "PDD Holdings", "6-K", "pdd-6k", "2026-08-25", "2026-06-30", "u")
+
+
+def test_a_foreign_company_with_no_tagged_quarter_is_still_known_as_foreign(
+    tmp_path: Path,
+) -> None:
+    """PDD: nothing is saved, but the 20-F in its listing tells the sheet why,
+    however long ago its last 6-K was."""
+    store = FilingStore(tmp_path)
+    assert sync_reports(Foreign([PDD_6K, PDD_FY], {}), store, "PDD", 6) == Reports([], True)
+    assert store.filings("PDD") == []
+
+
+def test_only_a_yearly_20f_or_40f_marks_a_company_as_foreign(tmp_path: Path) -> None:
+    tri = FilingMeta("TRI", 4, "Thomson Reuters", "40-F", "tri-fy", "2026-03-10", "2025-12-31", "u")
+    assert sync_reports(Foreign([tri], {}), FilingStore(tmp_path / "a"), "TRI", 6).foreign
+    assert not sync_reports(Foreign([PDD_6K], {}), FilingStore(tmp_path / "b"), "PDD", 6).foreign
+    assert not sync_reports(Foreign([], {}), FilingStore(tmp_path / "c"), "PDD", 6).foreign
+
+
+def test_a_foreign_company_whose_reports_fail_to_save_is_still_known_as_foreign(
+    tmp_path: Path,
+) -> None:
+    class Full(FilingStore):
+        def save(self, meta: FilingMeta, text: str, facts: list[Fact]) -> None:
+            raise OSError("disk full")
+
+    assert sync_reports(Foreign([Q2, FY], FACTS), Full(tmp_path), "ARM", 6) == Reports([], True)
+
+
+def test_a_company_that_lists_10qs_is_never_foreign_even_when_every_fetch_fails(
+    tmp_path: Path,
+) -> None:
+    """A company that moved from the 40-F to 10-Ks still lists its old 40-Fs. A
+    run where its 10-Q fetch failed must not call it foreign, or read old 6-Ks."""
+    q = FilingMeta("SHOP", 5, "Shopify", "10-Q", "shop-q", "2026-08-06", "2026-06-30", "u")
+    old = FilingMeta("SHOP", 5, "Shopify", "40-F", "shop-fy", "2023-02-14", "2022-12-31", "u")
+    source = Foreign([q, old], {})
+    source.broken.add("shop-q")
+    assert sync_reports(source, FilingStore(tmp_path), "SHOP", 6) == Reports([])
+    assert source.listed == []
+
+
+def test_a_company_with_10qs_saved_on_earlier_runs_is_never_read_as_foreign(
+    tmp_path: Path,
+) -> None:
+    """Where the store persists, a 10-Q saved before is enough even if today's
+    listing came back empty."""
+    store = FilingStore(tmp_path)
+    q = FilingMeta("ARM", 2, "Arm", "10-Q", "10q", "2026-08-06", "2026-06-30", "u")
+    store.save(q, "FORM 10-Q", [])
+    source = Foreign([Q2, FY], FACTS)
+    assert sync_reports(source, store, "ARM", 6) == Reports([])
     assert source.listed == []

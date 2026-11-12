@@ -1068,9 +1068,10 @@ def test_a_screened_stock_off_the_watchlist_shows_its_company(tmp_path: Path) ->
     assert "AAPL (Apple)" in outbox.sent[0].text
 
 
-def _spy_on_gather(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
-    """Stub everything gather fetches; return what it passed as names."""
+def _spy_on_gather(monkeypatch: pytest.MonkeyPatch, foreign: bool = False) -> dict[str, Any]:
+    """Stub everything gather fetches; return what it passed on."""
     from tenq import pack as pack_module
+    from tenq.fetch import Reports
     from tenq.news import News
 
     seen: dict[str, Any] = {}
@@ -1084,10 +1085,11 @@ def _spy_on_gather(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
 
     def build(ticker: str, company: str, **kw: Any) -> str:
         seen["pack"] = company
+        seen["foreign"] = kw["foreign"]
         return "pack"
 
     monkeypatch.setattr("tenq.edgar.EdgarSource", Source)
-    monkeypatch.setattr("tenq.fetch.sync_reports", lambda *a, **k: [])
+    monkeypatch.setattr("tenq.fetch.sync_reports", lambda *a, **k: Reports([], foreign))
     monkeypatch.setattr("tenq.current.sync_current", lambda *a, **k: type("S", (), {"notes": ()})())
     monkeypatch.setattr("tenq.prices.fetch", lambda *a, **k: Prices({}, ()))
     monkeypatch.setattr("tenq.news.collect", collect)
@@ -1102,7 +1104,21 @@ def test_the_facts_pack_and_news_get_the_company_of_any_screened_stock(
 
     seen = _spy_on_gather(monkeypatch)
     assert pack_module.gather("AAPL", NOW) == "pack"  # type: ignore[comparison-overlap]
-    assert seen == {"news": {"AAPL": "Apple"}, "pack": "Apple"}
+    assert seen == {
+        "news": {"AAPL": "Apple"},
+        "pack": "Apple",
+        "foreign": False,
+    }
+
+
+def test_the_sheet_hears_when_edgar_lists_a_foreign_companys_yearly_report(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from tenq import pack as pack_module
+
+    seen = _spy_on_gather(monkeypatch, foreign=True)
+    pack_module.gather("PDD", NOW)
+    assert seen["foreign"] is True
 
 
 def test_a_broken_universe_file_still_lets_the_watchlist_gather(
