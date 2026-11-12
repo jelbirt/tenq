@@ -306,3 +306,59 @@ def test_a_claim_counts_only_once_the_record_is_on_main(
     record.write_text('{"email": {"sent": null, "status": "sending", "try": 2}}')
     monkeypatch.setenv("TENQ_PUSH_URL", str(tmp_path / "nowhere.git"))
     assert save_claim(record) is False
+
+
+def test_saves_are_credited_to_githubs_actions_bot(
+    repos: tuple[Path, Path, Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Not to a stranger: GitHub credits a commit to the account its address
+    names, and bot@users.noreply.github.com named someone's account."""
+    origin, other, job = repos
+    for k in ("AUTHOR", "COMMITTER"):  # as on Actions, where nothing sets these
+        monkeypatch.delenv(f"GIT_{k}_NAME")
+        monkeypatch.delenv(f"GIT_{k}_EMAIL")
+    (job / "runs" / "daily" / "2026-11-06.json").write_text("{}")
+    assert _save(job).returncode == 0
+    # main moved, so the second save rebases its commit: still the bot's
+    _git(other, "pull", "-q", "origin", "main")
+    (other / "code.py").write_text("v2\n")
+    subprocess.run(
+        ["git", "-c", "user.name=t", "-c", "user.email=t@example.invalid", "commit", "-qam", "v2"],
+        cwd=other,
+        check=True,
+    )
+    _git(other, "push", "-q", "origin", "HEAD:main")
+    (job / "runs" / "daily" / "2026-11-06.json").write_text('{"sent": true}')
+    assert _save(job).returncode == 0
+    bot = "github-actions[bot] <41898282+github-actions[bot]@users.noreply.github.com>"
+    for ref in ("main", "main~2"):
+        assert _git(origin, "log", "-1", "--format=%an <%ae>|%cn <%ce>", ref) == f"{bot}|{bot}"
+    saved = _git(job, "log", "-1", "--format=%an <%ae>", "refs/tenq/saved")
+    assert saved == bot
+
+
+def test_a_save_retried_after_main_moved_is_still_the_bots(
+    repos: tuple[Path, Path, Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The retry rebases the record onto the newer main, which rewrites its
+    committer: that has to be the bot too, and with no name set on Actions
+    the rebase could not run at all without one."""
+    origin, other, job = repos
+    (other / "code.py").write_text("v2\n")
+    _git(other, "commit", "-qam", "v2")
+    _git(other, "push", "-q", "origin", "HEAD:refs/heads/side")
+    for k in ("AUTHOR", "COMMITTER"):
+        monkeypatch.delenv(f"GIT_{k}_NAME")
+        monkeypatch.delenv(f"GIT_{k}_EMAIL")
+    # the first push is refused after main moves on to the side commit
+    _hook(
+        origin,
+        "if [ ! -e refused-once ]; then touch refused-once; "
+        "env -u GIT_QUARANTINE_PATH git update-ref refs/heads/main refs/heads/side; exit 1; fi",
+    )
+    (job / "runs" / "daily" / "2026-11-06.json").write_text("{}")
+    got = _save(job)
+    assert got.returncode == 0, got.stdout + got.stderr
+    assert _on_main(origin, "code.py") == "v2"  # the record went on top of the move
+    bot = "github-actions[bot] <41898282+github-actions[bot]@users.noreply.github.com>"
+    assert _git(origin, "log", "-1", "--format=%an <%ae>|%cn <%ce>", "main") == f"{bot}|{bot}"
