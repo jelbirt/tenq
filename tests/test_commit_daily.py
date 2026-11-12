@@ -319,7 +319,7 @@ def test_saves_are_credited_to_githubs_actions_bot(
         monkeypatch.delenv(f"GIT_{k}_EMAIL")
     (job / "runs" / "daily" / "2026-11-06.json").write_text("{}")
     assert _save(job).returncode == 0
-    # main moved, so the second save rebases its commit: still the bot's
+    # a second save, on top of a main someone else moved: the bot's too
     _git(other, "pull", "-q", "origin", "main")
     (other / "code.py").write_text("v2\n")
     subprocess.run(

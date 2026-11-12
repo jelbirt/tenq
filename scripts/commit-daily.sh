@@ -28,7 +28,7 @@ case "$dir" in
   *) echo "not a records folder: $dir"; exit 2 ;;
 esac
 pause="${TENQ_RETRY_SLEEP:-5}"
-# commits are signed as GitHub's own Actions bot, so GitHub credits them to it
+# commits are made as GitHub's own Actions bot, so GitHub credits them to it
 # (an address of the form <name>@users.noreply.github.com credits that account)
 as_bot=(-c "user.name=github-actions[bot]"
   -c "user.email=41898282+github-actions[bot]@users.noreply.github.com")
