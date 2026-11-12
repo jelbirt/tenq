@@ -788,6 +788,17 @@ def test_a_foreign_filer_without_a_10q_is_named_as_one(
     )
 
 
+def test_a_foreign_filer_with_no_recent_6k_is_still_named_as_one(
+    tmp_path: Path, store: FilingStore, current: FilingStore
+) -> None:
+    """PDD: its last 6-K is months old, but EDGAR lists its 20-F, so the sheet
+    still says why its figures are missing. A sheet with figures needs no note."""
+    built = _build(FilingStore(tmp_path / "none"), current, foreign=True)
+    assert not [n for n in built.notes if "no 10-Q" in n]
+    assert [n for n in built.notes if n.startswith("CRWD is a foreign company (it files")]
+    assert not [n for n in _build(store, current, foreign=True).notes if "foreign" in n]
+
+
 def test_a_tagged_quarterly_6k_is_the_sheets_filing_and_drops_the_foreign_note(
     tmp_path: Path, current: FilingStore
 ) -> None:

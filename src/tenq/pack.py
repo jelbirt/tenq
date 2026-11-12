@@ -598,10 +598,13 @@ def build(
     news: Iterable[NewsItem],
     as_of: datetime,
     notes: Iterable[str] = (),
+    foreign: bool = False,
 ) -> Pack | None:
     """The pack for `ticker` on its latest priced session, or None without prices.
 
     Never raises for missing or unreadable filing data: what is missing is a note.
+    `foreign` says EDGAR lists a 20-F or 40-F for it; without that, a 6-K among
+    its recent reports is the sign it is a foreign company.
     A naive `as_of` is a programming error and raises ValueError.
     """
     if as_of.tzinfo is None:
@@ -665,7 +668,7 @@ def build(
         )
 
     if no_filing:
-        if any(r.form == "6-K" for r in pack.reports):
+        if foreign or any(r.form == "6-K" for r in pack.reports):
             pack.notes.append(
                 f"{ticker} is a foreign company (it files 6-Ks and an annual 20-F or 40-F) "
                 "whose quarterly figures in dollars could not be read from its tagged "
@@ -757,7 +760,7 @@ def gather(ticker: str, now: datetime) -> Pack | None:
         names = load_watchlist().names
     source = EdgarSource()
     filings, current = FilingStore(Path("data/filings")), FilingStore(CURRENT_ROOT, tag=CURRENT_TAG)
-    sync_reports(source, filings, ticker, DEFAULT_DEPTH)
+    saved = sync_reports(source, filings, ticker, DEFAULT_DEPTH)
     synced = sync_current(source, current, ticker, (now - timedelta(days=CURRENT_DAYS)).date())
     prices = fetch([ticker], YahooPrices(), now=now)
     news = collect({ticker: names.get(ticker)}, now - timedelta(hours=72))
@@ -770,6 +773,7 @@ def gather(ticker: str, now: datetime) -> Pack | None:
         news=news.items.get(ticker, ()),
         as_of=now,
         notes=[*prices.notes, *news.notes, *synced.notes],
+        foreign=saved.foreign,
     )
 
 
