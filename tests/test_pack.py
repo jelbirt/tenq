@@ -793,7 +793,11 @@ def test_a_foreign_filer_with_no_recent_6k_is_still_named_as_one(
 ) -> None:
     """PDD: its last 6-K is months old, but EDGAR lists its 20-F, so the sheet
     still says why its figures are missing. A sheet with figures needs no note."""
-    built = _build(FilingStore(tmp_path / "none"), current, foreign=True)
+    old = replace(_eightk("0001535527-26-000061", "2026-08-01", items=""), form="6-K")
+    current.save(old, EIGHTK_TEXT, [])
+    empty = FilingStore(tmp_path / "none")
+    assert "no 10-Q or 10-K on record for CRWD" in _build(empty, current).notes  # 6-K too old
+    built = _build(empty, current, foreign=True)
     assert not [n for n in built.notes if "no 10-Q" in n]
     assert [n for n in built.notes if n.startswith("CRWD is a foreign company (it files")]
     assert not [n for n in _build(store, current, foreign=True).notes if "foreign" in n]

@@ -5,7 +5,7 @@ in 6-Ks (ARM does; the other foreign stocks the screen can pick put their
 quarter in report text only, which the sheet never reads for numbers), those
 6-Ks count like 10-Qs and its yearly 20-F or 40-F like a 10-K: `sync_foreign`.
 Either way the listing tells the sheet the company is foreign, so its note can
-say why the figures are missing even with no recent 6-K: `Synced.foreign`.
+say why the figures are missing even with no recent 6-K: `Reports.foreign`.
 """
 
 from __future__ import annotations
@@ -13,6 +13,7 @@ from __future__ import annotations
 import argparse
 import logging
 from dataclasses import dataclass
+from datetime import date
 from pathlib import Path
 
 from tenq.edgar import FORMS, YEARLY_FOREIGN, FilingSource, ForeignSource, stamped
@@ -30,13 +31,18 @@ DEFAULT_DEPTH = 6
 # Foreign candidates listed per sync: room for a few tagged 6-Ks that turn out
 # to hold no quarter (MNDY's half-year report) without missing the window.
 FOREIGN_LIST = 2 * DEFAULT_DEPTH
+# A foreign filer's 20-F or 40-F is due within four months of its year end, so
+# its latest is never much over 16 months old. An older one is a company that
+# has since moved to 10-Ks, and does not make it foreign today.
+YEARLY_REPORT_DAYS = 548
 
 
 @dataclass(frozen=True)
-class Synced:
+class Reports:
     """What `sync_reports` saved this run, and whether the company's EDGAR
-    listing shows a yearly 20-F or 40-F, so it is a foreign filer. False for a
-    company with 10-Qs, and when its foreign listing could not be read."""
+    listing shows a recent yearly 20-F or 40-F, so it is a foreign filer.
+    False once a 10-Q or 10-K is saved for it, and when its foreign listing
+    could not be read."""
 
     new: list[FilingMeta]
     foreign: bool = False
@@ -60,22 +66,33 @@ def sync(source: FilingSource, store: FilingStore, ticker: str, depth: int) -> l
     return new
 
 
-def sync_reports(source: ForeignSource, store: FilingStore, ticker: str, depth: int) -> Synced:
+def sync_reports(
+    source: ForeignSource,
+    store: FilingStore,
+    ticker: str,
+    depth: int,
+    *,
+    yearly_since: date | None = None,
+) -> Reports:
     """The 10-Q/10-Ks, or for a company that files none, its foreign periodic
     reports. Judged by the forms saved, not by an empty store, so a foreign
     company's later 6-Ks are still synced where the store persists. A failure
-    in the foreign reports costs only the sheet, never the stock's pack."""
+    in the foreign reports costs only the sheet, never the stock's pack.
+
+    Returns what was new and whether its listing shows a 20-F or 40-F filed on
+    or after `yearly_since` (any date when None)."""
     new = sync(source, store, ticker, depth)
     if any(m.form in FORMS for m in store.filings(ticker)):
-        return Synced(new)
+        return Reports(new)
     foreign = False
     try:
         listed = source.list_foreign(ticker, FOREIGN_LIST)
-        foreign = any(m.form in YEARLY_FOREIGN for m in listed)
-        return Synced(new + _save_foreign(source, store, listed, depth), foreign)
+        since = yearly_since.isoformat() if yearly_since else ""
+        foreign = any(m.form in YEARLY_FOREIGN and m.filed[:10] >= since for m in listed)
+        return Reports(new + _save_foreign(source, store, listed, depth), foreign)
     except Exception:  # failures degrade: the pack still has its prices, news and reports
         log.exception("%s: foreign periodic reports could not be synced", ticker)
-        return Synced(new, foreign)
+        return Reports(new, foreign)
 
 
 def sync_foreign(

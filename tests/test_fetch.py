@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 import math
+from datetime import date
 from pathlib import Path
 
 import pytest
 
 from tenq.edgar import facts_from_frame
-from tenq.fetch import Synced, sync, sync_foreign, sync_reports
+from tenq.fetch import Reports, sync, sync_foreign, sync_reports
 from tenq.filings import Fact, FilingMeta, FilingStore
 
 
@@ -286,7 +287,7 @@ def test_a_foreign_listing_that_fails_costs_only_the_sheet(tmp_path: Path) -> No
             raise OSError("EDGAR is down")
 
     store = FilingStore(tmp_path)
-    assert sync_reports(Down([Q2, FY], FACTS), store, "ARM", depth=6) == Synced([])
+    assert sync_reports(Down([Q2, FY], FACTS), store, "ARM", depth=6) == Reports([])
     assert store.filings("ARM") == []
 
 
@@ -325,7 +326,7 @@ def test_a_foreign_company_with_no_tagged_quarter_is_still_known_as_foreign(
     """PDD: nothing is saved, but the 20-F in its listing tells the sheet why,
     however long ago its last 6-K was."""
     store = FilingStore(tmp_path)
-    assert sync_reports(Foreign([PDD_6K, PDD_FY], {}), store, "PDD", 6) == Synced([], True)
+    assert sync_reports(Foreign([PDD_6K, PDD_FY], {}), store, "PDD", 6) == Reports([], True)
     assert store.filings("PDD") == []
 
 
@@ -343,4 +344,22 @@ def test_a_foreign_company_whose_reports_fail_to_save_is_still_known_as_foreign(
         def save(self, meta: FilingMeta, text: str, facts: list[Fact]) -> None:
             raise OSError("disk full")
 
-    assert sync_reports(Foreign([Q2, FY], FACTS), Full(tmp_path), "ARM", 6) == Synced([], True)
+    assert sync_reports(Foreign([Q2, FY], FACTS), Full(tmp_path), "ARM", 6) == Reports([], True)
+
+
+def test_only_a_recent_yearly_report_makes_a_company_foreign_today(tmp_path: Path) -> None:
+    """A company that moved from the 40-F to 10-Ks (here, every 10-Q fetch failed
+    this run) is not named foreign by its old yearly reports."""
+    since = date(2025, 4, 28)
+    old = FilingMeta("SHOP", 5, "Shopify", "40-F", "shop-fy", "2023-02-14", "2022-12-31", "u")
+    on_the_day = FilingMeta("PDD", 3, "PDD", "20-F", "pdd-fy-25", "2025-04-28", "2024-12-31", "u")
+    day_before = FilingMeta("PDD", 3, "PDD", "20-F", "pdd-fy-24", "2025-04-27", "2024-12-31", "u")
+
+    def foreign(listed: list[FilingMeta], name: str) -> bool:
+        store = FilingStore(tmp_path / name)
+        return sync_reports(Foreign(listed, {}), store, "X", 6, yearly_since=since).foreign
+
+    assert not foreign([old], "old")
+    assert foreign([on_the_day], "on")
+    assert not foreign([day_before], "before")
+    assert foreign([PDD_FY, old], "both")

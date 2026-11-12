@@ -1069,9 +1069,9 @@ def test_a_screened_stock_off_the_watchlist_shows_its_company(tmp_path: Path) ->
 
 
 def _spy_on_gather(monkeypatch: pytest.MonkeyPatch, foreign: bool = False) -> dict[str, Any]:
-    """Stub everything gather fetches; return what it passed as names."""
+    """Stub everything gather fetches; return what it passed on."""
     from tenq import pack as pack_module
-    from tenq.fetch import Synced
+    from tenq.fetch import Reports
     from tenq.news import News
 
     seen: dict[str, Any] = {}
@@ -1089,7 +1089,12 @@ def _spy_on_gather(monkeypatch: pytest.MonkeyPatch, foreign: bool = False) -> di
         return "pack"
 
     monkeypatch.setattr("tenq.edgar.EdgarSource", Source)
-    monkeypatch.setattr("tenq.fetch.sync_reports", lambda *a, **k: Synced([], foreign))
+
+    def sync_reports(*a: Any, yearly_since: date, **k: Any) -> Reports:
+        seen["yearly_since"] = yearly_since
+        return Reports([], foreign)
+
+    monkeypatch.setattr("tenq.fetch.sync_reports", sync_reports)
     monkeypatch.setattr("tenq.current.sync_current", lambda *a, **k: type("S", (), {"notes": ()})())
     monkeypatch.setattr("tenq.prices.fetch", lambda *a, **k: Prices({}, ()))
     monkeypatch.setattr("tenq.news.collect", collect)
@@ -1104,7 +1109,12 @@ def test_the_facts_pack_and_news_get_the_company_of_any_screened_stock(
 
     seen = _spy_on_gather(monkeypatch)
     assert pack_module.gather("AAPL", NOW) == "pack"  # type: ignore[comparison-overlap]
-    assert seen == {"news": {"AAPL": "Apple"}, "pack": "Apple", "foreign": False}
+    assert seen == {
+        "yearly_since": date(2025, 5, 5),  # 548 days before NOW
+        "news": {"AAPL": "Apple"},
+        "pack": "Apple",
+        "foreign": False,
+    }
 
 
 def test_the_sheet_hears_when_edgar_lists_a_foreign_companys_yearly_report(
