@@ -3,7 +3,7 @@
 A foreign company files no 10-Q or 10-K. Where it tags its quarterly results
 in 6-Ks (ARM does; the other foreign stocks the screen can pick put their
 quarter in report text only, which the sheet never reads for numbers), those
-6-Ks count like 10-Qs and its yearly 20-F or 40-F like a 10-K: `sync_foreign`.
+6-Ks count like 10-Qs and its yearly 20-F or 40-F like a 10-K: `sync_reports`.
 Either way the listing tells the sheet the company is foreign, so its note can
 say why the figures are missing even with no recent 6-K: `Reports.foreign`.
 """
@@ -100,6 +100,9 @@ def sync_foreign(
     report: a sheet built on a 20-F alone would show year-old balances as the
     latest quarter's. With one, the 20-F or 40-F counts like a 10-K, so the
     fourth quarter is the year less the nine months, as for a US company.
+
+    The daily run goes through `sync_reports`, which lists once for both the
+    foreign sign and the save; this lists and saves alone, for the tests.
     """
     return _save_foreign(source, store, source.list_foreign(ticker, FOREIGN_LIST), depth)
 

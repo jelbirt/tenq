@@ -1089,7 +1089,6 @@ def _spy_on_gather(monkeypatch: pytest.MonkeyPatch, foreign: bool = False) -> di
         return "pack"
 
     monkeypatch.setattr("tenq.edgar.EdgarSource", Source)
-
     monkeypatch.setattr("tenq.fetch.sync_reports", lambda *a, **k: Reports([], foreign))
     monkeypatch.setattr("tenq.current.sync_current", lambda *a, **k: type("S", (), {"notes": ()})())
     monkeypatch.setattr("tenq.prices.fetch", lambda *a, **k: Prices({}, ()))
