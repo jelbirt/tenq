@@ -16,11 +16,22 @@ settled an answer was and how strong the lean is.
 Never raises: a missing key, an HTTP error or an unreadable answer is an error
 on the result, and the brief goes out with Opus's call alone. A request that
 fails for good (a bad key, no credit, a service still down after one retry)
-ends the rounds, so an outage costs about one minute per stock, not six. Logs carry only
-status codes and exception types, never the state or an answer.
+ends the rounds, so an outage costs about one minute per stock, not six. Jev's logs
+carry only status codes and exception types; Kairos's also carry its error's type,
+code, request ids and cleaned message. Neither logs the state or an answer itself,
+though a Kairos message is Kairos's own text and may quote the request.
 
 Env: OPENROUTER_API_KEY (the only secret), JEV_MODEL (default jev-latest; the
 resolved model, e.g. typesafe/jev-1.13-20260917, is recorded per run).
+
+Kairos (DMind's decision model, served through Minara Cloud) takes the same
+System One request, so `ask(provider=KAIROS)` sends it the same state and the
+same balanced rounds. Only the hand-run check (tenq.jev_check --kairos) asks it;
+nothing in the daily run does. Env: KAIROS_API_KEY (its only secret),
+KAIROS_MODEL (default DMIND/Kairos). A Kairos error keeps what the reply's own
+error says (its type, code, request ids and a cleaned message), because the
+check exists to learn how Kairos refuses; the key is taken out of every word
+of it.
 """
 
 from __future__ import annotations
@@ -60,8 +71,25 @@ MODEL_NAME = re.compile(r"[A-Za-z0-9._:/~-]{1,100}")
 MAX_STATE_CHARS = 60_000  # well under Jev's 32k-token state limit
 KEY = r"[a-z][a-z0-9_]{0,39}"
 
+KAIROS_URL = "https://minara.cloud/v1/systemone"
+KAIROS_MODELS_URL = "https://minara.cloud/v1/models"
+KAIROS_DEFAULT_MODEL = "DMIND/Kairos"  # the use guide's id; ids differ by channel
+# Kairos may take up to 600 s upstream. A hand-run check waits five minutes a
+# request and does not retry a timeout (connect or read), so one stuck stock
+# costs at most that; jev_check then stops asking Kairos for the run.
+KAIROS_TIMEOUT_S = 300
+KAIROS_LIST_TIMEOUT_S = 30
+KAIROS_RATE_RETRIES = 3  # a 429 is waited out at most this often, then the stock's rounds end
+KAIROS_BACKOFF_S = 5.0  # first wait after a 429 that names none; doubles each time
+KAIROS_MAX_WAIT_S = 60.0  # the longest retry delay honored
+KAIROS_RETRY_CODES = {500, 502, 503, 504, 524, 529}  # tried once more, like Jev's
+TOKEN = re.compile(r"[A-Za-z0-9_.:-]{1,128}")  # an error type, code or request id
+MAX_MESSAGE = 200  # characters of a Kairos error message kept
+
 QType = Literal["noul", "choice", "score"]
-Post = Callable[[str, dict[str, str], bytes], tuple[int, str]]
+# (status, body); an endpoint whose 429 says when to come back may add its
+# Retry-After header as a third item. Status 0 is no reply (timeout, reset).
+Post = Callable[[str, dict[str, str], bytes], tuple[int, str] | tuple[int, str, str]]
 
 
 @dataclass(frozen=True)
@@ -274,13 +302,106 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
 _OPENER = urllib.request.build_opener(_NoRedirect)
 
 
-def _post(url: str, headers: dict[str, str], body: bytes) -> tuple[int, str]:
-    req = urllib.request.Request(url, data=body, headers=headers, method="POST")
+def _open(
+    url: str, headers: dict[str, str], body: bytes | None, timeout: float
+) -> tuple[int, str, str]:
+    """(status, body, Retry-After header or ""): a POST with a body, else a GET."""
+    method = "GET" if body is None else "POST"
+    req = urllib.request.Request(url, data=body, headers=headers, method=method)
     try:
-        with _OPENER.open(req, timeout=TIMEOUT_S) as resp:
-            return int(resp.status), resp.read().decode("utf-8", "replace")
+        with _OPENER.open(req, timeout=timeout) as resp:
+            return int(resp.status), resp.read().decode("utf-8", "replace"), ""
     except urllib.error.HTTPError as exc:
-        return exc.code, exc.read().decode("utf-8", "replace")
+        wait = exc.headers.get("Retry-After", "") if exc.headers is not None else ""
+        return exc.code, exc.read().decode("utf-8", "replace"), str(wait)
+
+
+def _post(url: str, headers: dict[str, str], body: bytes) -> tuple[int, str]:
+    return _open(url, headers, body, TIMEOUT_S)[:2]
+
+
+def _post_kairos(url: str, headers: dict[str, str], body: bytes) -> tuple[int, str, str]:
+    try:
+        return _open(url, headers, body, KAIROS_TIMEOUT_S)
+    except urllib.error.URLError as exc:
+        # urllib wraps a connect timeout; it is the same wait as a read timeout
+        if isinstance(exc.reason, TimeoutError):
+            raise TimeoutError from None
+        raise
+
+
+# (status, the reply or exception name, the raw Retry-After header, retries so
+# far) -> seconds to wait before trying again, or None to stop
+Retry = Callable[[int, str, str, int], float | None]
+
+
+def _jev_retry(status: int, text: str, header: str, tries: int) -> float | None:
+    """One retry on a rate limit, an upstream failure or a failed request."""
+    if (status in RETRY_CODES or status == 0) and tries + 1 < ATTEMPTS:
+        return 2.0 * (tries + 1)
+    return None
+
+
+def _kairos_retry(status: int, text: str, header: str, tries: int) -> float | None:
+    """A 429 waited out a few times, at the delay it names when it names one;
+    an upstream failure or a reset on a round's first try tried once more (one
+    after a 429 is not); a timeout not again, since it has already waited
+    KAIROS_TIMEOUT_S."""
+    if tries >= KAIROS_RATE_RETRIES:
+        return None
+    if status == 429:
+        wait = _retry_after(header, text)
+        if wait is not None:
+            return min(max(wait, 1.0), KAIROS_MAX_WAIT_S)
+        return min(KAIROS_BACKOFF_S * 2.0**tries, KAIROS_MAX_WAIT_S)
+    if tries == 0 and (status in KAIROS_RETRY_CODES or (status == 0 and text != "TimeoutError")):
+        return 2.0
+    return None
+
+
+@dataclass(frozen=True)
+class Provider:
+    """One System One endpoint. The request, its rounds and the averaging are
+    the same for each; these are what differ."""
+
+    name: str  # in errors and logs
+    url: str
+    key_env: str
+    model_env: str
+    default_model: str
+    post: Post  # sends one request, with this endpoint's timeout
+    retry: Retry
+    final_codes: frozenset[int]  # the same request would fail the same way: stop the rounds
+    session_id: bool  # the endpoint takes tenq's session_id
+    error_detail: bool  # errors keep what the reply's own error says, cleaned
+
+
+JEV = Provider(
+    "Jev",
+    URL,
+    "OPENROUTER_API_KEY",
+    "JEV_MODEL",
+    DEFAULT_MODEL,
+    _post,
+    _jev_retry,
+    frozenset(FINAL_CODES),
+    session_id=True,
+    error_detail=False,
+)
+KAIROS = Provider(
+    "Kairos",
+    KAIROS_URL,
+    "KAIROS_API_KEY",
+    "KAIROS_MODEL",
+    KAIROS_DEFAULT_MODEL,
+    _post_kairos,
+    _kairos_retry,
+    # 422: a request shape it refuses, refused every round; 429: still rate
+    # limited after its waits, so the next round would only wait again
+    frozenset(FINAL_CODES | {422, 429}),
+    session_id=True,  # accepted in the first live check, 2026-11-19
+    error_detail=True,
+)
 
 
 def _finite(v: Any) -> float | None:
@@ -409,19 +530,23 @@ def ask(
     model: str | None = None,
     rounds: int | None = None,
     session_id: str = "",
-    post: Post = _post,
+    provider: Provider = JEV,
+    post: Post | None = None,
     sleep: Callable[[float], None] = time.sleep,
 ) -> Result:
     """Ask every question about `state` over balanced rounds and average. Never raises.
 
     `rounds` caps the round count (default: as many as the largest question
     needs); questions needing more rounds than the cap come back unbalanced.
+    `provider` picks the endpoint (Jev unless told otherwise); `post` replaces
+    its transport in tests.
     """
-    model = model or os.environ.get("JEV_MODEL") or DEFAULT_MODEL
+    send = post or provider.post
+    model = model or os.environ.get(provider.model_env) or provider.default_model
     result = Result(questions.version, model)
-    key = os.environ.get("OPENROUTER_API_KEY") or ""
+    key = os.environ.get(provider.key_env) or ""
     if not key:
-        result.error = "Jev skipped: OPENROUTER_API_KEY not set"
+        result.error = f"{provider.name} skipped: {provider.key_env} not set"
         return result
     if len(state) > MAX_STATE_CHARS:
         state = state[:MAX_STATE_CHARS]
@@ -437,22 +562,24 @@ def ask(
             "state": state,
             "questions": questions.to_request(i),
         }
-        if session_id:
+        if session_id and provider.session_id:
             body["session_id"] = session_id[:256]
         data = json.dumps(body).encode()
-        for attempt in range(ATTEMPTS):
-            status, text = _request(post, headers, data)
-            if (status in RETRY_CODES or status == 0) and attempt + 1 < ATTEMPTS:
-                sleep(2.0 * (attempt + 1))
-                continue
-            break
-        parsed = _parse(status, text)
+        tries = 0
+        while True:
+            status, text, header = _request(send, provider.url, headers, data)
+            delay = provider.retry(status, text, header, tries)
+            if delay is None:
+                break
+            sleep(delay)
+            tries += 1
+        parsed = _parse(status, text, key if provider.error_detail else None)
         if isinstance(parsed, str):
-            log.warning("Jev request %d failed (%s)", i + 1, parsed)
+            log.warning("%s request %d failed (%s)", provider.name, i + 1, parsed)
             result.errors.append(parsed)
             # a bad request, key or credit fails the same way again, and a
             # service still down after its retry would only spend the run's time
-            if status in FINAL_CODES or status == 0 or status >= 500:
+            if status in provider.final_codes or status == 0 or status >= 500:
                 result.down = status in {0, 401, 402, 403} or status >= 500
                 break
             continue
@@ -461,8 +588,8 @@ def ask(
         responses.append(questions.unflip(asked, i))
         answered.append(i)
         model_name = parsed.get("model")
-        if isinstance(model_name, str) and MODEL_NAME.fullmatch(model_name):
-            result.resolved_model = model_name
+        if _shown(model_name, key):
+            result.resolved_model = str(model_name)
         usage = parsed.get("usage")
         if isinstance(usage, dict):
             result.input_tokens += int(_finite(usage.get("input_tokens")) or 0)
@@ -477,29 +604,164 @@ def ask(
         result.errors.append(f"unreadable response ({type(exc).__name__})")
         result.answers = {}
     if not result.answers:
-        result.error = "Jev gave no usable answer" + (
+        result.error = f"{provider.name} gave no usable answer" + (
             f" ({result.errors[-1]})" if result.errors else ""
         )
     return result
 
 
-def _request(post: Post, headers: dict[str, str], data: bytes) -> tuple[int, str]:
+def _request(post: Post, url: str, headers: dict[str, str], data: bytes) -> tuple[int, str, str]:
     try:
-        return post(URL, headers, data)
+        reply = post(url, headers, data)
     except Exception as exc:  # timeout, DNS, reset: a failed request, not a crash
-        return 0, type(exc).__name__
+        return 0, type(exc).__name__, ""
+    return (reply[0], reply[1], reply[2]) if len(reply) == 3 else (reply[0], reply[1], "")
 
 
-def _parse(status: int, text: str) -> dict[str, Any] | str:
-    """The response, or a short error naming only the status (never the body)."""
+def _parse(status: int, text: str, key: str | None = None) -> dict[str, Any] | str:
+    """The response, or a short error naming the status. Never the body: given
+    the key (Kairos), the error also says what the reply's own error says,
+    cleaned of the key and of anything shaped like a credential."""
     if status == 0:
         return f"request error {text}"
+    detail = _error_detail(text, key) if key is not None else ""
     if status != 200:
-        return f"HTTP {status}"
+        return f"HTTP {status}{detail}"
     try:
         parsed = json.loads(text)
     except (ValueError, RecursionError):
         return "unreadable response"
     if not isinstance(parsed, dict) or not isinstance(parsed.get("answers"), dict):
-        return "response without answers"
+        return f"response without answers{detail}"
     return parsed
+
+
+def _load(text: str) -> Any:
+    try:
+        return json.loads(text)
+    except (ValueError, RecursionError):
+        return None
+
+
+def _error_object(text: str) -> dict[str, Any]:
+    """The reply's error, from any of Kairos's three shapes: `detail: {...}`
+    from the relay, `error: {message}` for an earlier auth, rate-limit or
+    channel failure, and `error: {code, message, request_id}` upstream. A
+    validation list (`detail: [{loc, msg, type}]`) is read as its first item,
+    keeping where it points and never the input it echoes."""
+    raw = _load(text)
+    if not isinstance(raw, dict):
+        return {}
+    for name in ("detail", "error"):
+        found = raw.get(name)
+        if isinstance(found, dict):
+            return found
+        if isinstance(found, list) and found and isinstance(found[0], dict):
+            first = found[0]
+            loc = first.get("loc")
+            where = ".".join(str(p) for p in loc) if isinstance(loc, list) else ""
+            msg = first.get("msg")
+            return {
+                "error_type": first.get("type"),
+                "message": f"{where}: {msg}" if where and isinstance(msg, str) else msg,
+            }
+        if isinstance(found, str):
+            return {"message": found}
+    return {}
+
+
+_CREDENTIAL = re.compile(r"(?i)\bbearer\s+\S+|\b[A-Za-z0-9_+/=.-]{24,}")
+
+
+def _clean(message: str, key: str) -> str:
+    """A reply's error message, safe to print: the key and anything shaped like
+    a credential taken out, control characters dropped, cut to MAX_MESSAGE."""
+    if key:
+        message = message.replace(key, "[key]")
+    message = _CREDENTIAL.sub("[redacted]", message)
+    message = " ".join("".join(c if c.isprintable() else " " for c in message).split())
+    return message[:MAX_MESSAGE]
+
+
+def _tag(v: Any, key: str) -> str | None:
+    """An error type, code or request id, kept whole (ids are often long, so
+    the credential pattern would take them out) unless it holds the key or a
+    long piece of it."""
+    if isinstance(v, bool) or not isinstance(v, str | int) or not TOKEN.fullmatch(str(v)):
+        return None
+    s = str(v)
+    if key and (key in s or (len(s) >= 12 and s in key)):
+        return None
+    return s
+
+
+def _error_detail(text: str, key: str) -> str:
+    """ " [type code] message (request_id r, upstream_request_id u)", or ""."""
+    found = _error_object(text)
+    tags = [
+        t
+        for t in (_tag(found.get(n), key) for n in ("error_type", "type", "code"))
+        if t is not None
+    ]
+    ids = [
+        f"{name} {t}"
+        for name in ("request_id", "upstream_request_id")
+        if (t := _tag(found.get(name), key)) is not None
+    ]
+    message = found.get("message")
+    out = f" [{' '.join(dict.fromkeys(tags))}]" if tags else ""
+    if isinstance(message, str) and _clean(message, key):
+        out += f" {_clean(message, key)}"
+    if ids:
+        out += f" ({', '.join(ids)})"
+    return out
+
+
+def _shown(name: Any, key: str) -> bool:
+    """A model id from a reply, fit to print: well formed and without the key."""
+    return (
+        isinstance(name, str)
+        and MODEL_NAME.fullmatch(name) is not None
+        and not (key and key in name)
+    )
+
+
+def _retry_after(header: str, text: str) -> float | None:
+    """The retry delay a reply asks for, in seconds: the Retry-After header
+    (seconds, not a date), else a `retry_after` in its error or at its top
+    level. None when none of them."""
+    raw_reply = _load(text) if text else None
+    top = raw_reply.get("retry_after") if isinstance(raw_reply, dict) else None
+    for raw in (header.strip(), _error_object(text).get("retry_after") if text else None, top):
+        if isinstance(raw, str):
+            try:
+                raw = float(raw) if raw else None
+            except ValueError:
+                raw = None
+        wait = _finite(raw)
+        if wait is not None and wait >= 0:
+            return wait
+    return None
+
+
+def models(post: Callable[[str, dict[str, str]], tuple[int, str]] | None = None) -> list[str] | str:
+    """The model ids Minara Cloud offers this key, or a short error. Never raises."""
+    key = os.environ.get(KAIROS.key_env) or ""
+    if not key:
+        return f"{KAIROS.key_env} not set"
+    headers = {"Authorization": f"Bearer {key}"}
+    try:
+        if post is not None:
+            status, text = post(KAIROS_MODELS_URL, headers)
+        else:
+            status, text, _ = _open(KAIROS_MODELS_URL, headers, None, KAIROS_LIST_TIMEOUT_S)
+    except Exception as exc:  # a failed request, not a crash
+        return f"request error {type(exc).__name__}"
+    if status != 200:
+        return f"HTTP {status}{_error_detail(text, key)}"
+    raw = _load(text)
+    items = raw.get("data") if isinstance(raw, dict) else raw
+    if not isinstance(items, list):
+        return "unreadable model list"
+    ids = [m.get("id") if isinstance(m, dict) else m for m in items]
+    return [str(m) for m in ids if _shown(m, key)]
