@@ -276,6 +276,24 @@ def test_a_rate_limit_is_retried_once(questions: QuestionSet) -> None:
     assert result.rounds == 1 and result.errors == []
 
 
+def test_a_rate_limit_s_named_delay_is_not_jevs_to_follow(questions: QuestionSet) -> None:
+    # only Kairos waits the delay a 429 names; Jev keeps its one retry at 2 s
+    slept: list[float] = []
+    replies: list[tuple[int, str] | tuple[int, str, str]] = [
+        (429, json.dumps({"retry_after": 30, "error": {"retry_after": 30}}), "30"),
+        _ok(_answers(0.5, "good", {}, 1.0)),
+    ]
+
+    def post(
+        url: str, headers: dict[str, str], body: bytes
+    ) -> tuple[int, str] | tuple[int, str, str]:
+        return replies.pop(0)
+
+    result = ask("s", questions, rounds=1, post=post, sleep=slept.append)
+    assert slept == [2.0] and replies == []
+    assert result.rounds == 1 and result.errors == []
+
+
 def test_a_failed_repeat_is_left_out_of_the_average(questions: QuestionSet) -> None:
     server = Server(
         _ok(_answers(0.9, "good", {}, 2.0)),
