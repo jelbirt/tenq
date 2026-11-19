@@ -328,19 +328,19 @@ def _post_kairos(url: str, headers: dict[str, str], body: bytes) -> tuple[int, s
         raise
 
 
-# (status, the reply or exception name, the retry delay asked for, retries so
+# (status, the reply or exception name, the raw Retry-After header, retries so
 # far) -> seconds to wait before trying again, or None to stop
-Retry = Callable[[int, str, float | None, int], float | None]
+Retry = Callable[[int, str, str, int], float | None]
 
 
-def _jev_retry(status: int, text: str, wait: float | None, tries: int) -> float | None:
+def _jev_retry(status: int, text: str, header: str, tries: int) -> float | None:
     """One retry on a rate limit, an upstream failure or a failed request."""
     if (status in RETRY_CODES or status == 0) and tries + 1 < ATTEMPTS:
         return 2.0 * (tries + 1)
     return None
 
 
-def _kairos_retry(status: int, text: str, wait: float | None, tries: int) -> float | None:
+def _kairos_retry(status: int, text: str, header: str, tries: int) -> float | None:
     """A 429 waited out a few times, at the delay it names when it names one;
     an upstream failure or a reset on a round's first try tried once more (one
     after a 429 is not); a timeout not again, since it has already waited
@@ -348,6 +348,7 @@ def _kairos_retry(status: int, text: str, wait: float | None, tries: int) -> flo
     if tries >= KAIROS_RATE_RETRIES:
         return None
     if status == 429:
+        wait = _retry_after(header, text)
         if wait is not None:
             return min(max(wait, 1.0), KAIROS_MAX_WAIT_S)
         return min(KAIROS_BACKOFF_S * 2.0**tries, KAIROS_MAX_WAIT_S)
@@ -564,9 +565,8 @@ def ask(
         data = json.dumps(body).encode()
         tries = 0
         while True:
-            status, text, wait = _request(send, provider.url, headers, data)
-            wait_s = _retry_after(wait, text) if status == 429 else None
-            delay = provider.retry(status, text, wait_s, tries)
+            status, text, header = _request(send, provider.url, headers, data)
+            delay = provider.retry(status, text, header, tries)
             if delay is None:
                 break
             sleep(delay)
