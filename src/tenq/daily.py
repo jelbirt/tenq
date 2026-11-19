@@ -50,9 +50,10 @@ Jev's calls go out without the why. Kairos failing alone changes nothing
 else: its stock shows no Kairos call and a note saying why. Once Kairos is
 found down it is not asked for the rest of its pass; after its last stock,
 each stock it missed while down or failing is asked once more (after a
-pause, if it was down), and Kairos down again ends that pass. Kairos has a
-time bound of its own (KAIROS_BUDGET_S, KAIROS_LAST_S), and with no
-KAIROS_API_KEY it is noted as not asked. Exits
+pause), and Kairos down again ends that pass. Kairos has a time bound of its
+own (KAIROS_BUDGET_S, KAIROS_LAST_S), held by the clock: an ask still going
+past it is left unanswered. With no KAIROS_API_KEY it is noted as not asked.
+Exits
 1 when the email fails, when no stock got a call from any method, when the
 day's record needs a person, or when no settled session is found.
 """
@@ -66,6 +67,7 @@ import json
 import logging
 import math
 import os
+import threading
 import time
 import uuid
 from collections.abc import Callable
@@ -105,14 +107,18 @@ OPUS_BUDGET_S = 140 * 60
 # time they left. Its own bound: at most KAIROS_BUDGET_S in a run, its pass, pause and
 # retries together (about a minute a stock when well: 20 to 25 minutes a day), so a slow
 # Kairos delays the email by that much at most; and no Kairos request starts after
-# KAIROS_LAST_S from the run's start, so the one still going (at most
-# jev.KAIROS_TIMEOUT_S, 5 min) ends by 155 min, inside the calls step's 165.
+# KAIROS_LAST_S from the run's start. The one still going gets jev.KAIROS_TIMEOUT_S
+# (5 min) more, then is left unanswered (_within), so Kairos is done by 155 min,
+# inside the calls step's 165, however slowly its server answers.
 KAIROS_BUDGET_S = 45 * 60
 KAIROS_LAST_S = 150 * 60
-# Found down, Kairos is asked again only this long after: its 2026-11-19 outage was 30 s.
+# A stock Kairos missed is asked again only this long after its last failed ask:
+# its 2026-11-19 outage was 30 s.
 KAIROS_PAUSE_S = 2 * 60
 KAIROS_DOWN = "Kairos was down earlier in this run"
 KAIROS_DOWN_AGAIN = "Kairos was down again at the end of the run"
+KAIROS_OUT = "the run's time for Kairos ran out"
+KAIROS_LATE = "still going when the run's time for Kairos ran out; left unanswered"
 CLAUDE_FAILS = 2  # this many failed claude runs in a row: Claude is treated as down
 STAGES = ("all", "calls", "claim", "send", "notice")
 SHEET_NOTE = "(this record's pack, rendered; message_sha256 is of the whole message)"
@@ -145,6 +151,8 @@ class Context:
     kairos: Ask | None = ask_kairos  # None: Kairos is off for this run
     kairos_budget_s: float = KAIROS_BUDGET_S
     kairos_last_s: float = KAIROS_LAST_S
+    # an ask still going this long after Kairos's time ran out is left unanswered
+    kairos_grace_s: float = jev.KAIROS_TIMEOUT_S
     sleep: Callable[[float], None] = time.sleep  # Kairos's pause before its retries
 
 
@@ -161,7 +169,7 @@ class State:
     kairos_last: float = math.inf  # on ctx.clock: no Kairos request starts after it
     kairos_off: str | None = None  # why Kairos is not asked again in this run, retries too
     kairos_down: str | None = None  # why Kairos is skipped for the rest of this pass
-    kairos_down_at: float | None = None  # on ctx.clock: when it was last found down
+    kairos_failed_at: float | None = None  # on ctx.clock: its last ask with no call
     kairos_spent: float = 0.0  # seconds Kairos has taken in this run
     kairos_tokens: int = 0  # Kairos's input tokens in this run (it bills on tokens)
     # each stock with a facts pack, for Kairos's pass after Jev's and Opus's
@@ -194,8 +202,15 @@ class State:
     def kairos_skipped(self, ctx: Context) -> str | None:
         """Why Kairos is not asked now; once its time is out, for good."""
         if self.kairos_off is None and self.kairos_left(ctx) <= 0:
-            self.kairos_off = "the run's time for Kairos ran out"
+            self.kairos_off = KAIROS_OUT
         return self.kairos_off or self.kairos_down
+
+    def kairos_missed_one(self, out: dict[str, Any], pack: Pack, at: float | None) -> None:
+        """Keep a stock for one more ask at the end; `at` is when an ask on it
+        failed (None: it was skipped while Kairos was down, never asked)."""
+        self.kairos_missed.append((out, pack))
+        if at is not None:
+            self.kairos_failed_at = at
 
 
 class Steps:
@@ -378,6 +393,7 @@ def kairos_pass(
             _kairos(out, pack, ctx, state)
         except Exception as exc:
             _kairos_failed(out, exc)
+            state.kairos_missed_one(out, pack, ctx.clock())
         log.info("%s: Kairos %s", out["ticker"], (out.get("kairos_call") or {}).get("call"))
         record["kairos_input_tokens"] = state.kairos_tokens
         save(record)
@@ -396,10 +412,10 @@ def _kairos(out: dict[str, Any], pack: Pack, ctx: Context, state: State) -> None
     if skipped:
         out["kairos"] = {"error": f"not asked: {skipped}"}
         if state.kairos_off is None:  # skipped only because Kairos is down
-            state.kairos_missed.append((out, pack))
+            state.kairos_missed_one(out, pack, None)
         return
     if _ask_kairos(out, pack, ctx, state, "kairos", KAIROS_DOWN) is None:
-        state.kairos_missed.append((out, pack))
+        state.kairos_missed_one(out, pack, ctx.clock())
 
 
 def _ask_kairos(
@@ -408,19 +424,29 @@ def _ask_kairos(
     """Kairos asked Jev's questions on the same pack, and its call by the same
     rules. `down` is why the stocks after this one skip Kairos if this ask
     finds it down."""
-    assert ctx.kairos is not None  # kairos_skipped said it is on
+    kairos = ctx.kairos
+    assert kairos is not None  # kairos_skipped said it is on
     t, began = time.time(), ctx.clock()
+    facts, sid = pack.render(), f"tenq-daily-{out['ticker']}-{pack.day}"
     try:
-        result = ctx.kairos(
-            pack.render(),
-            ctx.questions,
-            session_id=f"tenq-daily-{out['ticker']}-{pack.day}",
-            time_left=lambda: state.kairos_left(ctx, began),
+        result = _within(
+            lambda: kairos(
+                facts,
+                ctx.questions,
+                session_id=sid,
+                time_left=lambda: state.kairos_left(ctx, began),
+            ),
+            max(state.kairos_left(ctx), 0.0) + ctx.kairos_grace_s,
         )
     finally:
         state.kairos_spent += ctx.clock() - began
+    if result is None:
+        state.kairos_off = KAIROS_OUT
+        out["kairos"] = {"error": KAIROS_LATE}
+        Steps(out["steps"]).add(step, t, {"answers": 0}, KAIROS_LATE)
+        return None
     if result.down:
-        state.kairos_down, state.kairos_down_at = down, ctx.clock()
+        state.kairos_down = down
     state.kairos_tokens += result.input_tokens
     out["kairos"] = result.to_dict()
     call = decide(pack, result, ctx.rules, ctx.questions) if result.answers else None
@@ -432,22 +458,45 @@ def _ask_kairos(
     return call
 
 
+def _within(ask: Callable[[], Result], seconds: float) -> Result | None:
+    """ask() in a thread of its own; None once `seconds` pass with it still
+    going. The socket timeout bounds each read, not a whole reply, so only
+    this holds Kairos to its time. The thread left behind is a daemon: it
+    starts no new round (its time_left is out) and the process does not wait
+    for it. An exception in ask() is raised here."""
+    done: list[Result] = []
+    failed: list[Exception] = []
+
+    def run() -> None:
+        try:
+            done.append(ask())
+        except Exception as exc:
+            failed.append(exc)
+
+    worker = threading.Thread(target=run, name="kairos", daemon=True)
+    worker.start()
+    worker.join(seconds)
+    if failed:
+        raise failed[0]
+    return done[0] if done else None
+
+
 def kairos_again(
     record: dict[str, Any], ctx: Context, state: State, save: Callable[[dict[str, Any]], None]
 ) -> None:
     """After Kairos's last stock, ask it once more on each stock it missed
     while down or failing (never one with no facts pack: it never got that
-    far), first waiting until KAIROS_PAUSE_S after it was last found down.
+    far), first waiting until KAIROS_PAUSE_S after its last failed ask.
     Kairos down again, or out of time, ends the pass, and each stock it did
     not reach says why. The record is saved after each ask."""
     missed, state.kairos_missed = state.kairos_missed, []
     if not missed:
         return
     state.kairos_down = None
-    if state.kairos_down_at is not None and not state.kairos_skipped(ctx):
-        wait = state.kairos_down_at + KAIROS_PAUSE_S - ctx.clock()
+    if state.kairos_failed_at is not None and not state.kairos_skipped(ctx):
+        wait = state.kairos_failed_at + KAIROS_PAUSE_S - ctx.clock()
         if wait >= state.kairos_left(ctx):
-            state.kairos_off = "the run's time for Kairos ran out"
+            state.kairos_off = KAIROS_OUT
         elif wait > 0:
             began = ctx.clock()
             ctx.sleep(wait)

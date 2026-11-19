@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import threading
 from dataclasses import replace
 from datetime import UTC, date, datetime
 from pathlib import Path
@@ -113,15 +114,21 @@ ALWAYS = set(range(1, 100))  # Kairos down at every ask
 
 class Kairos:
     """Kairos's answers, the same as Jev's fake gives, with tokens; down for the
-    asks numbered in `down` (1-based, counting every ask in the run)."""
+    asks numbered in `down` (1-based, counting every ask in the run), and up
+    but with no usable answer for those in `empty`."""
 
     def __init__(
-        self, down: set[int] | None = None, clock: Clock | None = None, takes: float = 30.0
+        self,
+        down: set[int] | None = None,
+        clock: Clock | None = None,
+        takes: float = 30.0,
+        empty: set[int] | None = None,
     ) -> None:
         self.asked: list[str] = []
         self.seen: list[tuple[str, Any]] = []  # the facts and questions it was sent
         self.left: list[float] = []  # the time left it was told at each ask
         self.down = down or set()
+        self.empty = empty or set()
         self.clock = clock
         self.takes = takes
 
@@ -133,6 +140,9 @@ class Kairos:
             self.clock.now += self.takes
         if len(self.asked) in self.down:
             return Result(QUESTIONS.version, "DMIND/Kairos", down=True, error="HTTP 503")
+        if len(self.asked) in self.empty:
+            error = "Kairos gave no usable answer (HTTP 429)"
+            return Result(QUESTIONS.version, "DMIND/Kairos", error=error)
         good = _good()
         good.model, good.resolved_model = "DMIND/Kairos", "DMIND/Kairos-0.9"
         good.input_tokens, good.output_tokens = 1000, 50
@@ -1348,12 +1358,70 @@ def test_a_pause_longer_than_kairos_time_left_asks_nothing_more() -> None:
         assert stock["kairos"]["again"] == "not asked again: the run's time for Kairos ran out"
 
 
+def test_the_pause_counts_from_kairos_last_failed_ask_down_or_not() -> None:
+    clock = Clock()
+    kairos = Kairos(empty={2}, clock=clock)  # no usable answer at stock 2, but not down
+    rec, _ = _four(kairos)
+    a, b, c, d = rec["stocks"]
+    # stock 2's ask ended at 60 s, the pass at 120 s: the pause ends at 180 s
+    assert kairos.asked == [_sid(a), _sid(b), _sid(c), _sid(d), _sid(b)]
+    assert clock.slept == [60.0]
+    assert b["kairos"]["first"]["error"] == "Kairos gave no usable answer (HTTP 429)"
+    assert all("kairos_call" in s for s in rec["stocks"])
+
+
+def test_kairos_time_running_out_ends_its_pass_of_one_more_asks() -> None:
+    kairos = Kairos(down={1}, clock=Clock())
+    # 30 s for the first ask, 120 s of pause, then 40 s: one more ask fits, and one starts
+    ctx = replace(_ctx(kairos=kairos), kairos_budget_s=190.0)
+    rec, _ = _four(kairos, ctx)
+    a, b, c, d = rec["stocks"]
+    assert kairos.asked == [_sid(a), _sid(a), _sid(b)] and kairos.left == [190.0, 40.0, 10.0]
+    assert "kairos_call" in a and "kairos_call" in b
+    for stock in (c, d):
+        assert stock["kairos"]["again"] == f"not asked again: {daily.KAIROS_OUT}"
+
+
+class Stuck:
+    """A Kairos ask that never ends on its own (a server trickling its reply)."""
+
+    def __init__(self) -> None:
+        self.release = threading.Event()
+        self.asked = 0
+
+    def __call__(self, *a: Any, **kw: Any) -> Result:
+        self.asked += 1
+        self.release.wait(10)
+        return _good()
+
+
+def test_a_kairos_ask_past_its_time_is_left_unanswered() -> None:
+    stuck = Stuck()
+    ctx = replace(_ctx(), kairos=stuck, kairos_budget_s=1.0, kairos_grace_s=0.05)
+    try:
+        rec, _ = _four(Kairos(), ctx)
+    finally:
+        stuck.release.set()
+    a, *rest = rec["stocks"]
+    assert stuck.asked == 1
+    assert a["kairos"] == {
+        "error": daily.KAIROS_LATE,
+        "again": f"not asked again: {daily.KAIROS_OUT}",
+    }
+    assert [s["error"] for s in a["steps"] if s["name"] == "kairos"] == [daily.KAIROS_LATE]
+    for stock in rest:
+        assert stock["kairos"] == {"error": f"not asked: {daily.KAIROS_OUT}"}
+    assert rec["complete"] is True
+    assert all("call" in s and s["opus"]["call"] for s in rec["stocks"])
+
+
 def test_kairos_time_bound_ends_inside_the_calls_steps_limit() -> None:
     import yaml
 
     flow = yaml.safe_load(Path(".github/workflows/daily.yml").read_text())
     [calls] = [s for s in flow["jobs"]["daily"]["steps"] if s.get("id") == "calls"]
-    # the last Kairos request starts by KAIROS_LAST_S and ends within its timeout
+    # the last Kairos request starts by KAIROS_LAST_S and is left unanswered after its grace
+    assert daily.Context.kairos_grace_s == jev.KAIROS_TIMEOUT_S
     assert calls["timeout-minutes"] * 60 > daily.KAIROS_LAST_S + jev.KAIROS_TIMEOUT_S
     assert daily.KAIROS_LAST_S > daily.OPUS_BUDGET_S  # Opus's time is never Kairos's
     assert calls["env"]["KAIROS_API_KEY"] == "${{ secrets.KAIROS_API_KEY }}"
@@ -1382,8 +1450,9 @@ def test_a_kairos_failure_changes_no_other_call_and_not_the_exit_code(
         for key in ("call", "confidence", "lean", "kept", "dropped"):
             assert bad["opus"][key] == good["opus"][key]
         assert bad["why"]["kept"] == good["why"]["kept"]
-    if isinstance(ctx.kairos, Broken):
-        assert ill["stocks"][0]["kairos"] == {"error": "failed in code (RuntimeError)"}
+    if isinstance(ctx.kairos, Broken):  # a failure in code is asked once more too
+        failed = {"error": "failed in code (RuntimeError)"}
+        assert ill["stocks"][0]["kairos"] == failed | {"first": failed}
     assert "| no call |" in outbox.sent[0].text
 
 
