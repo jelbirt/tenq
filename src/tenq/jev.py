@@ -16,8 +16,9 @@ settled an answer was and how strong the lean is.
 Never raises: a missing key, an HTTP error or an unreadable answer is an error
 on the result, and the brief goes out with Opus's call alone. A request that
 fails for good (a bad key, no credit, a service still down after one retry)
-ends the rounds, so an outage costs about one minute per stock, not six. Logs carry only
-status codes and exception types, never the state or an answer.
+ends the rounds, so an outage costs about one minute per stock, not six. Jev's logs
+carry only status codes and exception types; Kairos's also carry its error's type,
+code, request ids and cleaned message. Neither carries the state or an answer.
 
 Env: OPENROUTER_API_KEY (the only secret), JEV_MODEL (default jev-latest; the
 resolved model, e.g. typesafe/jev-1.13-20260917, is recorded per run).

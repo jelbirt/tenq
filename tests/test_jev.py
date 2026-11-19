@@ -417,6 +417,16 @@ def test_logs_and_the_record_never_carry_the_key_state_or_reply(
     assert results[2].resolved_model == ""
 
 
+def test_a_model_id_holding_the_key_is_not_recorded(questions: QuestionSet, key: str) -> None:
+    # the daily record is public: a reply naming the key as its model leaves it unset
+    answers = _answers(0.7, "good", {"good": 0.6, "bad": 0.3, "neutral": 0.1}, 1.0)
+    body = json.dumps({"model": f"typesafe/{key}", "answers": answers})
+    result = _ask(questions, Server(*[(200, body)] * questions.rounds()))
+    assert result.rounds == questions.rounds() and result.error is None
+    assert result.resolved_model == ""
+    assert key not in json.dumps(result.to_dict())
+
+
 HUGE = "1" + "0" * 400
 
 
