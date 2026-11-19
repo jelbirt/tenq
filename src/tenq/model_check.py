@@ -1,8 +1,9 @@
-"""One live Jev call per stock, printed: the first look at real answers and cost.
+"""The model check: one live Jev call per stock, and Opus or Kairos beside it
+when asked, printed: the first look at real answers and cost.
 
-    python -m tenq.jev_check CRWD DDOG
-    python -m tenq.jev_check --opus CRWD
-    python -m tenq.jev_check --kairos CRWD
+    python -m tenq.model_check CRWD DDOG
+    python -m tenq.model_check --opus CRWD
+    python -m tenq.model_check --kairos CRWD
 
 With --opus it also runs task 7's two Opus calls on the same pack (Opus's own
 call, and the why for Jev's call) and prints each reason tenq.reasons kept or
@@ -20,7 +21,7 @@ run does not ask it again.
 Builds today's facts pack for each stock, asks Jev the question file over its
 balanced rounds, turns the answers into a call with the rules file, and prints
 the answers, the measured first-option lean, the call and what it cost. Runs
-where OPENROUTER_API_KEY is set (the jev-check workflow on Actions). Prints
+where OPENROUTER_API_KEY is set (the model-check workflow on Actions). Prints
 nothing secret: the packs are public data and Jev's answers are public under
 the plan's record decision. Ends with a balance line per method (mean score
 before and after the reaction cut, and how many of each call), so a lean
@@ -221,7 +222,9 @@ def check(
 
 
 def main(argv: list[str] | None = None) -> int:
-    ap = argparse.ArgumentParser(description="Ask Jev about today's facts for a few stocks.")
+    ap = argparse.ArgumentParser(
+        description="Ask Jev, and Opus or Kairos when asked, about today's facts for a few stocks."
+    )
     ap.add_argument("tickers", nargs="+")
     ap.add_argument("--opus", action="store_true", help="also run the two Opus calls")
     ap.add_argument("--kairos", action="store_true", help="also ask Kairos, beside Jev")

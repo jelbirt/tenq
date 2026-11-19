@@ -1,4 +1,4 @@
-name: jev-check
+name: model-check
 # Manual only: one live Jev call per named stock (and, with opus, the two
 # Opus calls; with kairos, Kairos asked the same questions), printed to the log.
 on:
@@ -24,7 +24,7 @@ jobs:
       - name: install claude
         if: inputs.opus
         run: npm install -g @anthropic-ai/claude-code@2.1.300
-      - name: ask Jev
+      - name: ask the models
         env:
           # dispatch input is untrusted text: passed as env, never spliced into the script
           TICKERS: ${{ inputs.tickers }}
@@ -39,4 +39,4 @@ jobs:
           read -ra args <<< "$TICKERS"
           [[ "$OPUS" == "true" ]] && args=(--opus "${args[@]}")
           [[ "$KAIROS" == "true" ]] && args=(--kairos "${args[@]}")
-          uv run --locked python -m tenq.jev_check "${args[@]}"
+          uv run --locked python -m tenq.model_check "${args[@]}"

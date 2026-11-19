@@ -26,7 +26,7 @@ resolved model, e.g. typesafe/jev-1.13-20260917, is recorded per run).
 
 Kairos (DMind's decision model, served through Minara Cloud) takes the same
 System One request, so `ask(provider=KAIROS)` sends it the same state and the
-same balanced rounds. Only the hand-run check (tenq.jev_check --kairos) asks it;
+same balanced rounds. Only the hand-run check (tenq.model_check --kairos) asks it;
 nothing in the daily run does. Env: KAIROS_API_KEY (its only secret),
 KAIROS_MODEL (default DMIND/Kairos). A Kairos error keeps what the reply's own
 error says (its type, code, request ids and a cleaned message), because the
@@ -76,7 +76,7 @@ KAIROS_MODELS_URL = "https://minara.cloud/v1/models"
 KAIROS_DEFAULT_MODEL = "DMIND/Kairos"  # the use guide's id; ids differ by channel
 # Kairos may take up to 600 s upstream. A hand-run check waits five minutes a
 # request and does not retry a timeout (connect or read), so one stuck stock
-# costs at most that; jev_check then stops asking Kairos for the run.
+# costs at most that; model_check then stops asking Kairos for the run.
 KAIROS_TIMEOUT_S = 300
 KAIROS_LIST_TIMEOUT_S = 30
 KAIROS_RATE_RETRIES = 3  # a 429 is waited out at most this often, then the stock's rounds end
