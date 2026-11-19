@@ -730,29 +730,24 @@ def _error_detail(text: str, key: str) -> str:
     return out
 
 
-# where a reply's own words can follow in an error from ask(): everything before
-# it is written by code
+# where the reply's own words can begin in an error from ask(): everything up to
+# the end of the match is written by code, everything after it is the reply's
 _DETAILED = re.compile(r"HTTP \d{3}|response without answers")
-_TAGS = re.compile(r" \[([^\]]*)\]")
-_PLAIN = re.compile(r"[A-Za-z0-9_-]{1,64}")  # a type or code with no dot: never a link
 
 
 def short_error(error: str) -> str:
-    """An error from ask() with none of the reply's own words: its message and
-    request ids dropped, and of its error type and code only plain names kept
-    (a name with a dot can be read as an address). For the email, where a
-    mail client links anything shaped like one; the record and the trace keep
-    the whole error. "Kairos gave no usable answer (HTTP 503 [channel_unavailable]
-    Busy, see https://x.example (request_id r))" becomes "Kairos gave no usable
-    answer (HTTP 503 [channel_unavailable])"."""
+    """An error from ask() with none of the reply's own words: everything after
+    the status is cut, the reply's error type and code with its message and
+    request ids. Nothing after the status is parsed, since a message of the
+    reply's own can take any shape, a type's included. For the email, where a
+    mail client links anything shaped like an address; the record and the trace
+    keep the whole error. "Kairos gave no usable answer (HTTP 503
+    [channel_unavailable] Busy, see https://x.example (request_id r))" becomes
+    "Kairos gave no usable answer (HTTP 503)"."""
     found = _DETAILED.search(error)
     if found is None:
         return error
     head = error[: found.end()]
-    tags = _TAGS.match(error, found.end())
-    plain = [t for t in tags.group(1).split() if _PLAIN.fullmatch(t)] if tags else []
-    if plain:
-        head += f" [{' '.join(plain)}]"
     return head + ")" * (head.count("(") - head.count(")"))
 
 

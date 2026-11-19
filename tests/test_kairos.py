@@ -467,9 +467,7 @@ def test_the_short_error_keeps_none_of_the_replys_own_words(questions: QuestionS
     result = _kairos(questions, Server((503, BUSY), (503, BUSY)), slept=[])
     assert result.down and result.error is not None
     assert "https://bit.ly/x9" in result.error and "req-123" in result.error  # kept in full
-    assert (
-        short_error(result.error) == "Kairos gave no usable answer (HTTP 503 [channel_unavailable])"
-    )
+    assert short_error(result.error) == "Kairos gave no usable answer (HTTP 503)"
 
 
 @pytest.mark.parametrize(
@@ -483,7 +481,7 @@ def test_the_short_error_keeps_none_of_the_replys_own_words(questions: QuestionS
         ),
         (
             "Kairos gave no usable answer (response without answers [bad_shape] see a.b)",
-            "Kairos gave no usable answer (response without answers [bad_shape])",
+            "Kairos gave no usable answer (response without answers)",
         ),
         (
             "Kairos gave no usable answer (HTTP 400 [a.b c:d e/f] x)",
@@ -501,3 +499,25 @@ def test_the_short_error_keeps_none_of_the_replys_own_words(questions: QuestionS
 )
 def test_the_short_error_of_each_shape(error: str, short: str) -> None:
     assert short_error(error) == short
+
+
+@pytest.mark.parametrize(
+    ("status", "body"),
+    [
+        # a message of the reply's own that starts with "[", with no type or code
+        (503, {"error": {"message": "[Service paused call 1-800-555-0100 now] see"}}),
+        (503, {"error": "[Your account is suspended contact billing-team]"}),
+        (503, {"detail": [{"loc": ["[Pay invoice now]"], "msg": "x"}]}),
+        (503, {"error": {"type": "x]y", "message": "[evil words]"}}),
+        (503, {"error": {"type": "evil.example", "message": "[evil words]"}}),
+        (503, {"error": {"type": "busy", "message": "[evil words]"}}),
+        # a message whose first word looks like a credential: its "[redacted]" too
+        (503, {"error": {"message": "sk-" + "a" * 40 + " busy"}}),
+    ],
+)
+def test_no_word_of_the_replys_own_error_reaches_the_short_error(
+    questions: QuestionSet, status: int, body: dict[str, Any]
+) -> None:
+    result = _kairos(questions, Server(*[(status, json.dumps(body))] * 2), slept=[])
+    assert result.error is not None
+    assert short_error(result.error) == f"Kairos gave no usable answer (HTTP {status})"

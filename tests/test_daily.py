@@ -1616,9 +1616,12 @@ def test_the_words_of_a_kairos_reply_never_reach_the_email() -> None:
     assert "https://bit.ly/x9" in first["error"]  # the record keeps it whole
     email = render(rec)
     for part in (email.subject, email.text, email.html):
-        for word in ("bit.ly", "evil.example", "Service busy", "req-123", "&lt;a ", '<a href="'):
+        for word in (
+            "bit.ly", "evil.example", "Service busy", "req-123", "&lt;a ", '<a href="',
+            "channel_unavailable",
+        ):  # fmt: skip
             assert word not in part
-    short = "HTTP 503 [channel_unavailable]"
+    short = "HTTP 503"
     assert (
         f"Kairos made no call (asked again at the end of the run: Kairos gave no usable answer ({short}))."
         in email.text
@@ -1634,5 +1637,5 @@ def test_a_kairos_call_asked_again_shows_its_first_error_short() -> None:
     stock = {"kairos_call": {"call": "Buy"}, "kairos": {"first": {"error": error}}}
     assert _kairos_notes(stock) == [
         "Kairos's call came when it was asked again at the end of the run "
-        "(Kairos gave no usable answer (HTTP 503 [busy]))."
+        "(Kairos gave no usable answer (HTTP 503))."
     ]
