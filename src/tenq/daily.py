@@ -72,8 +72,8 @@ from tenq.daily_email import render
 from tenq.deliver import Email, send
 from tenq.filings import TICKER
 from tenq.jev import QuestionSet, Result
-from tenq.jev_check import Tally
 from tenq.llm import AgentRun, call_claude
+from tenq.model_check import Tally
 from tenq.opus import Claude
 from tenq.pack import Pack, gather
 from tenq.prices import BENCHMARK, MARKET_TZ, SESSION_SETTLED, Prices, YahooPrices, fetch

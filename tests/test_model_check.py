@@ -8,7 +8,7 @@ import pytest
 from test_rules import _choice, _good, _noul, _pack
 
 import tenq.jev
-from tenq import jev_check
+from tenq import model_check
 from tenq.jev import QuestionSet, Result, load_questions
 from tenq.llm import call_claude
 from tenq.pack import Pack
@@ -34,7 +34,7 @@ def _setup(
         gathered.append(ticker)
         return pack
 
-    monkeypatch.setattr(jev_check, "gather", gather)
+    monkeypatch.setattr(model_check, "gather", gather)
     monkeypatch.setattr(tenq.jev, "ask", asked)
     return asked, gathered
 
@@ -52,7 +52,7 @@ def test_a_check_prints_answers_lean_call_and_cost(
 ) -> None:
     pack = _pack()
     asked, gathered = _setup(monkeypatch, _measured(), pack)
-    assert jev_check.main(["acme"]) == 0
+    assert model_check.main(["acme"]) == 0
     out = capsys.readouterr().out
     assert gathered == ["ACME"]
     state, kw = asked.calls[0]
@@ -70,7 +70,7 @@ def test_a_stock_with_no_prices_is_not_asked(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     asked, _ = _setup(monkeypatch, _measured(), None)
-    assert jev_check.main(["ACME"]) == 1
+    assert model_check.main(["ACME"]) == 1
     assert asked.calls == [] and "no prices, nothing asked" in capsys.readouterr().out
 
 
@@ -85,7 +85,7 @@ def test_no_answers_is_a_failed_check(
         error="no usable answer",
     )
     _setup(monkeypatch, failed, _pack())
-    assert jev_check.main(["ACME"]) == 1
+    assert model_check.main(["ACME"]) == 1
     out = capsys.readouterr().out
     assert "error: HTTP 401" in out and "no answers: no usable answer" in out
     assert "  no call" in out
@@ -96,20 +96,20 @@ def test_anything_but_a_few_tickers_is_refused_before_any_call(
     monkeypatch: pytest.MonkeyPatch, argv: list[str]
 ) -> None:
     asked, gathered = _setup(monkeypatch, _measured(), _pack())
-    assert jev_check.main(argv) == 2
+    assert model_check.main(argv) == 2
     assert gathered == [] and asked.calls == []
 
 
 def test_tickers_are_uppercased_and_asked_once(monkeypatch: pytest.MonkeyPatch) -> None:
     _, gathered = _setup(monkeypatch, _measured(), _pack())
-    assert jev_check.main(["acme", "ACME", "brk.b"]) == 0
+    assert model_check.main(["acme", "ACME", "brk.b"]) == 0
     assert gathered == ["ACME", "BRK.B"]
 
 
 def test_each_answer_line_says_whether_its_lean_was_measured() -> None:
     unbalanced = _choice("direction", {"neutral": 0.1, "mixed": 0.1, "bad": 0.1, "good": 0.7})
-    assert "lean not measured" in jev_check.answer_line(unbalanced)
-    line = jev_check.answer_line(_noul("risk", 0.25))
+    assert "lean not measured" in model_check.answer_line(unbalanced)
+    line = model_check.answer_line(_noul("risk", 0.25))
     assert "risk: 0.25" in line and "lean" not in line
 
 
@@ -117,7 +117,7 @@ def test_one_stock_failing_to_gather_costs_only_its_own_line(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     asked, gathered = _setup(monkeypatch, _measured(), _pack())
-    real: Callable[[str, datetime], Pack | None] = vars(jev_check)["gather"]
+    real: Callable[[str, datetime], Pack | None] = vars(model_check)["gather"]
 
     def gather(ticker: str, now: datetime) -> Pack | None:
         if ticker == "CRDW":
@@ -125,8 +125,8 @@ def test_one_stock_failing_to_gather_costs_only_its_own_line(
             raise LookupError("company CRDW not found, secret-ish detail")
         return real(ticker, now)
 
-    monkeypatch.setattr(jev_check, "gather", gather)
-    assert jev_check.main(["CRDW", "ACME"]) == 1
+    monkeypatch.setattr(model_check, "gather", gather)
+    assert model_check.main(["CRDW", "ACME"]) == 1
     out = capsys.readouterr().out
     assert gathered == ["CRDW", "ACME"] and len(asked.calls) == 1
     assert "== CRDW: no facts pack (LookupError), nothing asked" in out
@@ -138,7 +138,7 @@ def test_five_tickers_are_allowed_and_their_costs_add_up(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     asked, _ = _setup(monkeypatch, _measured(), _pack())
-    assert jev_check.main(["A", "B", "C", "D", "E"]) == 0
+    assert model_check.main(["A", "B", "C", "D", "E"]) == 0
     assert len(asked.calls) == 5
     assert capsys.readouterr().out.rstrip().endswith("total Jev cost $0.001900")
 
@@ -151,9 +151,9 @@ def test_a_broken_rules_file_fails_before_anything_is_fetched(
     def broken(_q: QuestionSet) -> None:
         raise ValueError("rules: bad")
 
-    monkeypatch.setattr(jev_check, "load_rules", broken)
+    monkeypatch.setattr(model_check, "load_rules", broken)
     with pytest.raises(ValueError):
-        jev_check.main(["ACME"])
+        model_check.main(["ACME"])
     assert gathered == [] and asked.calls == []
 
 
@@ -198,7 +198,7 @@ def test_with_opus_both_calls_run_and_each_reason_is_checked(
         f'{{"reasons": [{{"text": "The news was good.", "cites": ["{NEWS_ID}"]}},'
         f'{{"text": "Shares rose 40%.", "cites": ["{NEWS_ID}"]}}]}}',
     )
-    lines, ok, _ = jev_check.check(
+    lines, ok, _ = model_check.check(
         "ACME",
         tenq.jev.load_questions(),
         load_rules(tenq.jev.load_questions()),
@@ -217,14 +217,14 @@ def test_with_opus_both_calls_run_and_each_reason_is_checked(
 
 def test_with_no_jev_call_the_why_is_not_asked() -> None:
     fake = Opus('{"call": "Hold", "confidence": 0.5, "reasons": []}')
-    lines, made = jev_check.opus_lines(_news_pack(), None, fake)
+    lines, made = model_check.opus_lines(_news_pack(), None, fake)
     assert made and len(fake.systems) == 1
     assert not any("why" in line for line in lines)
 
 
 def test_with_opus_no_call_from_opus_is_a_failed_check(monkeypatch: pytest.MonkeyPatch) -> None:
     _setup(monkeypatch, _measured(), _news_pack())
-    lines, ok, _ = jev_check.check(
+    lines, ok, _ = model_check.check(
         "ACME",
         tenq.jev.load_questions(),
         load_rules(tenq.jev.load_questions()),
@@ -240,15 +240,15 @@ def test_with_opus_no_call_from_opus_is_a_failed_check(monkeypatch: pytest.Monke
 def test_opus_runs_only_when_asked(monkeypatch: pytest.MonkeyPatch) -> None:
     _setup(monkeypatch, _measured(), _pack())
     seen: list[Any] = []
-    real = jev_check.check
+    real = model_check.check
 
     def spy(*a: Any, **kw: Any) -> Any:
         seen.append(kw.get("claude"))
         return real(*a, **{**kw, "claude": None})
 
-    monkeypatch.setattr(jev_check, "check", spy)
-    jev_check.main(["ACME"])
-    jev_check.main(["--opus", "ACME"])
+    monkeypatch.setattr(model_check, "check", spy)
+    model_check.main(["ACME"])
+    model_check.main(["--opus", "ACME"])
     assert seen[0] is None and seen[1] is call_claude
 
 
@@ -266,14 +266,14 @@ def test_the_balance_lines_count_each_methods_calls() -> None:
         questions,
     )
     assert buy is not None and hold is not None and (buy.call, hold.call) == ("Buy", "Hold")
-    tally = jev_check.Tally(jev=[buy, hold], opus=["Hold", "Sell", "Sell"])
+    tally = model_check.Tally(jev=[buy, hold], opus=["Hold", "Sell", "Sell"])
     raw, mean = (buy.raw + hold.raw) / 2, (buy.score + hold.score) / 2
     assert tally.lines() == [
         f"balance, Jev over 2: mean before the reaction cut {raw:+.2f}, "
         f"mean score {mean:+.2f}, Buy 1, Hold 1, Sell 0, Short 0",
         "balance, Opus over 3: Buy 0, Hold 1, Sell 2, Short 0",
     ]
-    assert jev_check.Tally().lines() == []
+    assert model_check.Tally().lines() == []
 
 
 class ByProvider:
@@ -304,7 +304,7 @@ def _with_kairos(
 ) -> tuple[ByProvider, Pack, list[int]]:
     pack, listed = _pack(), []
     asked = ByProvider(_measured(), kairos)
-    monkeypatch.setattr(jev_check, "gather", lambda ticker, now: pack)
+    monkeypatch.setattr(model_check, "gather", lambda ticker, now: pack)
     monkeypatch.setattr(tenq.jev, "ask", asked)
 
     def models() -> list[str] | str:
@@ -321,7 +321,7 @@ def test_with_kairos_it_is_asked_the_same_on_the_same_pack_and_printed_beside_je
     asked, pack, listed = _with_kairos(
         monkeypatch, _kairos_answered(), ["DMIND/Kairos", "DMIND/Kairos-v4"]
     )
-    assert jev_check.main(["--kairos", "ACME"]) == 0
+    assert model_check.main(["--kairos", "ACME"]) == 0
     out = capsys.readouterr().out
     (jev_state, jev_kw), (k_state, k_kw) = asked.calls
     assert jev_state == k_state == pack.render()
@@ -350,7 +350,7 @@ def test_kairos_giving_no_answer_fails_the_check_but_keeps_jevs_lines(
     refused.errors = ["HTTP 413 [request_too_large] state is 7012 tokens (request_id r1)"]
     refused.error = f"Kairos gave no usable answer ({refused.errors[0]})"
     _with_kairos(monkeypatch, refused, "HTTP 401")
-    assert jev_check.main(["--kairos", "ACME"]) == 1
+    assert model_check.main(["--kairos", "ACME"]) == 1
     out = capsys.readouterr().out
     assert "Kairos models offered: HTTP 401" in out
     assert ": Buy (confidence" in out  # Jev's call still printed
@@ -365,7 +365,7 @@ def test_without_kairos_nothing_about_it_is_asked_or_printed(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     asked, _, listed = _with_kairos(monkeypatch, _kairos_answered(), ["DMIND/Kairos"])
-    assert jev_check.main(["ACME"]) == 0
+    assert model_check.main(["ACME"]) == 0
     out = capsys.readouterr().out
     assert len(asked.calls) == 1 and "provider" not in asked.calls[0][1] and listed == []
     assert "Kairos" not in out and "side by side" not in out
@@ -387,7 +387,7 @@ def test_the_check_never_prints_the_kairos_key(
         return 401, echo
 
     monkeypatch.setattr(tenq.jev, "KAIROS", dataclasses.replace(tenq.jev.KAIROS, post=post))
-    monkeypatch.setattr(jev_check, "gather", lambda ticker, now: _pack())
+    monkeypatch.setattr(model_check, "gather", lambda ticker, now: _pack())
     real = tenq.jev.ask
     monkeypatch.setattr(
         tenq.jev,
@@ -395,7 +395,7 @@ def test_the_check_never_prints_the_kairos_key(
         lambda state, q, **kw: real(state, q, **kw) if "provider" in kw else _measured(),
     )
     monkeypatch.setattr(tenq.jev, "models", lambda: "HTTP 401 key [key] refused")
-    assert jev_check.main(["--kairos", "ACME"]) == 1
+    assert model_check.main(["--kairos", "ACME"]) == 1
     out = capsys.readouterr().out
     assert seen and seen[0]["Authorization"] == f"Bearer {secret}"  # it was sent, only sent
     assert secret not in out
@@ -408,7 +408,7 @@ def test_once_kairos_is_down_it_is_not_asked_again_in_the_run(
     down = Result("jev-q9", "DMIND/Kairos", errors=["request error TimeoutError"], down=True)
     down.error = "Kairos gave no usable answer (request error TimeoutError)"
     asked, _, _ = _with_kairos(monkeypatch, down, ["DMIND/Kairos"])
-    assert jev_check.main(["--kairos", "ACME", "BETA", "GAMMA"]) == 1
+    assert model_check.main(["--kairos", "ACME", "BETA", "GAMMA"]) == 1
     out = capsys.readouterr().out
     kairos_calls = [kw for _, kw in asked.calls if kw.get("provider") is tenq.jev.KAIROS]
     assert len(kairos_calls) == 1 and len(asked.calls) == 4  # Jev still asked for all three
@@ -423,6 +423,6 @@ def test_kairos_refusing_one_pack_is_asked_for_the_next(
 ) -> None:
     refused = Result("jev-q9", "DMIND/Kairos", errors=["HTTP 413"])
     asked, _, _ = _with_kairos(monkeypatch, refused, ["DMIND/Kairos"])
-    assert jev_check.main(["--kairos", "ACME", "BETA"]) == 1
+    assert model_check.main(["--kairos", "ACME", "BETA"]) == 1
     kairos_calls = [kw for _, kw in asked.calls if kw.get("provider") is tenq.jev.KAIROS]
     assert len(kairos_calls) == 2 and "not asked" not in capsys.readouterr().out
