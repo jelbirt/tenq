@@ -12,6 +12,7 @@ import os
 # the run's secrets other than the model's own credentials
 PRIVATE_ENV = (
     "SMTP_", "LANGFUSE_", "RECIPIENT_EMAILS", "EDGAR_IDENTITY", "OPENROUTER_", "GH_TOKEN",
+    "KAIROS_",
 )  # fmt: skip
 MODEL_ENV = ("CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY")
 
