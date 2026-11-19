@@ -333,7 +333,7 @@ def test_with_kairos_it_is_asked_the_same_on_the_same_pack_and_printed_beside_je
     assert f"  Kairos DMIND/Kairos-v4 (asked for DMIND/Kairos), pack {size} characters" in out
     assert (
         "  Kairos rounds answered 6 ([0, 1, 2, 3, 4, 5]), tokens in 24000 out 0 "
-        "(4000 in a round), 12000 ms (2000 a round)"
+        "(about 1142 a question, 21 asked), 12000 ms (2000 a round)"
     ) in out
     assert "  Kairos direction: bad" in out
     assert "  side by side, material: Jev 0.80, Kairos 0.55" in out
@@ -355,7 +355,7 @@ def test_kairos_giving_no_answer_fails_the_check_but_keeps_jevs_lines(
     assert "Kairos models offered: HTTP 401" in out
     assert ": Buy (confidence" in out  # Jev's call still printed
     assert "  Kairos did not say (asked for DMIND/Kairos)" in out
-    assert "  Kairos rounds answered 0 ([]), tokens in 0 out 0, 900 ms (900 a round)" in out
+    assert "  Kairos rounds answered 0 ([]), tokens in 0 out 0, 900 ms\n" in out
     assert f"  Kairos error: {refused.errors[0]}" in out
     assert f"  Kairos no answers: {refused.error}" in out
     assert "  side by side, direction: Jev good, Kairos none" in out
@@ -400,3 +400,29 @@ def test_the_check_never_prints_the_kairos_key(
     assert seen and seen[0]["Authorization"] == f"Bearer {secret}"  # it was sent, only sent
     assert secret not in out
     assert "  Kairos error: HTTP 401 key [key] refused" in out
+
+
+def test_once_kairos_is_down_it_is_not_asked_again_in_the_run(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    down = Result("jev-q9", "DMIND/Kairos", errors=["request error TimeoutError"], down=True)
+    down.error = "Kairos gave no usable answer (request error TimeoutError)"
+    asked, _, _ = _with_kairos(monkeypatch, down, ["DMIND/Kairos"])
+    assert jev_check.main(["--kairos", "ACME", "BETA", "GAMMA"]) == 1
+    out = capsys.readouterr().out
+    kairos_calls = [kw for _, kw in asked.calls if kw.get("provider") is tenq.jev.KAIROS]
+    assert len(kairos_calls) == 1 and len(asked.calls) == 4  # Jev still asked for all three
+    assert out.count("  Kairos error: request error TimeoutError") == 1
+    note = "  Kairos not asked: down earlier in this run (request error TimeoutError)"
+    assert out.count(note) == 2
+    assert out.count(": Buy (confidence") == 3
+
+
+def test_kairos_refusing_one_pack_is_asked_for_the_next(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    refused = Result("jev-q9", "DMIND/Kairos", errors=["HTTP 413"])
+    asked, _, _ = _with_kairos(monkeypatch, refused, ["DMIND/Kairos"])
+    assert jev_check.main(["--kairos", "ACME", "BETA"]) == 1
+    kairos_calls = [kw for _, kw in asked.calls if kw.get("provider") is tenq.jev.KAIROS]
+    assert len(kairos_calls) == 2 and "not asked" not in capsys.readouterr().out

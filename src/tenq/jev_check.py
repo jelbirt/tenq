@@ -13,7 +13,9 @@ and prints its answers beside Jev's, with the pack's size in characters,
 Kairos's tokens, the model that answered and the time taken. It first lists
 the model ids Minara Cloud offers the key. That needs KAIROS_API_KEY. Kairos
 gets no call and no weight here: the rules are not run on its answers. Its
-reply has no cost (billing is on tokens), so none is printed.
+reply has no cost (billing is on tokens), so none is printed. Once Kairos is
+found down (a timeout, a key it refuses, a failure upstream), the rest of the
+run does not ask it again.
 
 Builds today's facts pack for each stock, asks Jev the question file over its
 balanced rounds, turns the answers into a call with the rules file, and prints
@@ -136,19 +138,28 @@ def _value(a: Answer | None) -> str:
     return f"{a.value:.2f}" if isinstance(a.value, float) else str(a.value)
 
 
+@dataclass
+class KairosRun:
+    """Kairos over one check run: once found down, not asked again."""
+
+    down: str = ""  # the error that found it down
+
+
 def kairos_lines(
     state: str, questions: QuestionSet, beside: Result, session_id: str
-) -> tuple[list[str], bool]:
+) -> tuple[list[str], Result]:
     """Kairos asked the same questions on the same state, printed beside Jev's
-    answers (`beside`), and whether it gave a usable answer."""
+    answers (`beside`), and its result."""
     result = jev.ask(state, questions, provider=jev.KAIROS, session_id=session_id)
     tokens = f"tokens in {result.input_tokens} out {result.output_tokens}"
-    if result.rounds:
-        tokens += f" ({result.input_tokens // result.rounds} in a round)"
-    asked = result.rounds + len(result.errors)  # each round sent ends in one or the other
-    took = f"{result.duration_ms} ms"
+    # Minara counts the pack once for every question asked, so its per-question
+    # limit is met or not by input tokens over the questions in answered rounds
+    asked = sum(len(questions.to_request(i)) for i in result.answered)
     if asked:
-        took += f" ({result.duration_ms // asked} a round)"
+        tokens += f" (about {result.input_tokens // asked} a question, {asked} asked)"
+    took = f"{result.duration_ms} ms"
+    if result.rounds and not result.errors:  # a failed request's time is in the total
+        took += f" ({result.duration_ms // result.rounds} a round)"
     lines = [
         f"  Kairos {result.resolved_model or 'did not say'} (asked for {result.model}), "
         f"pack {len(state)} characters",
@@ -164,7 +175,7 @@ def kairos_lines(
         f"Kairos {_value(result.answers.get(q.key))}"
         for q in questions.questions
     ]
-    return lines, bool(result.answers)
+    return lines, result
 
 
 def check(
@@ -174,7 +185,7 @@ def check(
     now: datetime,
     *,
     claude: Claude | None = None,
-    kairos: bool = False,
+    kairos: KairosRun | None = None,
     tally: Tally | None = None,
 ) -> tuple[list[str], bool, float]:
     """Lines to print, whether a call came out, and the cost. Never raises for
@@ -193,9 +204,14 @@ def check(
     ok = call is not None
     if tally is not None and call is not None:
         tally.jev.append(call)
-    if kairos:
-        more, answered = kairos_lines(state, questions, result, session_id)
-        lines, ok = lines + more, ok and answered
+    if kairos is not None and kairos.down:
+        lines.append(f"  Kairos not asked: down earlier in this run ({kairos.down})")
+        ok = False
+    elif kairos is not None:
+        more, asked = kairos_lines(state, questions, result, session_id)
+        lines, ok = lines + more, ok and bool(asked.answers)
+        if asked.down:
+            kairos.down = asked.errors[-1] if asked.errors else "down"
     if claude is not None:
         more, own = opus_lines(pack, call, claude)
         lines, ok = lines + more, ok and own is not None
@@ -220,6 +236,7 @@ def main(argv: list[str] | None = None) -> int:
     rules = load_rules(questions)  # a bad file fails here, before anything is paid for
     now = datetime.now(UTC)
     ok, total, tally = True, 0.0, Tally()
+    kairos = KairosRun() if args.kairos else None
     if args.kairos:
         offered = jev.models()
         listed = (", ".join(offered) or "none") if isinstance(offered, list) else offered
@@ -231,7 +248,7 @@ def main(argv: list[str] | None = None) -> int:
             rules,
             now,
             claude=call_claude if args.opus else None,
-            kairos=args.kairos,
+            kairos=kairos,
             tally=tally,
         )
         print("\n".join(lines))

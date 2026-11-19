@@ -73,10 +73,11 @@ KAIROS_URL = "https://minara.cloud/v1/systemone"
 KAIROS_MODELS_URL = "https://minara.cloud/v1/models"
 KAIROS_DEFAULT_MODEL = "DMIND/Kairos"  # the use guide's id; ids differ by channel
 # Kairos may take up to 600 s upstream. A hand-run check waits five minutes a
-# request and does not retry a timeout, so one stuck stock costs at most that.
+# request and does not retry a timeout (connect or read), so one stuck stock
+# costs at most that; jev_check then stops asking Kairos for the run.
 KAIROS_TIMEOUT_S = 300
 KAIROS_LIST_TIMEOUT_S = 30
-KAIROS_RATE_RETRIES = 3  # a 429 is waited out at most this often per round
+KAIROS_RATE_RETRIES = 3  # a 429 is waited out at most this often, then the stock's rounds end
 KAIROS_BACKOFF_S = 5.0  # first wait after a 429 that names none; doubles each time
 KAIROS_MAX_WAIT_S = 60.0  # the longest retry delay honored
 KAIROS_RETRY_CODES = {500, 502, 503, 504, 524, 529}  # tried once more, like Jev's
@@ -318,7 +319,13 @@ def _post(url: str, headers: dict[str, str], body: bytes) -> tuple[int, str]:
 
 
 def _post_kairos(url: str, headers: dict[str, str], body: bytes) -> tuple[int, str, str]:
-    return _open(url, headers, body, KAIROS_TIMEOUT_S)
+    try:
+        return _open(url, headers, body, KAIROS_TIMEOUT_S)
+    except urllib.error.URLError as exc:
+        # urllib wraps a connect timeout; it is the same wait as a read timeout
+        if isinstance(exc.reason, TimeoutError):
+            raise TimeoutError from None
+        raise
 
 
 # (status, the reply or exception name, the retry delay asked for, retries so
@@ -335,8 +342,9 @@ def _jev_retry(status: int, text: str, wait: float | None, tries: int) -> float 
 
 def _kairos_retry(status: int, text: str, wait: float | None, tries: int) -> float | None:
     """A 429 waited out a few times, at the delay it names when it names one;
-    an upstream failure or a reset tried once more; a timeout not again, since
-    it has already waited KAIROS_TIMEOUT_S."""
+    an upstream failure or a reset on a round's first try tried once more (one
+    after a 429 is not); a timeout not again, since it has already waited
+    KAIROS_TIMEOUT_S."""
     if tries >= KAIROS_RATE_RETRIES:
         return None
     if status == 429:
@@ -385,8 +393,10 @@ KAIROS = Provider(
     KAIROS_DEFAULT_MODEL,
     _post_kairos,
     _kairos_retry,
-    frozenset(FINAL_CODES | {422}),  # a request shape it refuses, refused every round
-    session_id=True,
+    # 422: a request shape it refuses, refused every round; 429: still rate
+    # limited after its waits, so the next round would only wait again
+    frozenset(FINAL_CODES | {422, 429}),
+    session_id=True,  # accepted in the first live check, 2026-11-19
     error_detail=True,
 )
 
@@ -576,8 +586,8 @@ def ask(
         responses.append(questions.unflip(asked, i))
         answered.append(i)
         model_name = parsed.get("model")
-        if isinstance(model_name, str) and MODEL_NAME.fullmatch(model_name):
-            result.resolved_model = model_name
+        if _shown(model_name, key):
+            result.resolved_model = str(model_name)
         usage = parsed.get("usage")
         if isinstance(usage, dict):
             result.input_tokens += int(_finite(usage.get("input_tokens")) or 0)
@@ -705,10 +715,22 @@ def _error_detail(text: str, key: str) -> str:
     return out
 
 
+def _shown(name: Any, key: str) -> bool:
+    """A model id from a reply, fit to print: well formed and without the key."""
+    return (
+        isinstance(name, str)
+        and MODEL_NAME.fullmatch(name) is not None
+        and not (key and key in name)
+    )
+
+
 def _retry_after(header: str, text: str) -> float | None:
     """The retry delay a reply asks for, in seconds: the Retry-After header
-    (seconds, not a date), else a `retry_after` in its error. None when neither."""
-    for raw in (header.strip(), _error_object(text).get("retry_after") if text else None):
+    (seconds, not a date), else a `retry_after` in its error or at its top
+    level. None when none of them."""
+    raw_reply = _load(text) if text else None
+    top = raw_reply.get("retry_after") if isinstance(raw_reply, dict) else None
+    for raw in (header.strip(), _error_object(text).get("retry_after") if text else None, top):
         if isinstance(raw, str):
             try:
                 raw = float(raw) if raw else None
@@ -740,4 +762,4 @@ def models(post: Callable[[str, dict[str, str]], tuple[int, str]] | None = None)
     if not isinstance(items, list):
         return "unreadable model list"
     ids = [m.get("id") if isinstance(m, dict) else m for m in items]
-    return [m for m in ids if isinstance(m, str) and MODEL_NAME.fullmatch(m)]
+    return [str(m) for m in ids if _shown(m, key)]

@@ -365,3 +365,61 @@ def test_the_model_list_needs_the_key_and_never_raises(monkeypatch: pytest.Monke
     assert jev.models(post=boom) == "request error TimeoutError"
     monkeypatch.delenv("KAIROS_API_KEY")
     assert jev.models(post=boom) == "KAIROS_API_KEY not set"
+
+
+def test_a_rate_limit_that_outlasts_its_waits_ends_the_stocks_rounds(
+    questions: QuestionSet,
+) -> None:
+    slept: list[float] = []
+    server = Server(*[(429, "{}", "60")] * 30)
+    result = _kairos(questions, server, slept=slept)
+    assert len(server.calls) == 1 + jev.KAIROS_RATE_RETRIES  # one round's worth, not six
+    assert slept == [60.0] * jev.KAIROS_RATE_RETRIES
+    assert result.errors == ["HTTP 429"] and not result.down  # the next stock may get through
+
+
+def test_a_rate_limit_delay_at_the_top_of_the_reply_is_honored(questions: QuestionSet) -> None:
+    slept: list[float] = []
+    server = Server(
+        (429, json.dumps({"detail": "rate limited", "retry_after": 30})),
+        _ok(_answers(0.5, "good", {}, 1.0)),
+    )
+    _kairos(questions, server, rounds=1, slept=slept)
+    assert slept == [30.0]
+
+
+def test_an_upstream_failure_after_a_rate_limit_is_not_tried_again(
+    questions: QuestionSet,
+) -> None:
+    slept: list[float] = []
+    server = Server((429, "{}"), (503, "{}"))
+    result = _kairos(questions, server, slept=slept)
+    assert slept == [5.0] and len(server.calls) == 2
+    assert result.down and result.errors == ["HTTP 503"]
+
+
+def test_a_connect_timeout_is_a_timeout_and_not_tried_again(
+    questions: QuestionSet, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    opened: list[float] = []
+
+    class Stuck:
+        def open(self, req: Any, timeout: float) -> Any:
+            opened.append(timeout)
+            raise urllib.error.URLError(TimeoutError("timed out"))
+
+    monkeypatch.setattr(jev, "_OPENER", Stuck())
+    slept: list[float] = []
+    result = ask("s", questions, provider=KAIROS, sleep=slept.append)
+    assert opened == [jev.KAIROS_TIMEOUT_S] and slept == []
+    assert result.errors == ["request error TimeoutError"] and result.down
+
+
+def test_a_model_name_holding_the_key_is_not_kept(questions: QuestionSet) -> None:
+    status, text = _ok(_answers(0.5, "good", {}, 1.0))
+    reply = json.loads(text)
+    reply["model"] = f"x/{SECRET}"
+    result = _kairos(questions, Server((status, json.dumps(reply))), rounds=1)
+    assert result.resolved_model == "" and result.answers
+    listed = jev.models(post=lambda url, headers: (200, json.dumps([SECRET, "DMIND/Kairos"])))
+    assert listed == ["DMIND/Kairos"]
