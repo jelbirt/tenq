@@ -423,3 +423,29 @@ def test_a_model_name_holding_the_key_is_not_kept(questions: QuestionSet) -> Non
     assert result.resolved_model == "" and result.answers
     listed = jev.models(post=lambda url, headers: (200, json.dumps([SECRET, "DMIND/Kairos"])))
     assert listed == ["DMIND/Kairos"]
+
+
+def test_no_round_starts_once_the_callers_time_is_used_up(questions: QuestionSet) -> None:
+    server = Server()
+    result = _kairos(questions, server, time_left=lambda: 0.0)
+    assert server.calls == [] and result.answers == {} and not result.down
+    assert result.error == "Kairos gave no usable answer (out of time after 0 of 4 rounds)"
+    assert result.notes == ["out of time after 0 of 4 rounds"]
+
+
+def test_rounds_answered_before_the_time_ran_out_are_kept(questions: QuestionSet) -> None:
+    left = iter([10.0, 10.0, 0.0])
+    server = Server(*[_ok(_answers(0.8, "good", {"good": 1.0}, 2.0))] * 2)
+    result = _kairos(questions, server, time_left=lambda: next(left))
+    assert len(server.calls) == 2 and result.answered == [0, 1]
+    assert result.answers["material"].value == pytest.approx(0.8) and result.error is None
+    assert result.notes == ["out of time after 2 of 4 rounds"]
+
+
+def test_a_retry_wait_longer_than_the_time_left_is_not_waited(questions: QuestionSet) -> None:
+    slept: list[float] = []
+    server = Server((429, "{}", "7"))
+    result = _kairos(questions, server, slept=slept, time_left=lambda: 5.0)
+    assert slept == [] and len(server.calls) == 1
+    assert result.errors == ["HTTP 429"] and result.answers == {}
+    assert "out of time after 0 of 4 rounds" in result.notes

@@ -1,6 +1,6 @@
 name: daily
-# Both calls on every watchlist stock after the close, one email, and the
-# day's record committed to runs/daily/.
+# Jev's, Opus's and Kairos's calls on each stock the screen picks after the
+# close, one email, and the day's record committed to runs/daily/.
 on:
   # weekdays 22:30 UTC: 5:30pm New York in winter, 6:30pm in summer, after the
   # close has settled. On a holiday the latest session is one already
@@ -23,7 +23,7 @@ concurrency:
 jobs:
   daily:
     runs-on: ubuntu-latest
-    timeout-minutes: 180 # the screen (~1 min), then 20 to 25 stocks: Jev and two claude runs each
+    timeout-minutes: 180 # the screen (~1 min), then 20 to 25 stocks: Jev and two claude runs each, then Kairos on each
     # a scheduled run has no inputs: tickers is empty (the screen's picks)
     # and email is not "false", so it emails
     steps:
@@ -50,6 +50,8 @@ jobs:
           EDGAR_IDENTITY: ${{ secrets.EDGAR_IDENTITY }}
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
           CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          # without it Kairos is noted as not asked, and the other two calls go out
+          KAIROS_API_KEY: ${{ secrets.KAIROS_API_KEY }}
           # a check with no email is traced in this step
           LANGFUSE_PUBLIC_KEY: ${{ secrets.LANGFUSE_PUBLIC_KEY }}
           LANGFUSE_SECRET_KEY: ${{ secrets.LANGFUSE_SECRET_KEY }}

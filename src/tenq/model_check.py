@@ -54,21 +54,29 @@ class Tally:
 
     jev: list[Call] = field(default_factory=list)
     opus: list[CallName] = field(default_factory=list)
+    kairos: list[Call] = field(default_factory=list)  # the daily run's; this check fills none
 
     def lines(self) -> list[str]:
         out: list[str] = []
         if self.jev:
-            n = len(self.jev)
-            raw = sum(c.raw for c in self.jev) / n
-            score = sum(c.score for c in self.jev) / n
-            counts = _counts([c.call for c in self.jev])
-            out.append(
-                f"balance, Jev over {n}: mean before the reaction cut {raw:+.2f}, "
-                f"mean score {score:+.2f}, {counts}"
-            )
+            out.append(_rules_line("Jev", self.jev))
         if self.opus:
             out.append(f"balance, Opus over {len(self.opus)}: {_counts(self.opus)}")
+        if self.kairos:
+            out.append(_rules_line("Kairos", self.kairos))
         return out
+
+
+def _rules_line(name: str, calls: list[Call]) -> str:
+    """The balance of the calls the rules made from one model's answers."""
+    n = len(calls)
+    raw = sum(c.raw for c in calls) / n
+    score = sum(c.score for c in calls) / n
+    counts = _counts([c.call for c in calls])
+    return (
+        f"balance, {name} over {n}: mean before the reaction cut {raw:+.2f}, "
+        f"mean score {score:+.2f}, {counts}"
+    )
 
 
 def _counts(calls: list[CallName]) -> str:

@@ -13,10 +13,10 @@ from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 from test_rules import QUESTIONS, RULES, _good
 
-from tenq import daily, opus
+from tenq import daily, jev, opus
 from tenq.config import load_watchlist
 from tenq.daily import Context, main, record_path
-from tenq.daily_email import render, sources
+from tenq.daily_email import DISCLAIMER, agreement, render, sources, subject_for
 from tenq.deliver import Email
 from tenq.jev import Result
 from tenq.llm import INFRA, AgentRun
@@ -108,6 +108,52 @@ class Jev:
         return good
 
 
+ALWAYS = set(range(1, 100))  # Kairos down at every ask
+
+
+class Kairos:
+    """Kairos's answers, the same as Jev's fake gives, with tokens; down for the
+    asks numbered in `down` (1-based, counting every ask in the run)."""
+
+    def __init__(
+        self, down: set[int] | None = None, clock: Clock | None = None, takes: float = 30.0
+    ) -> None:
+        self.asked: list[str] = []
+        self.seen: list[tuple[str, Any]] = []  # the facts and questions it was sent
+        self.left: list[float] = []  # the time left it was told at each ask
+        self.down = down or set()
+        self.clock = clock
+        self.takes = takes
+
+    def __call__(self, state: str, questions: Any, **kw: Any) -> Result:
+        self.asked.append(kw["session_id"])
+        self.seen.append((state, questions))
+        self.left.append(kw["time_left"]())
+        if self.clock is not None:
+            self.clock.now += self.takes
+        if len(self.asked) in self.down:
+            return Result(QUESTIONS.version, "DMIND/Kairos", down=True, error="HTTP 503")
+        good = _good()
+        good.model, good.resolved_model = "DMIND/Kairos", "DMIND/Kairos-0.9"
+        good.input_tokens, good.output_tokens = 1000, 50
+        return good
+
+
+class Clock:
+    """ctx.clock and ctx.sleep together: a sleep moves the clock."""
+
+    def __init__(self) -> None:
+        self.now = 0.0
+        self.slept: list[float] = []
+
+    def __call__(self) -> float:
+        return self.now
+
+    def sleep(self, seconds: float) -> None:
+        self.slept.append(seconds)
+        self.now += seconds
+
+
 class Outbox:
     def __init__(self, ok: bool = True, seen: Path | None = None) -> None:
         self.sent: list[Email] = []
@@ -126,7 +172,16 @@ def _no_trace(record: dict[str, Any], **kw: Any) -> tuple[bool, str, dict[str, s
     return False, "trace skipped: test", {}
 
 
-def _ctx(jev: Jev | None = None, claude: Claude | None = None) -> Context:
+@pytest.fixture(autouse=True)
+def kairos_key(no_kairos_key: None, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The daily run asks Kairos only with a key: a test that wants none deletes it."""
+    monkeypatch.setenv("KAIROS_API_KEY", "test-kairos-key")
+
+
+def _ctx(
+    jev: Jev | None = None, claude: Claude | None = None, kairos: Kairos | None = None
+) -> Context:
+    clock = kairos.clock if kairos is not None and kairos.clock is not None else Clock()
     return Context(
         questions=QUESTIONS,
         rules=RULES,
@@ -136,6 +191,9 @@ def _ctx(jev: Jev | None = None, claude: Claude | None = None) -> Context:
         gather=_pack,
         ask=jev or Jev(),
         claude=claude if claude is not None else Claude(),
+        kairos=kairos if kairos is not None else Kairos(),
+        clock=clock,
+        sleep=clock.sleep,
     )
 
 
@@ -255,7 +313,7 @@ def test_exit_codes(tmp_path: Path) -> None:
 
 
 def test_no_call_at_all_fails_the_run(tmp_path: Path) -> None:
-    ctx = _ctx(Jev(down_after=0))
+    ctx = _ctx(Jev(down_after=0), kairos=Kairos(down=ALWAYS))
     ctx.claude = None
     assert _run(tmp_path, ctx=ctx) == 1
 
@@ -627,11 +685,15 @@ def test_a_check_says_so_in_its_subject_and_its_traces(tmp_path: Path) -> None:
     assert "check" in list(attrs["langfuse.trace.tags"])  # type: ignore[arg-type]
 
 
-def test_the_email_shows_both_calls_and_escapes_untrusted_text(tmp_path: Path) -> None:
+def test_the_email_shows_all_three_calls_and_escapes_untrusted_text(tmp_path: Path) -> None:
     email = render(_day_record(tmp_path))
-    assert email.subject == "tenq daily, session 2026-11-04: the two calls agree on 0 of 20"
-    # Jev: 0.559 of the 0.70 its news and guidance can reach (rules-v9)
-    assert "CRWD | Buy 80% | Hold 50% | differ" in email.text
+    assert email.subject == "tenq daily, session 2026-11-04: all three agree on 0 of 20"
+    # Jev: 0.559 of the 0.70 its news and guidance can reach (rules-v9); Kairos
+    # gave the same answers, so the same rules make the same call
+    assert "Stock | Jev | Opus | Kairos | agreement" in email.text
+    assert "CRWD | Buy 80% | Hold 50% | Buy 80% | Opus differs" in email.text
+    assert "  Kairos: Buy, confidence 80%\n    " in email.text
+    assert "<b>Kairos: Buy</b>, confidence 80%" in email.html
     assert "The outlook was raised <script>." in email.text
     assert "<script>" not in email.html and "&lt;script&gt;" in email.html
     assert "&lt;b&gt;Outlook&lt;/b&gt;" in email.html
@@ -703,7 +765,7 @@ def test_each_stock_is_its_own_trace_grouped_by_day(tmp_path: Path) -> None:
     assert len(set(ids.values())) == 2
     crwd = [s for s in spans if format(s.context.trace_id, "032x") == ids["CRWD"]]
     names = {s.name: s for s in crwd}
-    assert set(names) == {"daily CRWD", "facts pack", "jev", "opus call", "opus why"}
+    assert set(names) == {"daily CRWD", "facts pack", "jev", "opus call", "opus why", "kairos"}
     jev = names["jev"].attributes or {}
     assert jev["langfuse.observation.type"] == "generation"
     assert json.loads(str(jev["langfuse.observation.cost_details"])) == {"total": 0.001}
@@ -832,7 +894,7 @@ def test_the_send_step_says_whether_the_email_went_even_when_it_exits_1(
     # and only its "emailed" output keeps the failure notice from following it
     out = tmp_path / "github_output"
     monkeypatch.setenv("GITHUB_OUTPUT", str(out))
-    nobody = _ctx(Jev(down_after=0), Claude(limit_after=0))
+    nobody = _ctx(Jev(down_after=0), Claude(limit_after=0), Kairos(down=ALWAYS))
     assert _run(tmp_path, "--stage", "calls", ctx=nobody) == 0
     assert _stage(tmp_path, "claim", "job-1") == 0
     out.unlink()
@@ -1148,3 +1210,289 @@ def test_the_screens_time_counts_against_the_opus_budget(tmp_path: Path) -> None
 
     assert _run(tmp_path, ctx=ctx, screener=slow) == 0
     assert "time budget" in _record(tmp_path)["stocks"][0]["opus"]["error"]
+
+
+# Kairos, the third method: asked after Jev and Opus are done with every stock
+
+
+FOUR = WATCH.tickers[:4]
+FIXTURE = Path(__file__).parent / "fixtures" / "daily-two-methods"
+
+
+def _sid(stock: dict[str, Any]) -> str:
+    return f"tenq-daily-{stock['ticker']}-2026-11-04"
+
+
+def _four(kairos: Kairos, ctx: Context | None = None) -> tuple[dict[str, Any], list[Any]]:
+    """Four stocks through run_day; the record and a copy of it at each save."""
+    saved: list[Any] = []
+    ctx = ctx or _ctx(kairos=kairos)
+    rec = daily.run_day(
+        list(FOUR), WATCH.names, DAY, 500.0, ctx, save=lambda r: saved.append(json.dumps(r))
+    )
+    return rec, [json.loads(r) for r in saved]
+
+
+def test_kairos_makes_a_third_call_on_every_stock_from_jevs_facts_and_questions(
+    tmp_path: Path,
+) -> None:
+    order: list[str] = []
+    jev_fake, kairos = Jev(), Kairos()
+    sent: list[tuple[str, Any]] = []
+
+    def ask(state: str, questions: Any, **kw: Any) -> Result:
+        order.append("jev")
+        sent.append((state, questions))
+        return jev_fake(state, questions, **kw)
+
+    ctx = _ctx(kairos=kairos)
+    ctx.ask = ask
+
+    def ask_kairos(state: str, questions: Any, **kw: Any) -> Result:
+        order.append("kairos")
+        return kairos(state, questions, **kw)
+
+    ctx.kairos = ask_kairos
+    outbox = Outbox()
+    assert _run(tmp_path, ctx=ctx, mailer=outbox) == 0
+    rec = _record(tmp_path)
+    stocks = rec["stocks"]
+    assert rec["kairos_on"] is True and len(stocks) == 20
+    assert kairos.seen == sent and kairos.seen[0][1] is QUESTIONS  # the same pack, the same file
+    assert order == ["jev"] * 20 + ["kairos"] * 20  # Kairos only once Jev and Opus are done
+    assert kairos.asked == [_sid(s) for s in stocks]
+    for stock in stocks:
+        # the same answers through the same rules: the same call as Jev's
+        assert stock["kairos_call"]["call"] == stock["call"]["call"]
+        assert stock["kairos_call"]["explain"] == stock["call"]["explain"]
+        assert stock["kairos"]["model"] == "DMIND/Kairos"
+        assert stock["kairos"]["resolved_model"] == "DMIND/Kairos-0.9"
+        assert "first" not in stock["kairos"]
+        assert [s["name"] for s in stock["steps"]][-1] == "kairos"
+    assert rec["kairos_input_tokens"] == 20 * 1000
+    assert any(line.startswith("balance, Kairos over 20: ") for line in rec["balance"])
+    assert outbox.sent[0].subject == "tenq daily, session 2026-11-04: all three agree on 0 of 20"
+
+
+def test_kairos_down_skips_its_pass_then_asks_each_missed_stock_once_more() -> None:
+    clock = Clock()
+    kairos = Kairos(down={2}, clock=clock)
+    rec, saved = _four(kairos)
+    a, b, c, d = rec["stocks"]
+    # down at the 2nd stock (30 s in): the 3rd and 4th are skipped; after
+    # the pause, the 2nd to the 4th are each asked once more
+    assert kairos.asked == [_sid(a), _sid(b), _sid(b), _sid(c), _sid(d)]
+    assert clock.slept == [daily.KAIROS_PAUSE_S]
+    assert all("kairos_call" in s for s in rec["stocks"])
+    assert "first" not in a["kairos"]
+    assert b["kairos"]["first"]["down"] is True and b["kairos"]["first"]["error"] == "HTTP 503"
+    for stock in (c, d):
+        assert stock["kairos"]["first"] == {"error": f"not asked: {daily.KAIROS_DOWN}"}
+    assert [s["name"] for s in b["steps"]][-2:] == ["kairos", "kairos again"]
+    assert [s["name"] for s in c["steps"]][-1] == "kairos again"
+    assert rec["kairos_input_tokens"] == 4 * 1000
+    # saved after each stock, each Kairos ask, and each one more ask
+    made = [sum("kairos_call" in s for s in r["stocks"]) for r in saved]
+    assert made == [0, 0, 0, 0, 1, 1, 1, 1, 2, 3, 4, 4]
+    text = render(rec).text
+    assert text.count("Kairos's call came when it was asked again at the end of the run") == 3
+    assert "asked again at the end of the run (HTTP 503)." in text
+
+
+def test_kairos_down_again_ends_the_pass_of_one_more_asks(tmp_path: Path) -> None:
+    kairos = Kairos(down={2, 3}, clock=Clock())
+    rec, _ = _four(kairos)
+    a, b, c, d = rec["stocks"]
+    assert kairos.asked == [_sid(a), _sid(b), _sid(b)]
+    assert "kairos_call" in a and not any("kairos_call" in s for s in (b, c, d))
+    assert b["kairos"]["error"] == "HTTP 503" and b["kairos"]["first"]["error"] == "HTTP 503"
+    for stock in (c, d):
+        assert stock["kairos"] == {
+            "error": f"not asked: {daily.KAIROS_DOWN}",
+            "again": f"not asked again: {daily.KAIROS_DOWN_AGAIN}",
+        }
+    text = render(rec).text
+    assert "Kairos made no call (asked again at the end of the run: HTTP 503)." in text
+    assert (
+        f"Kairos made no call (not asked: {daily.KAIROS_DOWN}; "
+        f"not asked again: {daily.KAIROS_DOWN_AGAIN})."
+    ) in text
+
+
+@pytest.mark.parametrize(
+    ("budget", "last", "told"),
+    [
+        (70.0, daily.KAIROS_LAST_S, [70.0, 40.0, 10.0]),  # its budget in the run
+        (daily.KAIROS_BUDGET_S, 50.0, [50.0, 20.0]),  # its last start, from the run's start
+    ],
+)
+def test_kairos_stops_at_its_time_bound_and_is_not_asked_again(
+    budget: float, last: float, told: list[float]
+) -> None:
+    kairos = Kairos(clock=Clock())  # each ask takes 30 s
+    ctx = replace(_ctx(kairos=kairos), kairos_budget_s=budget, kairos_last_s=last)
+    rec, _ = _four(kairos, ctx)
+    assert kairos.left == told  # each ask is told the time it has, and stops by it
+    for stock in rec["stocks"][len(told) :]:
+        assert stock["kairos"] == {"error": "not asked: the run's time for Kairos ran out"}
+    assert all("call" in s and s["opus"]["call"] for s in rec["stocks"])
+
+
+def test_a_pause_longer_than_kairos_time_left_asks_nothing_more() -> None:
+    clock = Clock()
+    kairos = Kairos(down={1}, clock=clock)
+    ctx = replace(_ctx(kairos=kairos), kairos_budget_s=100.0)
+    rec, _ = _four(kairos, ctx)
+    assert len(kairos.asked) == 1 and clock.slept == []
+    for stock in rec["stocks"]:
+        assert stock["kairos"]["again"] == "not asked again: the run's time for Kairos ran out"
+
+
+def test_kairos_time_bound_ends_inside_the_calls_steps_limit() -> None:
+    import yaml
+
+    flow = yaml.safe_load(Path(".github/workflows/daily.yml").read_text())
+    [calls] = [s for s in flow["jobs"]["daily"]["steps"] if s.get("id") == "calls"]
+    # the last Kairos request starts by KAIROS_LAST_S and ends within its timeout
+    assert calls["timeout-minutes"] * 60 > daily.KAIROS_LAST_S + jev.KAIROS_TIMEOUT_S
+    assert daily.KAIROS_LAST_S > daily.OPUS_BUDGET_S  # Opus's time is never Kairos's
+    assert calls["env"]["KAIROS_API_KEY"] == "${{ secrets.KAIROS_API_KEY }}"
+    others = [s for s in flow["jobs"]["daily"]["steps"] if s is not calls]
+    assert not any("KAIROS_API_KEY" in (s.get("env") or {}) for s in others)
+
+
+class Broken:
+    def __call__(self, *a: Any, **kw: Any) -> Result:
+        raise RuntimeError("Kairos adapter bug")
+
+
+@pytest.mark.parametrize("kairos", [lambda: Kairos(down=ALWAYS), Broken])
+def test_a_kairos_failure_changes_no_other_call_and_not_the_exit_code(
+    tmp_path: Path, kairos: Any
+) -> None:
+    assert _run(tmp_path / "well", ctx=_ctx(kairos=Kairos())) == 0
+    well = json.loads(record_path(tmp_path / "well", DAY).read_text())
+    ctx = _ctx()
+    ctx.kairos = kairos()
+    outbox = Outbox()
+    assert _run(tmp_path / "ill", ctx=ctx, mailer=outbox) == 0
+    ill = json.loads(record_path(tmp_path / "ill", DAY).read_text())
+    for good, bad in zip(well["stocks"], ill["stocks"], strict=True):
+        assert bad["call"] == good["call"] and "kairos_call" not in bad
+        for key in ("call", "confidence", "lean", "kept", "dropped"):
+            assert bad["opus"][key] == good["opus"][key]
+        assert bad["why"]["kept"] == good["why"]["kept"]
+    if isinstance(ctx.kairos, Broken):
+        assert ill["stocks"][0]["kairos"] == {"error": "failed in code (RuntimeError)"}
+    assert "| no call |" in outbox.sent[0].text
+
+
+def test_a_kairos_call_alone_is_a_call(tmp_path: Path) -> None:
+    ctx = _ctx(Jev(down_after=0), kairos=Kairos())
+    ctx.claude = None
+    assert _run(tmp_path, ctx=ctx) == 0
+
+
+def test_without_a_key_kairos_is_noted_as_not_asked(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("KAIROS_API_KEY")
+    kairos, outbox = Kairos(), Outbox()
+    assert _run(tmp_path, ctx=_ctx(kairos=kairos), mailer=outbox) == 0
+    rec = _record(tmp_path)
+    assert kairos.asked == [] and rec["kairos_on"] is False and rec["kairos_input_tokens"] == 0
+    for stock in rec["stocks"]:
+        assert stock["kairos"] == {"error": "not asked: KAIROS_API_KEY not set"}
+    assert "Kairos made no call (not asked: KAIROS_API_KEY not set)." in outbox.sent[0].text
+    # the real adapter, keyless, is Kairos's and asks nothing
+    result = daily.ask_kairos("Facts.", QUESTIONS)
+    assert result.error == "Kairos skipped: KAIROS_API_KEY not set" and not result.down
+
+
+def _calls(jev: str | None, opus: str | None, kairos: str | None) -> dict[str, Any]:
+    stock: dict[str, Any] = {"ticker": "ACME"}
+    if jev:
+        stock["call"] = {"call": jev}
+    if opus:
+        stock["opus"] = {"call": opus}
+    if kairos:
+        stock["kairos_call"] = {"call": kairos}
+    return stock
+
+
+@pytest.mark.parametrize(
+    ("jev_call", "opus_call", "kairos_call", "shown"),
+    [
+        ("Buy", "Buy", "Buy", "all agree"),
+        ("Buy", "Buy", "Sell", "Kairos differs"),
+        ("Hold", "Short", "Hold", "Opus differs"),
+        ("Sell", "Buy", "Buy", "Jev differs"),
+        ("Buy", "Hold", "Sell", "all differ"),
+        ("Buy", "Buy", None, "agree"),
+        (None, "Hold", "Hold", "agree"),
+        ("Buy", None, "Sell", "differ"),
+        ("Buy", None, None, ""),
+        (None, None, "Sell", ""),
+        (None, None, None, ""),
+    ],
+)
+def test_the_agreement_column(
+    jev_call: str | None, opus_call: str | None, kairos_call: str | None, shown: str
+) -> None:
+    assert agreement(_calls(jev_call, opus_call, kairos_call)) == shown
+
+
+def test_the_subject_counts_only_stocks_with_all_three_calls() -> None:
+    stocks = [
+        _calls("Buy", "Buy", "Buy"),
+        _calls("Buy", "Hold", "Buy"),
+        _calls("Sell", "Sell", "Sell"),
+        _calls("Hold", "Hold", None),  # two calls agreeing: not counted
+    ]
+    record = {"day": "2026-11-04", "kairos_on": True, "stocks": stocks}
+    assert subject_for(record) == "tenq daily, session 2026-11-04: all three agree on 2 of 3"
+
+
+def test_the_disclaimer_names_the_three_methods() -> None:
+    assert "Three methods" in DISCLAIMER and "Kairos" in DISCLAIMER and "Opus" in DISCLAIMER
+
+
+def test_a_record_from_before_kairos_renders_exactly_as_it_did() -> None:
+    record = json.loads((FIXTURE / "record.json").read_text())
+    assert not any("kairos" in key for key in record)
+    email = render(record)
+    assert email.subject == (FIXTURE / "subject.txt").read_text()
+    assert email.text == (FIXTURE / "text.txt").read_text()
+    assert email.html == (FIXTURE / "html.txt").read_text()
+
+
+def test_a_record_from_before_kairos_is_resent_exactly_as_it_was(tmp_path: Path) -> None:
+    record = json.loads((FIXTURE / "record.json").read_text())
+    path = record_path(tmp_path, DAY)
+    daily._write(path, record | {"email": {"sent": False, "status": "email failed"}})
+    assert daily.claim(path, "job-1") == 0
+    outbox = Outbox()
+    assert daily.send_claimed(path, "job-1", outbox, _no_trace) == 0
+    [email] = outbox.sent
+    assert email.subject == (FIXTURE / "subject.txt").read_text()
+    assert email.text == (FIXTURE / "text.txt").read_text()
+    assert email.html == (FIXTURE / "html.txt").read_text()
+
+
+def test_each_kairos_ask_is_its_own_generation_in_the_stocks_trace() -> None:
+    rec, _ = _four(Kairos(down={2}, clock=Clock()))
+    tracing, exporter = _memory()
+    emit_daily(rec["stocks"][1], rec, tracing.tracer)
+    names = {s.name: s.attributes or {} for s in exporter.get_finished_spans()}
+    first, again = names["kairos"], names["kairos again"]
+    assert first["langfuse.observation.type"] == again["langfuse.observation.type"] == "generation"
+    assert first["langfuse.observation.model.name"] == "DMIND/Kairos"  # down: no model resolved
+    assert json.loads(str(first["langfuse.observation.output"]))["call"] is None
+    assert again["langfuse.observation.model.name"] == "DMIND/Kairos-0.9"
+    assert json.loads(str(again["langfuse.observation.usage_details"])) == {
+        "input": 1000,
+        "output": 50,
+    }
+    assert json.loads(str(again["langfuse.observation.output"]))["call"]["call"] == "Buy"
+    root = names[f"daily {rec['stocks'][1]['ticker']}"]
+    assert json.loads(str(root["langfuse.observation.output"]))["kairos"] == "Buy"

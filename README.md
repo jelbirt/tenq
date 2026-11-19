@@ -48,14 +48,17 @@ A GitHub Actions workflow ([brief.yml](.github/workflows/brief.yml)) runs daily:
 
 A second workflow ([daily.yml](.github/workflows/daily.yml), [daily.py](src/tenq/daily.py)) runs
 on weekdays at 22:30 UTC (5:30pm New York in winter, 6:30pm in summer) and makes
-two calls (Buy, Hold, Sell or Short) on each stock the screen picks (below) after the close, from the same
+three calls (Buy, Hold, Sell or Short) on each stock the screen picks (below) after the close, from the same
 facts sheet ([pack.py](src/tenq/pack.py)): Jev answers text-only questions and fixed rules
 ([rules.py](src/tenq/rules.py), [config/rules.yaml](config/rules.yaml)) turn the answers into a
 call; Opus makes its own call and writes the why for Jev's ([opus.py](src/tenq/opus.py)). Code
-checks every reason and writes every figure in it ([reasons.py](src/tenq/reasons.py)). One email
-shows both calls per stock with links to what each reason cites
+checks every reason and writes every figure in it ([reasons.py](src/tenq/reasons.py)). Then
+Kairos (DMind, through Minara Cloud) answers Jev's questions on the same facts and the same rules
+turn its answers into a third call; it never changes the other two, and a stock it missed while
+down is asked once more at the end of the run. One email shows the three calls per stock, and
+whether they agree, with links to what each reason cites
 ([daily_email.py](src/tenq/daily_email.py)). The day's record, `runs/daily/<day>.json`, holds
-the facts, both calls, the day's closes for reference and the time the calls were made. Each
+the facts, the calls, the day's closes for reference and the time the calls were made. Each
 stock gets its own Langfuse trace, grouped by day. `runs/` is written by both workflows, each
 only its own files.
 
