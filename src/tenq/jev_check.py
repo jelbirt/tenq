@@ -2,10 +2,18 @@
 
     python -m tenq.jev_check CRWD DDOG
     python -m tenq.jev_check --opus CRWD
+    python -m tenq.jev_check --kairos CRWD
 
 With --opus it also runs task 7's two Opus calls on the same pack (Opus's own
 call, and the why for Jev's call) and prints each reason tenq.reasons kept or
 dropped. That needs the claude CLI and CLAUDE_CODE_OAUTH_TOKEN.
+
+With --kairos it also asks Kairos the same questions on the same rendered pack
+and prints its answers beside Jev's, with the pack's size in characters,
+Kairos's tokens, the model that answered and the time taken. It first lists
+the model ids Minara Cloud offers the key. That needs KAIROS_API_KEY. Kairos
+gets no call and no weight here: the rules are not run on its answers. Its
+reply has no cost (billing is on tokens), so none is printed.
 
 Builds today's facts pack for each stock, asks Jev the question file over its
 balanced rounds, turns the answers into a call with the rules file, and prints
@@ -122,6 +130,43 @@ def opus_lines(pack: Pack, call: Call | None, claude: Claude) -> tuple[list[str]
     return lines, own.call
 
 
+def _value(a: Answer | None) -> str:
+    if a is None:
+        return "none"
+    return f"{a.value:.2f}" if isinstance(a.value, float) else str(a.value)
+
+
+def kairos_lines(
+    state: str, questions: QuestionSet, beside: Result, session_id: str
+) -> tuple[list[str], bool]:
+    """Kairos asked the same questions on the same state, printed beside Jev's
+    answers (`beside`), and whether it gave a usable answer."""
+    result = jev.ask(state, questions, provider=jev.KAIROS, session_id=session_id)
+    tokens = f"tokens in {result.input_tokens} out {result.output_tokens}"
+    if result.rounds:
+        tokens += f" ({result.input_tokens // result.rounds} in a round)"
+    asked = result.rounds + len(result.errors)  # each round sent ends in one or the other
+    took = f"{result.duration_ms} ms"
+    if asked:
+        took += f" ({result.duration_ms // asked} a round)"
+    lines = [
+        f"  Kairos {result.resolved_model or 'did not say'} (asked for {result.model}), "
+        f"pack {len(state)} characters",
+        f"  Kairos rounds answered {result.rounds} ({result.answered}), {tokens}, {took}",
+    ]
+    lines += ["  Kairos " + answer_line(a).strip() for a in result.answers.values()]
+    lines += [f"  Kairos error: {e}" for e in result.errors]
+    lines += [f"  Kairos note: {n}" for n in result.notes]
+    if result.error:
+        lines.append(f"  Kairos no answers: {result.error}")
+    lines += [
+        f"  side by side, {q.key}: Jev {_value(beside.answers.get(q.key))}, "
+        f"Kairos {_value(result.answers.get(q.key))}"
+        for q in questions.questions
+    ]
+    return lines, bool(result.answers)
+
+
 def check(
     ticker: str,
     questions: QuestionSet,
@@ -129,6 +174,7 @@ def check(
     now: datetime,
     *,
     claude: Claude | None = None,
+    kairos: bool = False,
     tally: Tally | None = None,
 ) -> tuple[list[str], bool, float]:
     """Lines to print, whether a call came out, and the cost. Never raises for
@@ -139,13 +185,17 @@ def check(
         return [f"== {ticker}: no facts pack ({type(exc).__name__}), nothing asked"], False, 0.0
     if pack is None:
         return [f"== {ticker}: no prices, nothing asked"], False, 0.0
-    result = jev.ask(pack.render(), questions, session_id=f"tenq-check-{ticker}-{pack.day}")
+    state, session_id = pack.render(), f"tenq-check-{ticker}-{pack.day}"
+    result = jev.ask(state, questions, session_id=session_id)
     call = decide(pack, result, rules, questions) if result.answers else None
     lines = report(ticker, result, call)
     lines += [f"  pack note: {n}" for n in pack.notes]
     ok = call is not None
     if tally is not None and call is not None:
         tally.jev.append(call)
+    if kairos:
+        more, answered = kairos_lines(state, questions, result, session_id)
+        lines, ok = lines + more, ok and answered
     if claude is not None:
         more, own = opus_lines(pack, call, claude)
         lines, ok = lines + more, ok and own is not None
@@ -158,6 +208,7 @@ def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description="Ask Jev about today's facts for a few stocks.")
     ap.add_argument("tickers", nargs="+")
     ap.add_argument("--opus", action="store_true", help="also run the two Opus calls")
+    ap.add_argument("--kairos", action="store_true", help="also ask Kairos, beside Jev")
     args = ap.parse_args(argv)
     logging.basicConfig(level=logging.WARNING, format="%(levelname)s %(name)s: %(message)s")
     tickers = list(dict.fromkeys(t.upper() for t in args.tickers))
@@ -169,9 +220,19 @@ def main(argv: list[str] | None = None) -> int:
     rules = load_rules(questions)  # a bad file fails here, before anything is paid for
     now = datetime.now(UTC)
     ok, total, tally = True, 0.0, Tally()
+    if args.kairos:
+        offered = jev.models()
+        listed = (", ".join(offered) or "none") if isinstance(offered, list) else offered
+        print(f"Kairos models offered: {listed}")
     for ticker in tickers:
         lines, called, cost = check(
-            ticker, questions, rules, now, claude=call_claude if args.opus else None, tally=tally
+            ticker,
+            questions,
+            rules,
+            now,
+            claude=call_claude if args.opus else None,
+            kairos=args.kairos,
+            tally=tally,
         )
         print("\n".join(lines))
         ok, total = ok and called, total + cost

@@ -274,3 +274,129 @@ def test_the_balance_lines_count_each_methods_calls() -> None:
         "balance, Opus over 3: Buy 0, Hold 1, Sell 2, Short 0",
     ]
     assert jev_check.Tally().lines() == []
+
+
+class ByProvider:
+    """tenq.jev.ask faked per endpoint: Jev's result, or Kairos's."""
+
+    def __init__(self, jev: Result, kairos: Result) -> None:
+        self.jev, self.kairos = jev, kairos
+        self.calls: list[tuple[str, dict[str, Any]]] = []
+
+    def __call__(self, state: str, questions: QuestionSet, **kw: Any) -> Result:
+        self.calls.append((state, kw))
+        return self.kairos if kw.get("provider") is tenq.jev.KAIROS else self.jev
+
+
+def _kairos_answered() -> Result:
+    r = _good(
+        material=_noul("material", 0.55),
+        direction=_choice("direction", {"bad": 0.6, "good": 0.4}),
+    )
+    r.model, r.resolved_model = "DMIND/Kairos", "DMIND/Kairos-v4"
+    r.rounds, r.answered = 6, [0, 1, 2, 3, 4, 5]
+    r.input_tokens, r.output_tokens, r.duration_ms = 24000, 0, 12000
+    return r
+
+
+def _with_kairos(
+    monkeypatch: pytest.MonkeyPatch, kairos: Result, offered: list[str] | str
+) -> tuple[ByProvider, Pack, list[int]]:
+    pack, listed = _pack(), []
+    asked = ByProvider(_measured(), kairos)
+    monkeypatch.setattr(jev_check, "gather", lambda ticker, now: pack)
+    monkeypatch.setattr(tenq.jev, "ask", asked)
+
+    def models() -> list[str] | str:
+        listed.append(1)
+        return offered
+
+    monkeypatch.setattr(tenq.jev, "models", models)
+    return asked, pack, listed
+
+
+def test_with_kairos_it_is_asked_the_same_on_the_same_pack_and_printed_beside_jev(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    asked, pack, listed = _with_kairos(
+        monkeypatch, _kairos_answered(), ["DMIND/Kairos", "DMIND/Kairos-v4"]
+    )
+    assert jev_check.main(["--kairos", "ACME"]) == 0
+    out = capsys.readouterr().out
+    (jev_state, jev_kw), (k_state, k_kw) = asked.calls
+    assert jev_state == k_state == pack.render()
+    assert "provider" not in jev_kw and k_kw["provider"] is tenq.jev.KAIROS
+    assert jev_kw["session_id"] == k_kw["session_id"] == "tenq-check-ACME-2026-11-03"
+    assert listed == [1]
+    assert out.startswith("Kairos models offered: DMIND/Kairos, DMIND/Kairos-v4\n")
+    size = len(pack.render())
+    assert f"  Kairos DMIND/Kairos-v4 (asked for DMIND/Kairos), pack {size} characters" in out
+    assert (
+        "  Kairos rounds answered 6 ([0, 1, 2, 3, 4, 5]), tokens in 24000 out 0 "
+        "(4000 in a round), 12000 ms (2000 a round)"
+    ) in out
+    assert "  Kairos direction: bad" in out
+    assert "  side by side, material: Jev 0.80, Kairos 0.55" in out
+    assert "  side by side, direction: Jev good, Kairos bad" in out
+    assert "  side by side, risk: Jev 0.10, Kairos 0.10" in out
+    assert out.index(": Buy (confidence") < out.index("  Kairos DMIND")  # Jev's lines first
+    assert out.rstrip().endswith("total Jev cost $0.000380")  # Kairos adds no cost
+
+
+def test_kairos_giving_no_answer_fails_the_check_but_keeps_jevs_lines(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    refused = Result("jev-q9", "DMIND/Kairos", duration_ms=900)
+    refused.errors = ["HTTP 413 [request_too_large] state is 7012 tokens (request_id r1)"]
+    refused.error = f"Kairos gave no usable answer ({refused.errors[0]})"
+    _with_kairos(monkeypatch, refused, "HTTP 401")
+    assert jev_check.main(["--kairos", "ACME"]) == 1
+    out = capsys.readouterr().out
+    assert "Kairos models offered: HTTP 401" in out
+    assert ": Buy (confidence" in out  # Jev's call still printed
+    assert "  Kairos did not say (asked for DMIND/Kairos)" in out
+    assert "  Kairos rounds answered 0 ([]), tokens in 0 out 0, 900 ms (900 a round)" in out
+    assert f"  Kairos error: {refused.errors[0]}" in out
+    assert f"  Kairos no answers: {refused.error}" in out
+    assert "  side by side, direction: Jev good, Kairos none" in out
+
+
+def test_without_kairos_nothing_about_it_is_asked_or_printed(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    asked, _, listed = _with_kairos(monkeypatch, _kairos_answered(), ["DMIND/Kairos"])
+    assert jev_check.main(["ACME"]) == 0
+    out = capsys.readouterr().out
+    assert len(asked.calls) == 1 and "provider" not in asked.calls[0][1] and listed == []
+    assert "Kairos" not in out and "side by side" not in out
+
+
+def test_the_check_never_prints_the_kairos_key(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    import dataclasses
+    import json
+
+    secret = "mk-live-CHECK-SECRET-abcdef0123456789"
+    monkeypatch.setenv("KAIROS_API_KEY", secret)
+    echo = json.dumps({"detail": {"error_type": secret, "message": f"key {secret} refused"}})
+    seen: list[dict[str, str]] = []
+
+    def post(url: str, headers: dict[str, str], body: bytes) -> tuple[int, str]:
+        seen.append(headers)
+        return 401, echo
+
+    monkeypatch.setattr(tenq.jev, "KAIROS", dataclasses.replace(tenq.jev.KAIROS, post=post))
+    monkeypatch.setattr(jev_check, "gather", lambda ticker, now: _pack())
+    real = tenq.jev.ask
+    monkeypatch.setattr(
+        tenq.jev,
+        "ask",
+        lambda state, q, **kw: real(state, q, **kw) if "provider" in kw else _measured(),
+    )
+    monkeypatch.setattr(tenq.jev, "models", lambda: "HTTP 401 key [key] refused")
+    assert jev_check.main(["--kairos", "ACME"]) == 1
+    out = capsys.readouterr().out
+    assert seen and seen[0]["Authorization"] == f"Bearer {secret}"  # it was sent, only sent
+    assert secret not in out
+    assert "  Kairos error: HTTP 401 key [key] refused" in out
