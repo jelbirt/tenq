@@ -150,11 +150,14 @@ def agreement(stock: dict[str, Any]) -> str:
 
 
 def subject_for(record: dict[str, Any]) -> str:
+    """The subject counts agreement among all three calls on a day with at least
+    one Kairos call; on any other day (a record before Kairos, no key, Kairos down
+    all day) it keeps the two-call wording, counting Jev and Opus."""
     stocks = record["stocks"]
     what = "daily check" if record.get("check_id") else "daily"
     weekly = "Weekly scorecard + " if (record.get("scorecard") or {}).get("lines") else ""
     failed = "SCREEN FAILED + " if screen_failed(record) else ""
-    if "kairos_on" in record:
+    if any("Kairos" in calls_of(s) for s in stocks):
         three = [s for s in stocks if len(calls_of(s)) == 3]
         agree = sum(1 for s in three if agreement(s) == "all agree")
         return (

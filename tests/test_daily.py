@@ -1478,6 +1478,10 @@ def test_without_a_key_kairos_is_noted_as_not_asked(
     for stock in rec["stocks"]:
         assert stock["kairos"] == {"error": "not asked: KAIROS_API_KEY not set"}
     assert "Kairos made no call (not asked: KAIROS_API_KEY not set)." in outbox.sent[0].text
+    # no Kairos call today: the subject keeps the two-call wording
+    assert (
+        outbox.sent[0].subject == "tenq daily, session 2026-11-04: the two calls agree on 0 of 20"
+    )
     # the real adapter, keyless, is Kairos's and asks nothing
     result = daily.ask_kairos("Facts.", QUESTIONS)
     assert result.error == "Kairos skipped: KAIROS_API_KEY not set" and not result.down
@@ -1525,6 +1529,32 @@ def test_the_subject_counts_only_stocks_with_all_three_calls() -> None:
     ]
     record = {"day": "2026-11-04", "kairos_on": True, "stocks": stocks}
     assert subject_for(record) == "tenq daily, session 2026-11-04: all three agree on 2 of 3"
+
+
+def test_with_no_kairos_call_the_subject_counts_the_two_calls() -> None:
+    stocks = [
+        _calls("Buy", "Buy", None),
+        _calls("Buy", "Hold", None),
+        _calls("Sell", None, None),  # one call: not counted
+    ]
+    record = {"day": "2026-11-04", "kairos_on": True, "stocks": stocks}
+    assert subject_for(record) == "tenq daily, session 2026-11-04: the two calls agree on 1 of 2"
+    # one Kairos call anywhere turns the day to three-call counting
+    stocks.append(_calls("Hold", "Hold", "Hold"))
+    assert subject_for(record) == "tenq daily, session 2026-11-04: all three agree on 1 of 1"
+
+
+def test_kairos_down_all_day_keeps_the_two_call_subject(tmp_path: Path) -> None:
+    outbox = Outbox()
+    ctx = _ctx(kairos=Kairos(down=ALWAYS))
+    assert _run(tmp_path, ctx=ctx, mailer=outbox) == 0
+    rec = _record(tmp_path)
+    assert rec["kairos_on"] is True and not any("kairos_call" in s for s in rec["stocks"])
+    email = outbox.sent[0]
+    assert email.subject == "tenq daily, session 2026-11-04: the two calls agree on 0 of 20"
+    # the table and the notes keep their three-method layout
+    assert "Stock | Jev | Opus | Kairos | agreement" in email.text
+    assert "Kairos made no call (" in email.text
 
 
 def test_the_disclaimer_names_the_three_methods() -> None:
