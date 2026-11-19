@@ -1456,10 +1456,15 @@ def test_a_kairos_failure_changes_no_other_call_and_not_the_exit_code(
     assert "| no call |" in outbox.sent[0].text
 
 
-def test_a_kairos_call_alone_is_a_call(tmp_path: Path) -> None:
+def test_a_kairos_call_alone_still_fails_the_run(tmp_path: Path) -> None:
+    # Kairos never changes the exit code: with no call from Jev or Opus on any
+    # stock the run exits 1, as on main, though Kairos made every call
     ctx = _ctx(Jev(down_after=0), kairos=Kairos())
     ctx.claude = None
-    assert _run(tmp_path, ctx=ctx) == 0
+    assert _run(tmp_path, ctx=ctx) == 1
+    stocks = _record(tmp_path)["stocks"]
+    assert all("kairos_call" in s for s in stocks)
+    assert not any(daily.called(s) for s in stocks)
 
 
 def test_without_a_key_kairos_is_noted_as_not_asked(

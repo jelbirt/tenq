@@ -53,9 +53,9 @@ each stock it missed while down or failing is asked once more (after a
 pause), and Kairos down again ends that pass. Kairos has a time bound of its
 own (KAIROS_BUDGET_S, KAIROS_LAST_S), held by the clock: an ask still going
 past it is left unanswered. With no KAIROS_API_KEY it is noted as not asked.
-Exits
-1 when the email fails, when no stock got a call from any method, when the
-day's record needs a person, or when no settled session is found.
+Kairos never changes the exit code. Exits 1 when the email fails, when no
+stock got a call from Jev or Opus, when the day's record needs a person, or
+when no settled session is found.
 """
 
 from __future__ import annotations
@@ -520,8 +520,9 @@ def kairos_again(
 
 
 def called(stock: dict[str, Any]) -> bool:
-    """Any method made a call on this stock."""
-    return "call" in stock or bool((stock.get("opus") or {}).get("call")) or "kairos_call" in stock
+    """Jev or Opus made a call on this stock. Kairos's call does not count: it never
+    changes the exit code, as it never changes the other two calls."""
+    return "call" in stock or bool((stock.get("opus") or {}).get("call"))
 
 
 def why_no_kairos(ctx: Context) -> str | None:
