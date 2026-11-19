@@ -18,7 +18,7 @@ import pytest
 from test_jev import QUESTIONS, _answers
 
 from tenq import jev
-from tenq.jev import KAIROS, QuestionSet, ask, load_questions
+from tenq.jev import KAIROS, QuestionSet, ask, load_questions, short_error
 
 SECRET = "mk-live-KAIROS-SECRET-0123456789abcdef"
 
@@ -449,3 +449,55 @@ def test_a_retry_wait_longer_than_the_time_left_is_not_waited(questions: Questio
     assert slept == [] and len(server.calls) == 1
     assert result.errors == ["HTTP 429"] and result.answers == {}
     assert "out of time after 0 of 4 rounds" in result.notes
+
+
+BUSY = json.dumps(
+    {
+        "error": {
+            "type": "channel_unavailable",
+            "code": "evil.example",
+            "message": 'Service busy, see https://bit.ly/x9 or <a href="https://evil.example/p">status</a>',
+            "request_id": "req-123",
+        }
+    }
+)
+
+
+def test_the_short_error_keeps_none_of_the_replys_own_words(questions: QuestionSet) -> None:
+    result = _kairos(questions, Server((503, BUSY), (503, BUSY)), slept=[])
+    assert result.down and result.error is not None
+    assert "https://bit.ly/x9" in result.error and "req-123" in result.error  # kept in full
+    assert (
+        short_error(result.error) == "Kairos gave no usable answer (HTTP 503 [channel_unavailable])"
+    )
+
+
+@pytest.mark.parametrize(
+    ("error", "short"),
+    [
+        ("HTTP 503", "HTTP 503"),
+        ("Kairos gave no usable answer (HTTP 429)", "Kairos gave no usable answer (HTTP 429)"),
+        (
+            "Kairos gave no usable answer (HTTP 500 Busy [x] see http://a.b (request_id r))",
+            "Kairos gave no usable answer (HTTP 500)",
+        ),
+        (
+            "Kairos gave no usable answer (response without answers [bad_shape] see a.b)",
+            "Kairos gave no usable answer (response without answers [bad_shape])",
+        ),
+        (
+            "Kairos gave no usable answer (HTTP 400 [a.b c:d e/f] x)",
+            "Kairos gave no usable answer (HTTP 400)",
+        ),
+        (
+            "Kairos gave no usable answer (request error TimeoutError)",
+            "Kairos gave no usable answer (request error TimeoutError)",
+        ),
+        (
+            "not asked: Kairos was down earlier in this run",
+            "not asked: Kairos was down earlier in this run",
+        ),
+    ],
+)
+def test_the_short_error_of_each_shape(error: str, short: str) -> None:
+    assert short_error(error) == short

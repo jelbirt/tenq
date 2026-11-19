@@ -1565,3 +1565,39 @@ def test_each_kairos_ask_is_its_own_generation_in_the_stocks_trace() -> None:
     assert json.loads(str(again["langfuse.observation.output"]))["call"]["call"] == "Buy"
     root = names[f"daily {rec['stocks'][1]['ticker']}"]
     assert json.loads(str(root["langfuse.observation.output"]))["kairos"] == "Buy"
+
+
+def test_the_words_of_a_kairos_reply_never_reach_the_email() -> None:
+    from test_kairos import BUSY
+
+    def kairos(state: str, questions: Any, **kw: Any) -> Result:
+        def post(url: str, headers: dict[str, str], data: bytes) -> tuple[int, str]:
+            return 503, BUSY
+
+        return jev.ask(state, questions, provider=jev.KAIROS, post=post, sleep=lambda s: None, **kw)
+
+    rec, _ = _four(Kairos(), replace(_ctx(), kairos=kairos))
+    first = rec["stocks"][0]["kairos"]
+    assert "https://bit.ly/x9" in first["error"]  # the record keeps it whole
+    email = render(rec)
+    for part in (email.subject, email.text, email.html):
+        for word in ("bit.ly", "evil.example", "Service busy", "req-123", "&lt;a ", '<a href="'):
+            assert word not in part
+    short = "HTTP 503 [channel_unavailable]"
+    assert (
+        f"Kairos made no call (asked again at the end of the run: Kairos gave no usable answer ({short}))."
+        in email.text
+    )
+    # only the first stock was asked; the rest were skipped while Kairos was down
+    assert email.text.count(short) == email.html.count(short) == 1
+
+
+def test_a_kairos_call_asked_again_shows_its_first_error_short() -> None:
+    from tenq.daily_email import _kairos_notes
+
+    error = "Kairos gave no usable answer (HTTP 503 [busy] see https://bit.ly/x9)"
+    stock = {"kairos_call": {"call": "Buy"}, "kairos": {"first": {"error": error}}}
+    assert _kairos_notes(stock) == [
+        "Kairos's call came when it was asked again at the end of the run "
+        "(Kairos gave no usable answer (HTTP 503 [busy]))."
+    ]

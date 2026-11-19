@@ -18,6 +18,7 @@ from typing import Any
 from urllib.parse import urlsplit
 
 from tenq.deliver import Email
+from tenq.jev import short_error
 
 DISCLAIMER = (
     "Not investment advice. Three methods each make a call on each stock the day's "
@@ -237,15 +238,16 @@ def _notes(stock: dict[str, Any], kairos: bool = False) -> list[str]:
 
 
 def _kairos_notes(stock: dict[str, Any]) -> list[str]:
-    """Why Kairos made no call, and whether it was asked again at the end of the run."""
+    """Why Kairos made no call, and whether it was asked again at the end of
+    the run. Its errors are shown short: never the words of Kairos's reply."""
     kairos = stock.get("kairos") or {}
     first = kairos.get("first")
     if "kairos_call" in stock:
         if isinstance(first, dict):
-            why = first.get("error") or "no usable answers"
+            why = short_error(first.get("error") or "no usable answers")
             return [f"Kairos's call came when it was asked again at the end of the run ({why})."]
         return []
-    why = kairos.get("error") or "no usable answers"
+    why = short_error(kairos.get("error") or "no usable answers")
     if kairos.get("again"):
         why += f"; {kairos['again']}"
     if isinstance(first, dict):
