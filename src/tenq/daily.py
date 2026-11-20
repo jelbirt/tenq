@@ -1,4 +1,4 @@
-"""The daily run: both calls on each stock the screen picks after the close
+"""The daily run: three calls on each stock the screen picks after the close
 (tenq.screen; the watchlist if the screen fails), one email, one record, and a
 trace per stock.
 
@@ -9,8 +9,12 @@ trace per stock.
 For each stock: the facts pack for its latest settled session; Jev answers
 the question file and the rules turn the answers into Jev's call; Opus makes
 its own call from the same pack and writes the why for Jev's call; code
-checks every reason (tenq.reasons). Then one email with both calls per stock
-(tenq.daily_email) and one Langfuse trace per stock, grouped by day.
+checks every reason (tenq.reasons). Once Jev and Opus are done with every
+stock, Kairos answers the same questions on each stock's same pack, and the
+same rules turn its answers into its own call; Kairos never changes Jev's or
+Opus's call, and its pass comes last so it never takes their time. Then one
+email with the three calls per stock (tenq.daily_email) and one Langfuse
+trace per stock, grouped by day.
 
 The record, runs/daily/<day>.json, is written after every stock and before
 the email goes out. It holds everything the email is rendered from, plus
@@ -22,7 +26,7 @@ scored from. So:
   holiday (the latest session is one already done) or a rerun sends nothing
   twice;
 - a run on a day whose record says the email failed sends it again from the
-  record, without asking either model again;
+  record, without asking any model again;
 - a record that is unreadable, unfinished, or whose email may have gone out
   (it was claimed for sending, or the mail server's answer was lost) is never
   run or sent again by code: a person looks first.
@@ -42,9 +46,16 @@ run, and the scorecard ignores it.
 
 Fails open: if Jev is down, Opus's calls still go out, marked; if Claude is
 at its limit, fails twice in a row, or the run's time budget for it runs out,
-Jev's calls go out without the why. Exits 1 when the email fails, when no
-stock got a call from either method, when the day's record needs a person,
-or when no settled session is found.
+Jev's calls go out without the why. Kairos failing alone changes nothing
+else: its stock shows no Kairos call and a note saying why. Once Kairos is
+found down it is not asked for the rest of its pass; after its last stock,
+each stock it missed while down or failing is asked once more (after a
+pause), and Kairos down again ends that pass. Kairos has a time bound of its
+own (KAIROS_BUDGET_S, KAIROS_LAST_S), held by the clock: an ask still going
+past it is left unanswered. With no KAIROS_API_KEY it is noted as not asked.
+Kairos never changes the exit code. Exits 1 when the email fails, when no
+stock got a call from Jev or Opus, when the day's record needs a person, or
+when no settled session is found.
 """
 
 from __future__ import annotations
@@ -54,7 +65,9 @@ import hashlib
 import html
 import json
 import logging
+import math
 import os
+import threading
 import time
 import uuid
 from collections.abc import Callable
@@ -90,6 +103,22 @@ DAILY_DIR = "daily"
 # Opus is skipped once the run passes this. The calls step's limit is 165 min: this
 # leaves room for one claude run still going (up to 5 min) and Jev on the stocks left.
 OPUS_BUDGET_S = 140 * 60
+# Kairos is asked after Jev and Opus are done with every stock, so it only ever takes
+# time they left. Its own bound: at most KAIROS_BUDGET_S in a run, its pass, pause and
+# retries together (about a minute a stock when well: 20 to 25 minutes a day), so a slow
+# Kairos delays the email by that much at most; and no Kairos request starts after
+# KAIROS_LAST_S from the run's start. The one still going gets jev.KAIROS_TIMEOUT_S
+# (5 min) more, then is left unanswered (_within), so Kairos is done by 155 min,
+# inside the calls step's 165, however slowly its server answers.
+KAIROS_BUDGET_S = 45 * 60
+KAIROS_LAST_S = 150 * 60
+# A stock Kairos missed is asked again only this long after its last failed ask:
+# its 2026-11-19 outage was 30 s.
+KAIROS_PAUSE_S = 2 * 60
+KAIROS_DOWN = "Kairos was down earlier in this run"
+KAIROS_DOWN_AGAIN = "Kairos was down again at the end of the run"
+KAIROS_OUT = "the run's time for Kairos ran out"
+KAIROS_LATE = "still going when the run's time for Kairos ran out; left unanswered"
 CLAUDE_FAILS = 2  # this many failed claude runs in a row: Claude is treated as down
 STAGES = ("all", "calls", "claim", "send", "notice")
 SHEET_NOTE = "(this record's pack, rendered; message_sha256 is of the whole message)"
@@ -98,6 +127,11 @@ Gather = Callable[[str, datetime], Pack | None]
 Ask = Callable[..., Result]
 Mailer = Callable[[Any], tuple[bool | None, str]]
 Tracer = Callable[..., tuple[bool, str, dict[str, str]]]  # (record, skip=tickers already stored)
+
+
+def ask_kairos(state: str, questions: QuestionSet, **kw: Any) -> Result:
+    """Kairos through the one adapter: Jev's questions on Kairos's endpoint."""
+    return jev.ask(state, questions, provider=jev.KAIROS, **kw)
 
 
 @dataclass
@@ -114,6 +148,12 @@ class Context:
     claude: Claude | None = call_claude  # None: Opus is off for this run
     opus_budget_s: float = OPUS_BUDGET_S
     clock: Callable[[], float] = time.monotonic
+    kairos: Ask | None = ask_kairos  # None: Kairos is off for this run
+    kairos_budget_s: float = KAIROS_BUDGET_S
+    kairos_last_s: float = KAIROS_LAST_S
+    # an ask still going this long after Kairos's time ran out is left unanswered
+    kairos_grace_s: float = jev.KAIROS_TIMEOUT_S
+    sleep: Callable[[float], None] = time.sleep  # Kairos's pause before its retries
 
 
 @dataclass
@@ -126,6 +166,16 @@ class State:
     claude_fails: int = 0  # failed claude runs in a row
     tally: Tally = field(default_factory=Tally)
     jev_cost: float = 0.0
+    kairos_last: float = math.inf  # on ctx.clock: no Kairos request starts after it
+    kairos_off: str | None = None  # why Kairos is not asked again in this run, retries too
+    kairos_down: str | None = None  # why Kairos is skipped for the rest of this pass
+    kairos_failed_at: float | None = None  # on ctx.clock: its last ask with no call
+    kairos_spent: float = 0.0  # seconds Kairos has taken in this run
+    kairos_tokens: int = 0  # Kairos's input tokens in this run (it bills on tokens)
+    # each stock with a facts pack, for Kairos's pass after Jev's and Opus's
+    packs: list[tuple[dict[str, Any], Pack]] = field(default_factory=list)
+    # stocks Kairos missed while down or failing, for one more ask at the end
+    kairos_missed: list[tuple[dict[str, Any], Pack]] = field(default_factory=list)
 
     def claude_ran(self, run: AgentRun) -> None:
         if run.usage_limit:
@@ -142,10 +192,30 @@ class State:
             self.claude_down = "the run's time budget for Opus ran out"
         return self.claude_down
 
+    def kairos_left(self, ctx: Context, since: float | None = None) -> float:
+        """Seconds Kairos may still take (counting an ask begun at `since`): the
+        less of what is left of its budget and the time to its last start."""
+        now = ctx.clock()
+        spent = self.kairos_spent + (0.0 if since is None else now - since)
+        return min(ctx.kairos_budget_s - spent, self.kairos_last - now)
+
+    def kairos_skipped(self, ctx: Context) -> str | None:
+        """Why Kairos is not asked now; once its time is out, for good."""
+        if self.kairos_off is None and self.kairos_left(ctx) <= 0:
+            self.kairos_off = KAIROS_OUT
+        return self.kairos_off or self.kairos_down
+
+    def kairos_missed_one(self, out: dict[str, Any], pack: Pack, at: float | None) -> None:
+        """Keep a stock for one more ask at the end; `at` is when an ask on it
+        failed (None: it was skipped while Kairos was down, never asked)."""
+        self.kairos_missed.append((out, pack))
+        if at is not None:
+            self.kairos_failed_at = at
+
 
 class Steps:
-    def __init__(self) -> None:
-        self.items: list[dict[str, Any]] = []
+    def __init__(self, items: list[dict[str, Any]] | None = None) -> None:
+        self.items: list[dict[str, Any]] = [] if items is None else items
 
     def add(self, name: str, start: float, output: Any = None, error: str | None = None) -> None:
         self.items.append(
@@ -189,7 +259,8 @@ def _call_dict(call: Call) -> dict[str, Any]:
 
 
 def run_stock(ticker: str, company: str, day: date, ctx: Context, state: State) -> dict[str, Any]:
-    """Both calls for one stock, as a record entry. Never raises: a failure in
+    """Jev's and Opus's calls for one stock, as a record entry (Kairos's come
+    later, in kairos_pass). Never raises: a failure in
     code is recorded on this stock (its type only, since exception text is not
     trusted to be clean) and the run goes on to the next."""
     steps = Steps()
@@ -207,6 +278,7 @@ def run_stock(ticker: str, company: str, day: date, ctx: Context, state: State) 
         _facts(out, pack, ticker, day, steps, t)
     except Exception as exc:
         return out | {"error": f"the facts pack could not be read ({type(exc).__name__})"}
+    state.packs.append((out, pack))  # Kairos is asked on it after the last stock
 
     call: Call | None = None
     try:
@@ -310,9 +382,156 @@ def _opus(
     }
 
 
+def kairos_pass(
+    record: dict[str, Any], ctx: Context, state: State, save: Callable[[dict[str, Any]], None]
+) -> None:
+    """Kairos's call on each stock with a facts pack, once Jev and Opus are
+    done with every stock; then once more on each stock it missed while down
+    or failing (kairos_again). Never raises. The record is saved after each."""
+    for out, pack in state.packs:
+        try:
+            _kairos(out, pack, ctx, state)
+        except Exception as exc:
+            _kairos_failed(out, exc)
+            state.kairos_missed_one(out, pack, ctx.clock())
+        log.info("%s: Kairos %s", out["ticker"], (out.get("kairos_call") or {}).get("call"))
+        record["kairos_input_tokens"] = state.kairos_tokens
+        save(record)
+    kairos_again(record, ctx, state, save)
+
+
+def _kairos_failed(out: dict[str, Any], exc: Exception) -> None:
+    out["kairos"] = (out.get("kairos") or {}) | {"error": f"failed in code ({type(exc).__name__})"}
+    out.pop("kairos_call", None)
+
+
+def _kairos(out: dict[str, Any], pack: Pack, ctx: Context, state: State) -> None:
+    """Kairos's call on one stock in its pass. A stock it missed while down or
+    failing is kept for one more ask at the end (kairos_again)."""
+    skipped = state.kairos_skipped(ctx)
+    if skipped:
+        out["kairos"] = {"error": f"not asked: {skipped}"}
+        if state.kairos_off is None:  # skipped only because Kairos is down
+            state.kairos_missed_one(out, pack, None)
+        return
+    if _ask_kairos(out, pack, ctx, state, "kairos", KAIROS_DOWN) is None:
+        state.kairos_missed_one(out, pack, ctx.clock())
+
+
+def _ask_kairos(
+    out: dict[str, Any], pack: Pack, ctx: Context, state: State, step: str, down: str
+) -> Call | None:
+    """Kairos asked Jev's questions on the same pack, and its call by the same
+    rules. `down` is why the stocks after this one skip Kairos if this ask
+    finds it down."""
+    kairos = ctx.kairos
+    assert kairos is not None  # kairos_skipped said it is on
+    t, began = time.time(), ctx.clock()
+    facts, sid = pack.render(), f"tenq-daily-{out['ticker']}-{pack.day}"
+    try:
+        result = _within(
+            lambda: kairos(
+                facts,
+                ctx.questions,
+                session_id=sid,
+                time_left=lambda: state.kairos_left(ctx, began),
+            ),
+            max(state.kairos_left(ctx), 0.0) + ctx.kairos_grace_s,
+        )
+    finally:
+        state.kairos_spent += ctx.clock() - began
+    if result is None:
+        state.kairos_off = KAIROS_OUT
+        out["kairos"] = {"error": KAIROS_LATE}
+        Steps(out["steps"]).add(step, t, {"answers": 0}, KAIROS_LATE)
+        return None
+    if result.down:
+        state.kairos_down = down
+    state.kairos_tokens += result.input_tokens
+    out["kairos"] = result.to_dict()
+    call = decide(pack, result, ctx.rules, ctx.questions) if result.answers else None
+    Steps(out["steps"]).add(step, t, {"answers": len(result.answers)}, result.error)
+    if call is None:
+        return None
+    out["kairos_call"] = _call_dict(call)
+    state.tally.kairos.append(call)
+    return call
+
+
+def _within(ask: Callable[[], Result], seconds: float) -> Result | None:
+    """ask() in a thread of its own; None once `seconds` pass with it still
+    going. The socket timeout bounds each read, not a whole reply, so only
+    this holds Kairos to its time. The thread left behind is a daemon: it
+    starts no new round (its time_left is out) and the process does not wait
+    for it. An exception in ask() is raised here."""
+    done: list[Result] = []
+    failed: list[Exception] = []
+
+    def run() -> None:
+        try:
+            done.append(ask())
+        except Exception as exc:
+            failed.append(exc)
+
+    worker = threading.Thread(target=run, name="kairos", daemon=True)
+    worker.start()
+    worker.join(seconds)
+    if failed:
+        raise failed[0]
+    return done[0] if done else None
+
+
+def kairos_again(
+    record: dict[str, Any], ctx: Context, state: State, save: Callable[[dict[str, Any]], None]
+) -> None:
+    """After Kairos's last stock, ask it once more on each stock it missed
+    while down or failing (never one with no facts pack: it never got that
+    far), first waiting until KAIROS_PAUSE_S after its last failed ask.
+    Kairos down again, or out of time, ends the pass, and each stock it did
+    not reach says why. The record is saved after each ask."""
+    missed, state.kairos_missed = state.kairos_missed, []
+    if not missed:
+        return
+    state.kairos_down = None
+    if state.kairos_failed_at is not None and not state.kairos_skipped(ctx):
+        wait = state.kairos_failed_at + KAIROS_PAUSE_S - ctx.clock()
+        if wait >= state.kairos_left(ctx):
+            state.kairos_off = KAIROS_OUT
+        elif wait > 0:
+            began = ctx.clock()
+            ctx.sleep(wait)
+            state.kairos_spent += ctx.clock() - began
+    for n, (out, pack) in enumerate(missed):
+        skipped = state.kairos_skipped(ctx)
+        if skipped:
+            for left, _ in missed[n:]:
+                left["kairos"]["again"] = f"not asked again: {skipped}"
+            save(record)
+            return
+        first = out.pop("kairos")
+        try:
+            _ask_kairos(out, pack, ctx, state, "kairos again", KAIROS_DOWN_AGAIN)
+        except Exception as exc:
+            _kairos_failed(out, exc)
+        out["kairos"]["first"] = first  # what Kairos's first pass recorded
+        log.info("%s: Kairos again %s", out["ticker"], (out.get("kairos_call") or {}).get("call"))
+        record["kairos_input_tokens"] = state.kairos_tokens
+        save(record)
+
+
 def called(stock: dict[str, Any]) -> bool:
-    """Either method made a call on this stock."""
+    """Jev or Opus made a call on this stock. Kairos's call does not count: it never
+    changes the exit code, as it never changes the other two calls."""
     return "call" in stock or bool((stock.get("opus") or {}).get("call"))
+
+
+def why_no_kairos(ctx: Context) -> str | None:
+    """Why Kairos is not asked at all in this run, or None when it is."""
+    if ctx.kairos is None:
+        return "Kairos was off for this run"
+    if not os.environ.get(jev.KAIROS.key_env):
+        return f"{jev.KAIROS.key_env} not set"
+    return None
 
 
 def record_path(runs: Path, day: date, check_id: str | None = None) -> Path:
@@ -418,6 +637,7 @@ def _summary(record: dict[str, Any]) -> None:
     for line in record["balance"]:
         print(line)
     print(f"total Jev cost ${record['jev_cost']:.6f}")
+    print(f"total Kairos input tokens {record['kairos_input_tokens']}")
 
 
 def _finish(record: dict[str, Any], email: bool) -> int:
@@ -474,8 +694,13 @@ def run_day(
 ) -> dict[str, Any]:
     """Every stock's calls, as the day's record (email and trace not yet sent).
     `save` gets the record after every stock, unfinished until the last."""
-    # The budget runs from `started` (before the screen), so screen time counts too.
-    state = State(deadline=(ctx.clock() if started is None else started) + ctx.opus_budget_s)
+    # The budgets run from `started` (before the screen), so screen time counts too.
+    start = ctx.clock() if started is None else started
+    state = State(
+        deadline=start + ctx.opus_budget_s,
+        kairos_last=start + ctx.kairos_last_s,
+        kairos_off=why_no_kairos(ctx),
+    )
     record: dict[str, Any] = {
         "kind": KIND,
         "run_id": str(uuid.uuid4()),
@@ -499,12 +724,15 @@ def run_day(
         },
         "benchmark": {"ticker": BENCHMARK, "day": day.isoformat(), "close": bench_close},
         "opus_on": ctx.claude is not None,
+        # Kairos is asked (it has a key and is not off); each stock says why not
+        "kairos_on": state.kairos_off is None,
         # which stocks were asked and why: the screen's result, or why it failed
         # and the watchlist ran instead; None for a check run on named stocks
         "screen": screen,
         "stocks": [],
         "balance": [],
         "jev_cost": 0.0,
+        "kairos_input_tokens": 0,
         "email": {"sent": False, "status": "email pending"},
         "trace": {"stored": False, "status": "trace pending", "ids": {}},
     }
@@ -519,6 +747,7 @@ def run_day(
         record["stocks"].append(stock)
         record["jev_cost"] = state.jev_cost
         save(record)
+    kairos_pass(record, ctx, state, save)
     record |= {"ended_at": time.time(), "complete": True, "balance": state.tally.lines()}
     save(record)
     return record
@@ -573,11 +802,11 @@ def main(
     tracer: Tracer = send_daily_traces,
 ) -> int:
     ap = argparse.ArgumentParser(
-        description="Both daily calls on the screen's picks (the watchlist if it fails), emailed."
+        description="The daily calls on the screen's picks (the watchlist if it fails), emailed."
     )
     ap.add_argument("--ticker", action="append", help="a check on these stocks only")
     ap.add_argument("--no-email", action="store_true", help="a check that emails nothing")
-    ap.add_argument("--no-opus", action="store_true", help="a check of Jev's calls only")
+    ap.add_argument("--no-opus", action="store_true", help="a check without Opus's calls")
     ap.add_argument("--runs", type=Path, default=Path("runs"))
     ap.add_argument(
         "--stage",

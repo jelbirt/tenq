@@ -1,9 +1,11 @@
 """The daily email, rendered by code from the day's record (see tenq.daily).
 
 It is rendered only from the record, so a resent email says exactly what was
-recorded. At the top, one row per stock shows Jev's call, Opus's call and
-whether they agree. Under that, each stock gets its checked reasons with
-links to what they cite, then the balance lines and the disclaimer.
+recorded. At the top, one row per stock shows Jev's, Opus's and Kairos's
+calls and how they agree. Under that, each stock gets its checked reasons
+with links to what they cite, then the balance lines and the disclaimer. A
+record made before Kairos was asked (it has no "kairos_on") renders exactly
+as it did then: two calls, and whether they agree.
 
 Every reason shown passed tenq.reasons, so every figure in it was written by
 code. A link is shown only for an http(s) address: feed links are untrusted.
@@ -16,8 +18,17 @@ from typing import Any
 from urllib.parse import urlsplit
 
 from tenq.deliver import Email
+from tenq.jev import short_error
 
 DISCLAIMER = (
+    "Not investment advice. Three methods each make a call on each stock the day's "
+    "screen picked, from the same public facts: Jev and Kairos each answer the same "
+    "questions, and the same fixed rules turn each one's answers into a call; Opus "
+    "makes its own. This is an experiment, and all three are scored against prices "
+    "later. Every figure in a reason was written by code from the facts sheet."
+)
+# for a record made before Kairos was asked, so a resent email is the one first sent
+DISCLAIMER_TWO = (
     "Not investment advice. Two methods each make a call on each stock the day's "
     "screen picked, from the same public facts: Jev answers questions and fixed "
     "rules turn the answers into a call; Opus makes its own. This is an experiment, "
@@ -94,7 +105,15 @@ def _opus_cell(stock: dict[str, Any]) -> str:
     return "no call"
 
 
+def _kairos_cell(stock: dict[str, Any]) -> str:
+    call = stock.get("kairos_call")
+    if call:
+        return f"{call['call']} {_conf(call['confidence'])}"
+    return "no call"
+
+
 def _agree(stock: dict[str, Any]) -> str:
+    """Jev's and Opus's calls: the agreement column of a record without Kairos."""
     jev = (stock.get("call") or {}).get("call")
     own = (stock.get("opus") or {}).get("call")
     if not jev or not own:
@@ -102,13 +121,51 @@ def _agree(stock: dict[str, Any]) -> str:
     return "agree" if jev == own else "differ"
 
 
+def calls_of(stock: dict[str, Any]) -> dict[str, str]:
+    """The call each method made on this stock, by name; a method with none is left out."""
+    made = {
+        "Jev": (stock.get("call") or {}).get("call"),
+        "Opus": (stock.get("opus") or {}).get("call"),
+        "Kairos": (stock.get("kairos_call") or {}).get("call"),
+    }
+    return {name: str(call) for name, call in made.items() if call}
+
+
+def agreement(stock: dict[str, Any]) -> str:
+    """How the methods that made a call agree: "all agree", "<method> differs"
+    when only one is different, "all differ", "agree" or "differ" between two,
+    and nothing with fewer than two calls."""
+    made = calls_of(stock)
+    calls = list(made.values())
+    if len(calls) < 2:
+        return ""
+    if len(calls) == 2:
+        return "agree" if calls[0] == calls[1] else "differ"
+    if len(set(calls)) == 1:
+        return "all agree"
+    if len(set(calls)) == len(calls):
+        return "all differ"
+    odd = next(name for name, call in made.items() if calls.count(call) == 1)
+    return f"{odd} differs"
+
+
 def subject_for(record: dict[str, Any]) -> str:
+    """The subject counts agreement among all three calls on a day with at least
+    one Kairos call; on any other day (a record before Kairos, no key, Kairos down
+    all day) it keeps the two-call wording, counting Jev and Opus."""
     stocks = record["stocks"]
-    both = [s for s in stocks if _agree(s)]
-    agree = sum(1 for s in both if _agree(s) == "agree")
     what = "daily check" if record.get("check_id") else "daily"
     weekly = "Weekly scorecard + " if (record.get("scorecard") or {}).get("lines") else ""
     failed = "SCREEN FAILED + " if screen_failed(record) else ""
+    if any("Kairos" in calls_of(s) for s in stocks):
+        three = [s for s in stocks if len(calls_of(s)) == 3]
+        agree = sum(1 for s in three if agreement(s) == "all agree")
+        return (
+            f"{failed}{weekly}tenq {what}, session {record['day']}: "
+            f"all three agree on {agree} of {len(three)}"
+        )
+    both = [s for s in stocks if _agree(s)]
+    agree = sum(1 for s in both if _agree(s) == "agree")
     return (
         f"{failed}{weekly}tenq {what}, session {record['day']}: "
         f"the two calls agree on {agree} of {len(both)}"
@@ -160,8 +217,9 @@ def scorecard_lines(record: dict[str, Any]) -> list[str]:
     return [str(x) for x in card.get("lines") or []]
 
 
-def _notes(stock: dict[str, Any]) -> list[str]:
-    """What is missing from this stock's calls, in plain words."""
+def _notes(stock: dict[str, Any], kairos: bool = False) -> list[str]:
+    """What is missing from this stock's calls, in plain words; Kairos's too
+    when the record is from a run that asked it."""
     out = [f"Note: {stock['note']}."] if stock.get("note") else []
     if stock.get("error"):
         return [f"No calls today: {stock['error']}."]
@@ -177,7 +235,27 @@ def _notes(stock: dict[str, Any]) -> list[str]:
     dropped = len(opus.get("dropped") or []) + len(why.get("dropped") or [])
     if dropped:
         out.append(f"{dropped} reason(s) failed the checks and were left out.")
+    if kairos:
+        out += _kairos_notes(stock)
     return out
+
+
+def _kairos_notes(stock: dict[str, Any]) -> list[str]:
+    """Why Kairos made no call, and whether it was asked again at the end of
+    the run. Its errors are shown short: never the words of Kairos's reply."""
+    kairos = stock.get("kairos") or {}
+    first = kairos.get("first")
+    if "kairos_call" in stock:
+        if isinstance(first, dict):
+            why = short_error(first.get("error") or "no usable answers")
+            return [f"Kairos's call came when it was asked again at the end of the run ({why})."]
+        return []
+    why = short_error(kairos.get("error") or "no usable answers")
+    if kairos.get("again"):
+        why += f"; {kairos['again']}"
+    if isinstance(first, dict):
+        why = f"asked again at the end of the run: {why}"
+    return [f"Kairos made no call ({why})."]
 
 
 def _money(v: Any) -> str:
@@ -187,7 +265,15 @@ def _money(v: Any) -> str:
 def render(record: dict[str, Any]) -> Email:
     stocks = record["stocks"]
     e = html.escape
-    rows = [(s["ticker"], _jev_cell(s), _opus_cell(s), _agree(s)) for s in stocks]
+    three = "kairos_on" in record  # a record from before Kairos renders as it was sent
+    rows: list[tuple[str, ...]] = [
+        (s["ticker"], _jev_cell(s), _opus_cell(s), _kairos_cell(s), agreement(s))
+        if three
+        else (s["ticker"], _jev_cell(s), _opus_cell(s), _agree(s))
+        for s in stocks
+    ]
+    heads = ("Stock", "Jev", "Opus", "Kairos", "agreement") if three else ("Stock", "Jev", "Opus")
+    disclaimer = DISCLAIMER if three else DISCLAIMER_TWO
     foot = (
         f"Run {record['run_id']}: questions {record['versions']['questions']}, "
         f"rules {record['versions']['rules']}, prompts {record['versions']['call_prompt']} "
@@ -207,7 +293,7 @@ def render(record: dict[str, Any]) -> Email:
     t += [f"tenq daily calls, session {record['day']}", ""]
     if screened and not failed:
         t += [*screened, ""]
-    t.append("Stock | Jev | Opus | the two")
+    t.append(" | ".join(heads) if three else "Stock | Jev | Opus | the two")
     t += [" | ".join(r) for r in rows]
     t.append("")
     for s in stocks:
@@ -232,10 +318,14 @@ def render(record: dict[str, Any]) -> Email:
                 t.append(f"    - {r['text']}")
                 for label, link in _cited(r["cites"], where):
                     t.append(f"      {label}" + (f": {link}" if link else ""))
-        t += [f"  {n}" for n in _notes(s)]
+        kairos = s.get("kairos_call")
+        if three and kairos:
+            t.append(f"  Kairos: {kairos['call']}, confidence {_conf(kairos['confidence'])}")
+            t += [f"    {line}" for line in kairos.get("explain") or []]
+        t += [f"  {n}" for n in _notes(s, three)]
         t.append("")
     t += record.get("balance") or []
-    t += ["", DISCLAIMER, foot]
+    t += ["", disclaimer, foot]
 
     # HTML: every value escaped; model text and feed text are untrusted
     def reasons_html(items: list[dict[str, Any]], where: dict[str, tuple[str, str | None]]) -> str:
@@ -285,16 +375,15 @@ def render(record: dict[str, Any]) -> Email:
             else []
         ),
         "<table style='border-collapse:collapse;font-size:13px'>",
-        "<tr>"
-        + "".join(f"<th style='{cell}'>{x}</th>" for x in ("Stock", "Jev", "Opus", ""))
-        + "</tr>",
+        "<tr>" + "".join(f"<th style='{cell}'>{x}</th>" for x in (*heads, "")[:5]) + "</tr>",
     ]
-    for ticker, jev_cell, opus_cell, agree in rows:
-        mark = "font-weight:bold;color:#a40" if agree == "differ" else "color:#777"
+    for *cells, agree in rows:
+        same = agree in ("", "agree", "all agree")
+        mark = "color:#777" if same else "font-weight:bold;color:#a40"
         h.append(
-            f"<tr><td style='{cell}'>{e(ticker)}</td><td style='{cell}'>{e(jev_cell)}</td>"
-            f"<td style='{cell}'>{e(opus_cell)}</td>"
-            f"<td style='{cell};{mark}'>{e(agree)}</td></tr>"
+            "<tr>"
+            + "".join(f"<td style='{cell}'>{e(x)}</td>" for x in cells)
+            + f"<td style='{cell};{mark}'>{e(agree)}</td></tr>"
         )
     h.append("</table>")
     for s in stocks:
@@ -324,11 +413,19 @@ def render(record: dict[str, Any]) -> Email:
                 f"{e(_conf(opus.get('confidence')) + _lean(opus))}</div>"
             )
             h.append(reasons_html(opus.get("kept") or [], where))
-        for n in _notes(s):
+        kairos = s.get("kairos_call")
+        if three and kairos:
+            h.append(
+                f"<div><b>Kairos: {e(kairos['call'])}</b>, confidence "
+                f"{e(_conf(kairos['confidence']))}</div><div style='color:#555;font-size:12px'>"
+                + "<br>".join(e(line) for line in kairos.get("explain") or [])
+                + "</div>"
+            )
+        for n in _notes(s, three):
             h.append(f"<div style='color:#777;font-size:12px'><em>{e(n)}</em></div>")
     for line in record.get("balance") or []:
         h.append(f"<p style='font-size:12px;margin:2px 0'>{e(line)}</p>")
-    for x in (DISCLAIMER, foot):
+    for x in (disclaimer, foot):
         h.append(f"<p style='color:#777;font-size:11px'>{e(x)}</p>")
     h.append("</div>")
     return Email(subject_for(record), "\n".join(t) + "\n", "\n".join(h))

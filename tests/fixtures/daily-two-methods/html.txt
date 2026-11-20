@@ -1,0 +1,167 @@
+<div style='font-family:Arial,sans-serif;max-width:760px'>
+<h2 style='margin-bottom:4px'>tenq daily calls, session 2026-11-04</h2>
+<p style='font-size:13px;margin:4px 0 10px 0'>Screen screen-test: 20 of 20 stocks passed; 0 Hold by screen.<br>  CRWD: picked by the test<br>  DDOG: picked by the test<br>  SNOW: picked by the test<br>  NET: picked by the test<br>  ZS: picked by the test<br>  MDB: picked by the test<br>  TEAM: picked by the test<br>  PANW: picked by the test<br>  SHOP: picked by the test<br>  RBRK: picked by the test<br>  FTNT: picked by the test<br>  OKTA: picked by the test<br>  DT: picked by the test<br>  GTLB: picked by the test<br>  IOT: picked by the test<br>  MNDY: picked by the test<br>  HUBS: picked by the test<br>  NOW: picked by the test<br>  PLTR: picked by the test<br>  ADSK: picked by the test</p>
+<table style='border-collapse:collapse;font-size:13px'>
+<tr><th style='padding:4px 10px;text-align:left'>Stock</th><th style='padding:4px 10px;text-align:left'>Jev</th><th style='padding:4px 10px;text-align:left'>Opus</th><th style='padding:4px 10px;text-align:left'></th></tr>
+<tr><td style='padding:4px 10px;text-align:left'>CRWD</td><td style='padding:4px 10px;text-align:left'>Buy 80%</td><td style='padding:4px 10px;text-align:left'>Hold 50%</td><td style='padding:4px 10px;text-align:left;font-weight:bold;color:#a40'>differ</td></tr>
+<tr><td style='padding:4px 10px;text-align:left'>DDOG</td><td style='padding:4px 10px;text-align:left'>Buy 80%</td><td style='padding:4px 10px;text-align:left'>Hold 50%</td><td style='padding:4px 10px;text-align:left;font-weight:bold;color:#a40'>differ</td></tr>
+<tr><td style='padding:4px 10px;text-align:left'>SNOW</td><td style='padding:4px 10px;text-align:left'>Buy 80%</td><td style='padding:4px 10px;text-align:left'>Hold 50%</td><td style='padding:4px 10px;text-align:left;font-weight:bold;color:#a40'>differ</td></tr>
+<tr><td style='padding:4px 10px;text-align:left'>NET</td><td style='padding:4px 10px;text-align:left'>Buy 80%</td><td style='padding:4px 10px;text-align:left'>Hold 50%</td><td style='padding:4px 10px;text-align:left;font-weight:bold;color:#a40'>differ</td></tr>
+<tr><td style='padding:4px 10px;text-align:left'>ZS</td><td style='padding:4px 10px;text-align:left'>Buy 80%</td><td style='padding:4px 10px;text-align:left'>Hold 50%</td><td style='padding:4px 10px;text-align:left;font-weight:bold;color:#a40'>differ</td></tr>
+<tr><td style='padding:4px 10px;text-align:left'>MDB</td><td style='padding:4px 10px;text-align:left'>Buy 80%</td><td style='padding:4px 10px;text-align:left'>Hold 50%</td><td style='padding:4px 10px;text-align:left;font-weight:bold;color:#a40'>differ</td></tr>
+<tr><td style='padding:4px 10px;text-align:left'>TEAM</td><td style='padding:4px 10px;text-align:left'>Buy 80%</td><td style='padding:4px 10px;text-align:left'>Hold 50%</td><td style='padding:4px 10px;text-align:left;font-weight:bold;color:#a40'>differ</td></tr>
+<tr><td style='padding:4px 10px;text-align:left'>PANW</td><td style='padding:4px 10px;text-align:left'>Buy 80%</td><td style='padding:4px 10px;text-align:left'>Hold 50%</td><td style='padding:4px 10px;text-align:left;font-weight:bold;color:#a40'>differ</td></tr>
+<tr><td style='padding:4px 10px;text-align:left'>SHOP</td><td style='padding:4px 10px;text-align:left'>Buy 80%</td><td style='padding:4px 10px;text-align:left'>Hold 50%</td><td style='padding:4px 10px;text-align:left;font-weight:bold;color:#a40'>differ</td></tr>
+<tr><td style='padding:4px 10px;text-align:left'>RBRK</td><td style='padding:4px 10px;text-align:left'>Buy 80%</td><td style='padding:4px 10px;text-align:left'>Hold 50%</td><td style='padding:4px 10px;text-align:left;font-weight:bold;color:#a40'>differ</td></tr>
+<tr><td style='padding:4px 10px;text-align:left'>FTNT</td><td style='padding:4px 10px;text-align:left'>Buy 80%</td><td style='padding:4px 10px;text-align:left'>Hold 50%</td><td style='padding:4px 10px;text-align:left;font-weight:bold;color:#a40'>differ</td></tr>
+<tr><td style='padding:4px 10px;text-align:left'>OKTA</td><td style='padding:4px 10px;text-align:left'>Buy 80%</td><td style='padding:4px 10px;text-align:left'>Hold 50%</td><td style='padding:4px 10px;text-align:left;font-weight:bold;color:#a40'>differ</td></tr>
+<tr><td style='padding:4px 10px;text-align:left'>DT</td><td style='padding:4px 10px;text-align:left'>Buy 80%</td><td style='padding:4px 10px;text-align:left'>Hold 50%</td><td style='padding:4px 10px;text-align:left;font-weight:bold;color:#a40'>differ</td></tr>
+<tr><td style='padding:4px 10px;text-align:left'>GTLB</td><td style='padding:4px 10px;text-align:left'>Buy 80%</td><td style='padding:4px 10px;text-align:left'>Hold 50%</td><td style='padding:4px 10px;text-align:left;font-weight:bold;color:#a40'>differ</td></tr>
+<tr><td style='padding:4px 10px;text-align:left'>IOT</td><td style='padding:4px 10px;text-align:left'>Buy 80%</td><td style='padding:4px 10px;text-align:left'>Hold 50%</td><td style='padding:4px 10px;text-align:left;font-weight:bold;color:#a40'>differ</td></tr>
+<tr><td style='padding:4px 10px;text-align:left'>MNDY</td><td style='padding:4px 10px;text-align:left'>Buy 80%</td><td style='padding:4px 10px;text-align:left'>Hold 50%</td><td style='padding:4px 10px;text-align:left;font-weight:bold;color:#a40'>differ</td></tr>
+<tr><td style='padding:4px 10px;text-align:left'>HUBS</td><td style='padding:4px 10px;text-align:left'>Buy 80%</td><td style='padding:4px 10px;text-align:left'>Hold 50%</td><td style='padding:4px 10px;text-align:left;font-weight:bold;color:#a40'>differ</td></tr>
+<tr><td style='padding:4px 10px;text-align:left'>NOW</td><td style='padding:4px 10px;text-align:left'>Buy 80%</td><td style='padding:4px 10px;text-align:left'>Hold 50%</td><td style='padding:4px 10px;text-align:left;font-weight:bold;color:#a40'>differ</td></tr>
+<tr><td style='padding:4px 10px;text-align:left'>PLTR</td><td style='padding:4px 10px;text-align:left'>no call</td><td style='padding:4px 10px;text-align:left'>Hold 50%</td><td style='padding:4px 10px;text-align:left;color:#777'></td></tr>
+<tr><td style='padding:4px 10px;text-align:left'>ADSK</td><td style='padding:4px 10px;text-align:left'>no call</td><td style='padding:4px 10px;text-align:left'>Hold 50%</td><td style='padding:4px 10px;text-align:left;color:#777'></td></tr>
+</table>
+<h3 style='margin:18px 0 4px 0'>CRWD (CrowdStrike), close $241.00</h3>
+<div><b>Jev: Buy</b>, confidence 80%</div><div style='color:#555;font-size:12px'>news: +0.32 (good +0.90, material 80%, evidence 1.00; weight 0.45, certainty 100%)<br>guidance: +0.25 (most likely raised; weight 0.25, certainty 100%)<br>risk: -0.01 (risk event 10%, 100% of it not already in news; weight 0.15, certainty 100%)<br>score +0.56: Buy (confidence 80%)</div>
+<div style='margin-top:4px'>Why (written by Opus, checked by code):</div>
+<ul style='margin:4px 0 8px 0'><li style='margin-bottom:6px'>The rules read the news as good.<br><span style='color:#666;font-size:12px'><a href='https://www.reuters.com/a?b=1&amp;c=2'>&lt;b&gt;Outlook&lt;/b&gt; raised (reuters.com)</a></span></li></ul>
+<div><b>Opus: Hold</b>, confidence 50%, lean +0.10</div>
+<ul style='margin:4px 0 8px 0'><li style='margin-bottom:6px'>The outlook was raised &lt;script&gt;.<br><span style='color:#666;font-size:12px'><a href='https://www.reuters.com/a?b=1&amp;c=2'>&lt;b&gt;Outlook&lt;/b&gt; raised (reuters.com)</a></span></li></ul>
+<div style='color:#777;font-size:12px'><em>1 reason(s) failed the checks and were left out.</em></div>
+<h3 style='margin:18px 0 4px 0'>DDOG (Datadog), close $241.00</h3>
+<div><b>Jev: Buy</b>, confidence 80%</div><div style='color:#555;font-size:12px'>news: +0.32 (good +0.90, material 80%, evidence 1.00; weight 0.45, certainty 100%)<br>guidance: +0.25 (most likely raised; weight 0.25, certainty 100%)<br>risk: -0.01 (risk event 10%, 100% of it not already in news; weight 0.15, certainty 100%)<br>score +0.56: Buy (confidence 80%)</div>
+<div style='margin-top:4px'>Why (written by Opus, checked by code):</div>
+<ul style='margin:4px 0 8px 0'><li style='margin-bottom:6px'>The rules read the news as good.<br><span style='color:#666;font-size:12px'><a href='https://www.reuters.com/a?b=1&amp;c=2'>&lt;b&gt;Outlook&lt;/b&gt; raised (reuters.com)</a></span></li></ul>
+<div><b>Opus: Hold</b>, confidence 50%, lean +0.10</div>
+<ul style='margin:4px 0 8px 0'><li style='margin-bottom:6px'>The outlook was raised &lt;script&gt;.<br><span style='color:#666;font-size:12px'><a href='https://www.reuters.com/a?b=1&amp;c=2'>&lt;b&gt;Outlook&lt;/b&gt; raised (reuters.com)</a></span></li></ul>
+<div style='color:#777;font-size:12px'><em>1 reason(s) failed the checks and were left out.</em></div>
+<h3 style='margin:18px 0 4px 0'>SNOW (Snowflake), close $241.00</h3>
+<div><b>Jev: Buy</b>, confidence 80%</div><div style='color:#555;font-size:12px'>news: +0.32 (good +0.90, material 80%, evidence 1.00; weight 0.45, certainty 100%)<br>guidance: +0.25 (most likely raised; weight 0.25, certainty 100%)<br>risk: -0.01 (risk event 10%, 100% of it not already in news; weight 0.15, certainty 100%)<br>score +0.56: Buy (confidence 80%)</div>
+<div style='margin-top:4px'>Why (written by Opus, checked by code):</div>
+<ul style='margin:4px 0 8px 0'><li style='margin-bottom:6px'>The rules read the news as good.<br><span style='color:#666;font-size:12px'><a href='https://www.reuters.com/a?b=1&amp;c=2'>&lt;b&gt;Outlook&lt;/b&gt; raised (reuters.com)</a></span></li></ul>
+<div><b>Opus: Hold</b>, confidence 50%, lean +0.10</div>
+<ul style='margin:4px 0 8px 0'><li style='margin-bottom:6px'>The outlook was raised &lt;script&gt;.<br><span style='color:#666;font-size:12px'><a href='https://www.reuters.com/a?b=1&amp;c=2'>&lt;b&gt;Outlook&lt;/b&gt; raised (reuters.com)</a></span></li></ul>
+<div style='color:#777;font-size:12px'><em>1 reason(s) failed the checks and were left out.</em></div>
+<h3 style='margin:18px 0 4px 0'>NET (Cloudflare), close $241.00</h3>
+<div><b>Jev: Buy</b>, confidence 80%</div><div style='color:#555;font-size:12px'>news: +0.32 (good +0.90, material 80%, evidence 1.00; weight 0.45, certainty 100%)<br>guidance: +0.25 (most likely raised; weight 0.25, certainty 100%)<br>risk: -0.01 (risk event 10%, 100% of it not already in news; weight 0.15, certainty 100%)<br>score +0.56: Buy (confidence 80%)</div>
+<div style='margin-top:4px'>Why (written by Opus, checked by code):</div>
+<ul style='margin:4px 0 8px 0'><li style='margin-bottom:6px'>The rules read the news as good.<br><span style='color:#666;font-size:12px'><a href='https://www.reuters.com/a?b=1&amp;c=2'>&lt;b&gt;Outlook&lt;/b&gt; raised (reuters.com)</a></span></li></ul>
+<div><b>Opus: Hold</b>, confidence 50%, lean +0.10</div>
+<ul style='margin:4px 0 8px 0'><li style='margin-bottom:6px'>The outlook was raised &lt;script&gt;.<br><span style='color:#666;font-size:12px'><a href='https://www.reuters.com/a?b=1&amp;c=2'>&lt;b&gt;Outlook&lt;/b&gt; raised (reuters.com)</a></span></li></ul>
+<div style='color:#777;font-size:12px'><em>1 reason(s) failed the checks and were left out.</em></div>
+<h3 style='margin:18px 0 4px 0'>ZS (Zscaler), close $241.00</h3>
+<div><b>Jev: Buy</b>, confidence 80%</div><div style='color:#555;font-size:12px'>news: +0.32 (good +0.90, material 80%, evidence 1.00; weight 0.45, certainty 100%)<br>guidance: +0.25 (most likely raised; weight 0.25, certainty 100%)<br>risk: -0.01 (risk event 10%, 100% of it not already in news; weight 0.15, certainty 100%)<br>score +0.56: Buy (confidence 80%)</div>
+<div style='margin-top:4px'>Why (written by Opus, checked by code):</div>
+<ul style='margin:4px 0 8px 0'><li style='margin-bottom:6px'>The rules read the news as good.<br><span style='color:#666;font-size:12px'><a href='https://www.reuters.com/a?b=1&amp;c=2'>&lt;b&gt;Outlook&lt;/b&gt; raised (reuters.com)</a></span></li></ul>
+<div><b>Opus: Hold</b>, confidence 50%, lean +0.10</div>
+<ul style='margin:4px 0 8px 0'><li style='margin-bottom:6px'>The outlook was raised &lt;script&gt;.<br><span style='color:#666;font-size:12px'><a href='https://www.reuters.com/a?b=1&amp;c=2'>&lt;b&gt;Outlook&lt;/b&gt; raised (reuters.com)</a></span></li></ul>
+<div style='color:#777;font-size:12px'><em>1 reason(s) failed the checks and were left out.</em></div>
+<h3 style='margin:18px 0 4px 0'>MDB (MongoDB), close $241.00</h3>
+<div><b>Jev: Buy</b>, confidence 80%</div><div style='color:#555;font-size:12px'>news: +0.32 (good +0.90, material 80%, evidence 1.00; weight 0.45, certainty 100%)<br>guidance: +0.25 (most likely raised; weight 0.25, certainty 100%)<br>risk: -0.01 (risk event 10%, 100% of it not already in news; weight 0.15, certainty 100%)<br>score +0.56: Buy (confidence 80%)</div>
+<div style='margin-top:4px'>Why (written by Opus, checked by code):</div>
+<ul style='margin:4px 0 8px 0'><li style='margin-bottom:6px'>The rules read the news as good.<br><span style='color:#666;font-size:12px'><a href='https://www.reuters.com/a?b=1&amp;c=2'>&lt;b&gt;Outlook&lt;/b&gt; raised (reuters.com)</a></span></li></ul>
+<div><b>Opus: Hold</b>, confidence 50%, lean +0.10</div>
+<ul style='margin:4px 0 8px 0'><li style='margin-bottom:6px'>The outlook was raised &lt;script&gt;.<br><span style='color:#666;font-size:12px'><a href='https://www.reuters.com/a?b=1&amp;c=2'>&lt;b&gt;Outlook&lt;/b&gt; raised (reuters.com)</a></span></li></ul>
+<div style='color:#777;font-size:12px'><em>1 reason(s) failed the checks and were left out.</em></div>
+<h3 style='margin:18px 0 4px 0'>TEAM (Atlassian), close $241.00</h3>
+<div><b>Jev: Buy</b>, confidence 80%</div><div style='color:#555;font-size:12px'>news: +0.32 (good +0.90, material 80%, evidence 1.00; weight 0.45, certainty 100%)<br>guidance: +0.25 (most likely raised; weight 0.25, certainty 100%)<br>risk: -0.01 (risk event 10%, 100% of it not already in news; weight 0.15, certainty 100%)<br>score +0.56: Buy (confidence 80%)</div>
+<div style='margin-top:4px'>Why (written by Opus, checked by code):</div>
+<ul style='margin:4px 0 8px 0'><li style='margin-bottom:6px'>The rules read the news as good.<br><span style='color:#666;font-size:12px'><a href='https://www.reuters.com/a?b=1&amp;c=2'>&lt;b&gt;Outlook&lt;/b&gt; raised (reuters.com)</a></span></li></ul>
+<div><b>Opus: Hold</b>, confidence 50%, lean +0.10</div>
+<ul style='margin:4px 0 8px 0'><li style='margin-bottom:6px'>The outlook was raised &lt;script&gt;.<br><span style='color:#666;font-size:12px'><a href='https://www.reuters.com/a?b=1&amp;c=2'>&lt;b&gt;Outlook&lt;/b&gt; raised (reuters.com)</a></span></li></ul>
+<div style='color:#777;font-size:12px'><em>1 reason(s) failed the checks and were left out.</em></div>
+<h3 style='margin:18px 0 4px 0'>PANW (Palo Alto Networks), close $241.00</h3>
+<div><b>Jev: Buy</b>, confidence 80%</div><div style='color:#555;font-size:12px'>news: +0.32 (good +0.90, material 80%, evidence 1.00; weight 0.45, certainty 100%)<br>guidance: +0.25 (most likely raised; weight 0.25, certainty 100%)<br>risk: -0.01 (risk event 10%, 100% of it not already in news; weight 0.15, certainty 100%)<br>score +0.56: Buy (confidence 80%)</div>
+<div style='margin-top:4px'>Why (written by Opus, checked by code):</div>
+<ul style='margin:4px 0 8px 0'><li style='margin-bottom:6px'>The rules read the news as good.<br><span style='color:#666;font-size:12px'><a href='https://www.reuters.com/a?b=1&amp;c=2'>&lt;b&gt;Outlook&lt;/b&gt; raised (reuters.com)</a></span></li></ul>
+<div><b>Opus: Hold</b>, confidence 50%, lean +0.10</div>
+<ul style='margin:4px 0 8px 0'><li style='margin-bottom:6px'>The outlook was raised &lt;script&gt;.<br><span style='color:#666;font-size:12px'><a href='https://www.reuters.com/a?b=1&amp;c=2'>&lt;b&gt;Outlook&lt;/b&gt; raised (reuters.com)</a></span></li></ul>
+<div style='color:#777;font-size:12px'><em>1 reason(s) failed the checks and were left out.</em></div>
+<h3 style='margin:18px 0 4px 0'>SHOP (Shopify), close $241.00</h3>
+<div><b>Jev: Buy</b>, confidence 80%</div><div style='color:#555;font-size:12px'>news: +0.32 (good +0.90, material 80%, evidence 1.00; weight 0.45, certainty 100%)<br>guidance: +0.25 (most likely raised; weight 0.25, certainty 100%)<br>risk: -0.01 (risk event 10%, 100% of it not already in news; weight 0.15, certainty 100%)<br>score +0.56: Buy (confidence 80%)</div>
+<div style='margin-top:4px'>Why (written by Opus, checked by code):</div>
+<ul style='margin:4px 0 8px 0'><li style='margin-bottom:6px'>The rules read the news as good.<br><span style='color:#666;font-size:12px'><a href='https://www.reuters.com/a?b=1&amp;c=2'>&lt;b&gt;Outlook&lt;/b&gt; raised (reuters.com)</a></span></li></ul>
+<div><b>Opus: Hold</b>, confidence 50%, lean +0.10</div>
+<ul style='margin:4px 0 8px 0'><li style='margin-bottom:6px'>The outlook was raised &lt;script&gt;.<br><span style='color:#666;font-size:12px'><a href='https://www.reuters.com/a?b=1&amp;c=2'>&lt;b&gt;Outlook&lt;/b&gt; raised (reuters.com)</a></span></li></ul>
+<div style='color:#777;font-size:12px'><em>1 reason(s) failed the checks and were left out.</em></div>
+<h3 style='margin:18px 0 4px 0'>RBRK (Rubrik), close $241.00</h3>
+<div><b>Jev: Buy</b>, confidence 80%</div><div style='color:#555;font-size:12px'>news: +0.32 (good +0.90, material 80%, evidence 1.00; weight 0.45, certainty 100%)<br>guidance: +0.25 (most likely raised; weight 0.25, certainty 100%)<br>risk: -0.01 (risk event 10%, 100% of it not already in news; weight 0.15, certainty 100%)<br>score +0.56: Buy (confidence 80%)</div>
+<div style='margin-top:4px'>Why (written by Opus, checked by code):</div>
+<ul style='margin:4px 0 8px 0'><li style='margin-bottom:6px'>The rules read the news as good.<br><span style='color:#666;font-size:12px'><a href='https://www.reuters.com/a?b=1&amp;c=2'>&lt;b&gt;Outlook&lt;/b&gt; raised (reuters.com)</a></span></li></ul>
+<div><b>Opus: Hold</b>, confidence 50%, lean +0.10</div>
+<ul style='margin:4px 0 8px 0'><li style='margin-bottom:6px'>The outlook was raised &lt;script&gt;.<br><span style='color:#666;font-size:12px'><a href='https://www.reuters.com/a?b=1&amp;c=2'>&lt;b&gt;Outlook&lt;/b&gt; raised (reuters.com)</a></span></li></ul>
+<div style='color:#777;font-size:12px'><em>1 reason(s) failed the checks and were left out.</em></div>
+<h3 style='margin:18px 0 4px 0'>FTNT (Fortinet), close $241.00</h3>
+<div><b>Jev: Buy</b>, confidence 80%</div><div style='color:#555;font-size:12px'>news: +0.32 (good +0.90, material 80%, evidence 1.00; weight 0.45, certainty 100%)<br>guidance: +0.25 (most likely raised; weight 0.25, certainty 100%)<br>risk: -0.01 (risk event 10%, 100% of it not already in news; weight 0.15, certainty 100%)<br>score +0.56: Buy (confidence 80%)</div>
+<div style='margin-top:4px'>Why (written by Opus, checked by code):</div>
+<ul style='margin:4px 0 8px 0'><li style='margin-bottom:6px'>The rules read the news as good.<br><span style='color:#666;font-size:12px'><a href='https://www.reuters.com/a?b=1&amp;c=2'>&lt;b&gt;Outlook&lt;/b&gt; raised (reuters.com)</a></span></li></ul>
+<div><b>Opus: Hold</b>, confidence 50%, lean +0.10</div>
+<ul style='margin:4px 0 8px 0'><li style='margin-bottom:6px'>The outlook was raised &lt;script&gt;.<br><span style='color:#666;font-size:12px'><a href='https://www.reuters.com/a?b=1&amp;c=2'>&lt;b&gt;Outlook&lt;/b&gt; raised (reuters.com)</a></span></li></ul>
+<div style='color:#777;font-size:12px'><em>1 reason(s) failed the checks and were left out.</em></div>
+<h3 style='margin:18px 0 4px 0'>OKTA (Okta), close $241.00</h3>
+<div><b>Jev: Buy</b>, confidence 80%</div><div style='color:#555;font-size:12px'>news: +0.32 (good +0.90, material 80%, evidence 1.00; weight 0.45, certainty 100%)<br>guidance: +0.25 (most likely raised; weight 0.25, certainty 100%)<br>risk: -0.01 (risk event 10%, 100% of it not already in news; weight 0.15, certainty 100%)<br>score +0.56: Buy (confidence 80%)</div>
+<div style='margin-top:4px'>Why (written by Opus, checked by code):</div>
+<ul style='margin:4px 0 8px 0'><li style='margin-bottom:6px'>The rules read the news as good.<br><span style='color:#666;font-size:12px'><a href='https://www.reuters.com/a?b=1&amp;c=2'>&lt;b&gt;Outlook&lt;/b&gt; raised (reuters.com)</a></span></li></ul>
+<div><b>Opus: Hold</b>, confidence 50%, lean +0.10</div>
+<ul style='margin:4px 0 8px 0'><li style='margin-bottom:6px'>The outlook was raised &lt;script&gt;.<br><span style='color:#666;font-size:12px'><a href='https://www.reuters.com/a?b=1&amp;c=2'>&lt;b&gt;Outlook&lt;/b&gt; raised (reuters.com)</a></span></li></ul>
+<div style='color:#777;font-size:12px'><em>1 reason(s) failed the checks and were left out.</em></div>
+<h3 style='margin:18px 0 4px 0'>DT (Dynatrace), close $241.00</h3>
+<div><b>Jev: Buy</b>, confidence 80%</div><div style='color:#555;font-size:12px'>news: +0.32 (good +0.90, material 80%, evidence 1.00; weight 0.45, certainty 100%)<br>guidance: +0.25 (most likely raised; weight 0.25, certainty 100%)<br>risk: -0.01 (risk event 10%, 100% of it not already in news; weight 0.15, certainty 100%)<br>score +0.56: Buy (confidence 80%)</div>
+<div style='margin-top:4px'>Why (written by Opus, checked by code):</div>
+<ul style='margin:4px 0 8px 0'><li style='margin-bottom:6px'>The rules read the news as good.<br><span style='color:#666;font-size:12px'><a href='https://www.reuters.com/a?b=1&amp;c=2'>&lt;b&gt;Outlook&lt;/b&gt; raised (reuters.com)</a></span></li></ul>
+<div><b>Opus: Hold</b>, confidence 50%, lean +0.10</div>
+<ul style='margin:4px 0 8px 0'><li style='margin-bottom:6px'>The outlook was raised &lt;script&gt;.<br><span style='color:#666;font-size:12px'><a href='https://www.reuters.com/a?b=1&amp;c=2'>&lt;b&gt;Outlook&lt;/b&gt; raised (reuters.com)</a></span></li></ul>
+<div style='color:#777;font-size:12px'><em>1 reason(s) failed the checks and were left out.</em></div>
+<h3 style='margin:18px 0 4px 0'>GTLB (GitLab), close $241.00</h3>
+<div><b>Jev: Buy</b>, confidence 80%</div><div style='color:#555;font-size:12px'>news: +0.32 (good +0.90, material 80%, evidence 1.00; weight 0.45, certainty 100%)<br>guidance: +0.25 (most likely raised; weight 0.25, certainty 100%)<br>risk: -0.01 (risk event 10%, 100% of it not already in news; weight 0.15, certainty 100%)<br>score +0.56: Buy (confidence 80%)</div>
+<div style='margin-top:4px'>Why (written by Opus, checked by code):</div>
+<ul style='margin:4px 0 8px 0'><li style='margin-bottom:6px'>The rules read the news as good.<br><span style='color:#666;font-size:12px'><a href='https://www.reuters.com/a?b=1&amp;c=2'>&lt;b&gt;Outlook&lt;/b&gt; raised (reuters.com)</a></span></li></ul>
+<div><b>Opus: Hold</b>, confidence 50%, lean +0.10</div>
+<ul style='margin:4px 0 8px 0'><li style='margin-bottom:6px'>The outlook was raised &lt;script&gt;.<br><span style='color:#666;font-size:12px'><a href='https://www.reuters.com/a?b=1&amp;c=2'>&lt;b&gt;Outlook&lt;/b&gt; raised (reuters.com)</a></span></li></ul>
+<div style='color:#777;font-size:12px'><em>1 reason(s) failed the checks and were left out.</em></div>
+<h3 style='margin:18px 0 4px 0'>IOT (Samsara), close $241.00</h3>
+<div><b>Jev: Buy</b>, confidence 80%</div><div style='color:#555;font-size:12px'>news: +0.32 (good +0.90, material 80%, evidence 1.00; weight 0.45, certainty 100%)<br>guidance: +0.25 (most likely raised; weight 0.25, certainty 100%)<br>risk: -0.01 (risk event 10%, 100% of it not already in news; weight 0.15, certainty 100%)<br>score +0.56: Buy (confidence 80%)</div>
+<div style='margin-top:4px'>Why (written by Opus, checked by code):</div>
+<ul style='margin:4px 0 8px 0'><li style='margin-bottom:6px'>The rules read the news as good.<br><span style='color:#666;font-size:12px'><a href='https://www.reuters.com/a?b=1&amp;c=2'>&lt;b&gt;Outlook&lt;/b&gt; raised (reuters.com)</a></span></li></ul>
+<div><b>Opus: Hold</b>, confidence 50%, lean +0.10</div>
+<ul style='margin:4px 0 8px 0'><li style='margin-bottom:6px'>The outlook was raised &lt;script&gt;.<br><span style='color:#666;font-size:12px'><a href='https://www.reuters.com/a?b=1&amp;c=2'>&lt;b&gt;Outlook&lt;/b&gt; raised (reuters.com)</a></span></li></ul>
+<div style='color:#777;font-size:12px'><em>1 reason(s) failed the checks and were left out.</em></div>
+<h3 style='margin:18px 0 4px 0'>MNDY (monday.com), close $241.00</h3>
+<div><b>Jev: Buy</b>, confidence 80%</div><div style='color:#555;font-size:12px'>news: +0.32 (good +0.90, material 80%, evidence 1.00; weight 0.45, certainty 100%)<br>guidance: +0.25 (most likely raised; weight 0.25, certainty 100%)<br>risk: -0.01 (risk event 10%, 100% of it not already in news; weight 0.15, certainty 100%)<br>score +0.56: Buy (confidence 80%)</div>
+<div style='margin-top:4px'>Why (written by Opus, checked by code):</div>
+<ul style='margin:4px 0 8px 0'><li style='margin-bottom:6px'>The rules read the news as good.<br><span style='color:#666;font-size:12px'><a href='https://www.reuters.com/a?b=1&amp;c=2'>&lt;b&gt;Outlook&lt;/b&gt; raised (reuters.com)</a></span></li></ul>
+<div><b>Opus: Hold</b>, confidence 50%, lean +0.10</div>
+<ul style='margin:4px 0 8px 0'><li style='margin-bottom:6px'>The outlook was raised &lt;script&gt;.<br><span style='color:#666;font-size:12px'><a href='https://www.reuters.com/a?b=1&amp;c=2'>&lt;b&gt;Outlook&lt;/b&gt; raised (reuters.com)</a></span></li></ul>
+<div style='color:#777;font-size:12px'><em>1 reason(s) failed the checks and were left out.</em></div>
+<h3 style='margin:18px 0 4px 0'>HUBS (HubSpot), close $241.00</h3>
+<div><b>Jev: Buy</b>, confidence 80%</div><div style='color:#555;font-size:12px'>news: +0.32 (good +0.90, material 80%, evidence 1.00; weight 0.45, certainty 100%)<br>guidance: +0.25 (most likely raised; weight 0.25, certainty 100%)<br>risk: -0.01 (risk event 10%, 100% of it not already in news; weight 0.15, certainty 100%)<br>score +0.56: Buy (confidence 80%)</div>
+<div style='margin-top:4px'>Why (written by Opus, checked by code):</div>
+<ul style='margin:4px 0 8px 0'><li style='margin-bottom:6px'>The rules read the news as good.<br><span style='color:#666;font-size:12px'><a href='https://www.reuters.com/a?b=1&amp;c=2'>&lt;b&gt;Outlook&lt;/b&gt; raised (reuters.com)</a></span></li></ul>
+<div><b>Opus: Hold</b>, confidence 50%, lean +0.10</div>
+<ul style='margin:4px 0 8px 0'><li style='margin-bottom:6px'>The outlook was raised &lt;script&gt;.<br><span style='color:#666;font-size:12px'><a href='https://www.reuters.com/a?b=1&amp;c=2'>&lt;b&gt;Outlook&lt;/b&gt; raised (reuters.com)</a></span></li></ul>
+<div style='color:#777;font-size:12px'><em>1 reason(s) failed the checks and were left out.</em></div>
+<h3 style='margin:18px 0 4px 0'>NOW (ServiceNow), close $241.00</h3>
+<div><b>Jev: Buy</b>, confidence 80%</div><div style='color:#555;font-size:12px'>news: +0.32 (good +0.90, material 80%, evidence 1.00; weight 0.45, certainty 100%)<br>guidance: +0.25 (most likely raised; weight 0.25, certainty 100%)<br>risk: -0.01 (risk event 10%, 100% of it not already in news; weight 0.15, certainty 100%)<br>score +0.56: Buy (confidence 80%)</div>
+<div style='margin-top:4px'>Why (written by Opus, checked by code):</div>
+<ul style='margin:4px 0 8px 0'><li style='margin-bottom:6px'>The rules read the news as good.<br><span style='color:#666;font-size:12px'><a href='https://www.reuters.com/a?b=1&amp;c=2'>&lt;b&gt;Outlook&lt;/b&gt; raised (reuters.com)</a></span></li></ul>
+<div><b>Opus: Hold</b>, confidence 50%, lean +0.10</div>
+<ul style='margin:4px 0 8px 0'><li style='margin-bottom:6px'>The outlook was raised &lt;script&gt;.<br><span style='color:#666;font-size:12px'><a href='https://www.reuters.com/a?b=1&amp;c=2'>&lt;b&gt;Outlook&lt;/b&gt; raised (reuters.com)</a></span></li></ul>
+<div style='color:#777;font-size:12px'><em>1 reason(s) failed the checks and were left out.</em></div>
+<h3 style='margin:18px 0 4px 0'>PLTR (Palantir), close $241.00</h3>
+<div><b>Opus: Hold</b>, confidence 50%, lean +0.10</div>
+<ul style='margin:4px 0 8px 0'><li style='margin-bottom:6px'>The outlook was raised &lt;script&gt;.<br><span style='color:#666;font-size:12px'><a href='https://www.reuters.com/a?b=1&amp;c=2'>&lt;b&gt;Outlook&lt;/b&gt; raised (reuters.com)</a></span></li></ul>
+<div style='color:#777;font-size:12px'><em>Jev made no call (HTTP 503).</em></div>
+<div style='color:#777;font-size:12px'><em>1 reason(s) failed the checks and were left out.</em></div>
+<h3 style='margin:18px 0 4px 0'>ADSK (Autodesk), close $241.00</h3>
+<div><b>Opus: Hold</b>, confidence 50%, lean +0.10</div>
+<ul style='margin:4px 0 8px 0'><li style='margin-bottom:6px'>The outlook was raised &lt;script&gt;.<br><span style='color:#666;font-size:12px'><a href='https://www.reuters.com/a?b=1&amp;c=2'>&lt;b&gt;Outlook&lt;/b&gt; raised (reuters.com)</a></span></li></ul>
+<div style='color:#777;font-size:12px'><em>Jev made no call (not asked: Jev was down earlier in this run).</em></div>
+<div style='color:#777;font-size:12px'><em>1 reason(s) failed the checks and were left out.</em></div>
+<p style='font-size:12px;margin:2px 0'>balance, Jev over 18: mean before the reaction cut +0.56, mean score +0.56, Buy 18, Hold 0, Sell 0, Short 0</p>
+<p style='font-size:12px;margin:2px 0'>balance, Opus over 20: Buy 0, Hold 20, Sell 0, Short 0</p>
+<p style='color:#777;font-size:11px'>Not investment advice. Two methods each make a call on each stock the day&#x27;s screen picked, from the same public facts: Jev answers questions and fixed rules turn the answers into a call; Opus makes its own. This is an experiment, and both are scored against prices later. Every figure in a reason was written by code from the facts sheet.</p>
+<p style='color:#777;font-size:11px'>Run e50ad723-8fa9-4454-91fa-2b9dd9e82ec9: questions jev-q9, rules rules-v9, prompts call-v12 and why-v12.</p>
+</div>

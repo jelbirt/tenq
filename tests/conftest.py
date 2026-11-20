@@ -26,6 +26,12 @@ def no_real_claude(
 
 
 @pytest.fixture(autouse=True)
+def no_kairos_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A Kairos key in the shell never reaches a test: one that wants Kairos sets its own."""
+    monkeypatch.delenv("KAIROS_API_KEY", raising=False)
+
+
+@pytest.fixture(autouse=True)
 def no_saving_claims(monkeypatch: pytest.MonkeyPatch) -> None:
     """Claims reach main only where a test asks for it (never GitHub)."""
     monkeypatch.delenv("TENQ_SAVE_CLAIMS", raising=False)

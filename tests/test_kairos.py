@@ -18,7 +18,7 @@ import pytest
 from test_jev import QUESTIONS, _answers
 
 from tenq import jev
-from tenq.jev import KAIROS, QuestionSet, ask, load_questions
+from tenq.jev import KAIROS, QuestionSet, ask, load_questions, short_error
 
 SECRET = "mk-live-KAIROS-SECRET-0123456789abcdef"
 
@@ -423,3 +423,101 @@ def test_a_model_name_holding_the_key_is_not_kept(questions: QuestionSet) -> Non
     assert result.resolved_model == "" and result.answers
     listed = jev.models(post=lambda url, headers: (200, json.dumps([SECRET, "DMIND/Kairos"])))
     assert listed == ["DMIND/Kairos"]
+
+
+def test_no_round_starts_once_the_callers_time_is_used_up(questions: QuestionSet) -> None:
+    server = Server()
+    result = _kairos(questions, server, time_left=lambda: 0.0)
+    assert server.calls == [] and result.answers == {} and not result.down
+    assert result.error == "Kairos gave no usable answer (out of time after 0 of 4 rounds)"
+    assert result.notes == ["out of time after 0 of 4 rounds"]
+
+
+def test_rounds_answered_before_the_time_ran_out_are_kept(questions: QuestionSet) -> None:
+    left = iter([10.0, 10.0, 0.0])
+    server = Server(*[_ok(_answers(0.8, "good", {"good": 1.0}, 2.0))] * 2)
+    result = _kairos(questions, server, time_left=lambda: next(left))
+    assert len(server.calls) == 2 and result.answered == [0, 1]
+    assert result.answers["material"].value == pytest.approx(0.8) and result.error is None
+    assert result.notes == ["out of time after 2 of 4 rounds"]
+
+
+def test_a_retry_wait_longer_than_the_time_left_is_not_waited(questions: QuestionSet) -> None:
+    slept: list[float] = []
+    server = Server((429, "{}", "7"))
+    result = _kairos(questions, server, slept=slept, time_left=lambda: 5.0)
+    assert slept == [] and len(server.calls) == 1
+    assert result.errors == ["HTTP 429"] and result.answers == {}
+    assert "out of time after 0 of 4 rounds" in result.notes
+
+
+BUSY = json.dumps(
+    {
+        "error": {
+            "type": "channel_unavailable",
+            "code": "evil.example",
+            "message": 'Service busy, see https://bit.ly/x9 or <a href="https://evil.example/p">status</a>',
+            "request_id": "req-123",
+        }
+    }
+)
+
+
+def test_the_short_error_keeps_none_of_the_replys_own_words(questions: QuestionSet) -> None:
+    result = _kairos(questions, Server((503, BUSY), (503, BUSY)), slept=[])
+    assert result.down and result.error is not None
+    assert "https://bit.ly/x9" in result.error and "req-123" in result.error  # kept in full
+    assert short_error(result.error) == "Kairos gave no usable answer (HTTP 503)"
+
+
+@pytest.mark.parametrize(
+    ("error", "short"),
+    [
+        ("HTTP 503", "HTTP 503"),
+        ("Kairos gave no usable answer (HTTP 429)", "Kairos gave no usable answer (HTTP 429)"),
+        (
+            "Kairos gave no usable answer (HTTP 500 Busy [x] see http://a.b (request_id r))",
+            "Kairos gave no usable answer (HTTP 500)",
+        ),
+        (
+            "Kairos gave no usable answer (response without answers [bad_shape] see a.b)",
+            "Kairos gave no usable answer (response without answers)",
+        ),
+        (
+            "Kairos gave no usable answer (HTTP 400 [a.b c:d e/f] x)",
+            "Kairos gave no usable answer (HTTP 400)",
+        ),
+        (
+            "Kairos gave no usable answer (request error TimeoutError)",
+            "Kairos gave no usable answer (request error TimeoutError)",
+        ),
+        (
+            "not asked: Kairos was down earlier in this run",
+            "not asked: Kairos was down earlier in this run",
+        ),
+    ],
+)
+def test_the_short_error_of_each_shape(error: str, short: str) -> None:
+    assert short_error(error) == short
+
+
+@pytest.mark.parametrize(
+    ("status", "body"),
+    [
+        # a message of the reply's own that starts with "[", with no type or code
+        (503, {"error": {"message": "[Service paused call 1-800-555-0100 now] see"}}),
+        (503, {"error": "[Your account is suspended contact billing-team]"}),
+        (503, {"detail": [{"loc": ["[Pay invoice now]"], "msg": "x"}]}),
+        (503, {"error": {"type": "x]y", "message": "[evil words]"}}),
+        (503, {"error": {"type": "evil.example", "message": "[evil words]"}}),
+        (503, {"error": {"type": "busy", "message": "[evil words]"}}),
+        # a message whose first word looks like a credential: its "[redacted]" too
+        (503, {"error": {"message": "sk-" + "a" * 40 + " busy"}}),
+    ],
+)
+def test_no_word_of_the_replys_own_error_reaches_the_short_error(
+    questions: QuestionSet, status: int, body: dict[str, Any]
+) -> None:
+    result = _kairos(questions, Server(*[(status, json.dumps(body))] * 2), slept=[])
+    assert result.error is not None
+    assert short_error(result.error) == f"Kairos gave no usable answer (HTTP {status})"

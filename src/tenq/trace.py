@@ -343,10 +343,29 @@ def _agent_attrs(agent: dict[str, Any], prompt_version: str) -> dict[str, Any]:
     }
 
 
+def _ask_attrs(asked: dict[str, Any], call: Any, versions: dict[str, Any]) -> dict[str, Any]:
+    """A generation for one ask of Jev's questions (by Jev or Kairos) and the call it made."""
+    return {
+        A.OBSERVATION_TYPE: "generation",
+        A.OBSERVATION_MODEL: asked.get("resolved_model") or asked.get("model") or "",
+        A.OBSERVATION_OUTPUT: _json({"answers": asked.get("answers"), "call": call}),
+        A.OBSERVATION_USAGE_DETAILS: json.dumps(
+            {
+                "input": int(asked.get("input_tokens") or 0),
+                "output": int(asked.get("output_tokens") or 0),
+            }
+        ),
+        A.OBSERVATION_COST_DETAILS: json.dumps({"total": float(asked.get("cost") or 0.0)}),
+        f"{A.OBSERVATION_METADATA}.questions": versions["questions"],
+        f"{A.OBSERVATION_METADATA}.rounds": asked.get("rounds"),
+    }
+
+
 def emit_daily(stock: dict[str, Any], record: dict[str, Any], tracer: Tracer) -> str:
     """One stock's daily trace on `tracer` (see tenq.daily for the record's
-    shape): a root span, a span per step, and a generation for Jev's answers
-    and for each Opus run. Returns the trace id as 32 hex characters."""
+    shape): a root span, a span per step, and a generation for Jev's answers,
+    for each Opus run and for each Kairos ask. Returns the trace id as 32 hex
+    characters."""
     versions = record["versions"]
     ticker = stock["ticker"]
     jev_call = (stock.get("call") or {}).get("call")
@@ -394,6 +413,12 @@ def emit_daily(stock: dict[str, Any], record: dict[str, Any], tracer: Tracer) ->
                     "why_kept": len((stock.get("why") or {}).get("kept") or []),
                     "opus_kept": len((stock.get("opus") or {}).get("kept") or []),
                 }
+                # a record from before Kairos keeps the trace it had
+                | (
+                    {"kairos": (stock.get("kairos_call") or {}).get("call")}
+                    if "kairos_on" in record
+                    else {}
+                )
             ),
         },
         stock.get("error"),
@@ -410,23 +435,15 @@ def emit_daily(stock: dict[str, Any], record: dict[str, Any], tracer: Tracer) ->
             A.OBSERVATION_OUTPUT: _json(step.get("output")),
         }
         if name == "jev":
-            jev = stock.get("jev") or {}
-            attrs = {
-                A.OBSERVATION_TYPE: "generation",
-                A.OBSERVATION_MODEL: jev.get("resolved_model") or jev.get("model") or "",
-                A.OBSERVATION_OUTPUT: _json(
-                    {"answers": jev.get("answers"), "call": stock.get("call")}
-                ),
-                A.OBSERVATION_USAGE_DETAILS: json.dumps(
-                    {
-                        "input": int(jev.get("input_tokens") or 0),
-                        "output": int(jev.get("output_tokens") or 0),
-                    }
-                ),
-                A.OBSERVATION_COST_DETAILS: json.dumps({"total": float(jev.get("cost") or 0.0)}),
-                f"{A.OBSERVATION_METADATA}.questions": versions["questions"],
-                f"{A.OBSERVATION_METADATA}.rounds": jev.get("rounds"),
-            }
+            attrs = _ask_attrs(stock.get("jev") or {}, stock.get("call"), versions)
+        elif name in ("kairos", "kairos again"):
+            # asked again, the record keeps the first ask under "first"
+            kairos = stock.get("kairos") or {}
+            first = kairos.get("first")
+            if name == "kairos" and isinstance(first, dict):
+                attrs = _ask_attrs(first, None, versions)
+            else:
+                attrs = _ask_attrs(kairos, stock.get("kairos_call"), versions)
         elif name in agents and isinstance(agents[name][0], dict):
             agent, version = agents[name]
             attrs = _agent_attrs(dict(agent or {}), version)

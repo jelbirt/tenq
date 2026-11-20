@@ -26,8 +26,9 @@ resolved model, e.g. typesafe/jev-1.13-20260917, is recorded per run).
 
 Kairos (DMind's decision model, served through Minara Cloud) takes the same
 System One request, so `ask(provider=KAIROS)` sends it the same state and the
-same balanced rounds. Only the hand-run check (tenq.model_check --kairos) asks it;
-nothing in the daily run does. Env: KAIROS_API_KEY (its only secret),
+same balanced rounds. The daily run asks it as a third method (tenq.daily), and
+the hand-run check (tenq.model_check --kairos) prints its answers beside Jev's.
+Env: KAIROS_API_KEY (its only secret),
 KAIROS_MODEL (default DMIND/Kairos). A Kairos error keeps what the reply's own
 error says (its type, code, request ids and a cleaned message), because the
 check exists to learn how Kairos refuses; the key is taken out of every word
@@ -533,13 +534,17 @@ def ask(
     provider: Provider = JEV,
     post: Post | None = None,
     sleep: Callable[[float], None] = time.sleep,
+    time_left: Callable[[], float] | None = None,
 ) -> Result:
     """Ask every question about `state` over balanced rounds and average. Never raises.
 
     `rounds` caps the round count (default: as many as the largest question
     needs); questions needing more rounds than the cap come back unbalanced.
     `provider` picks the endpoint (Jev unless told otherwise); `post` replaces
-    its transport in tests.
+    its transport in tests. `time_left`, when given, says how many seconds the
+    caller can still spend: no round starts and no retry waits once it is
+    used up, so an ask runs over it by at most one request's timeout. Rounds
+    answered before then are kept (unbalanced, like any round that failed).
     """
     send = post or provider.post
     model = model or os.environ.get(provider.model_env) or provider.default_model
@@ -556,7 +561,11 @@ def ask(
     answered: list[int] = []
     started = time.monotonic()
     planned = questions.rounds() if rounds is None else min(questions.rounds(), rounds)
+    stopped = ""  # why the rounds ended early for time
     for i in range(planned):
+        if time_left is not None and time_left() <= 0:
+            stopped = f"out of time after {i} of {planned} rounds"
+            break
         body: dict[str, Any] = {
             "model": model,
             "state": state,
@@ -571,6 +580,9 @@ def ask(
             delay = provider.retry(status, text, header, tries)
             if delay is None:
                 break
+            if time_left is not None and delay >= time_left():
+                stopped = f"out of time after {i} of {planned} rounds"
+                break  # no time to wait: this reply is the round's answer
             sleep(delay)
             tries += 1
         parsed = _parse(status, text, key if provider.error_detail else None)
@@ -603,10 +615,11 @@ def ask(
     except Exception as exc:  # the never-raises backstop: a reply nothing above foresaw
         result.errors.append(f"unreadable response ({type(exc).__name__})")
         result.answers = {}
+    if stopped:
+        result.notes.append(stopped)
     if not result.answers:
-        result.error = f"{provider.name} gave no usable answer" + (
-            f" ({result.errors[-1]})" if result.errors else ""
-        )
+        why = result.errors[-1] if result.errors else stopped
+        result.error = f"{provider.name} gave no usable answer" + (f" ({why})" if why else "")
     return result
 
 
@@ -715,6 +728,27 @@ def _error_detail(text: str, key: str) -> str:
     if ids:
         out += f" ({', '.join(ids)})"
     return out
+
+
+# where the reply's own words can begin in an error from ask(): everything up to
+# the end of the match is written by code, everything after it is the reply's
+_DETAILED = re.compile(r"HTTP \d{3}|response without answers")
+
+
+def short_error(error: str) -> str:
+    """An error from ask() with none of the reply's own words: everything after
+    the status is cut, the reply's error type and code with its message and
+    request ids. Nothing after the status is parsed, since a message of the
+    reply's own can take any shape, a type's included. For the email, where a
+    mail client links anything shaped like an address; the record and the trace
+    keep the whole error. "Kairos gave no usable answer (HTTP 503
+    [channel_unavailable] Busy, see https://x.example (request_id r))" becomes
+    "Kairos gave no usable answer (HTTP 503)"."""
+    found = _DETAILED.search(error)
+    if found is None:
+        return error
+    head = error[: found.end()]
+    return head + ")" * (head.count("(") - head.count(")"))
 
 
 def _shown(name: Any, key: str) -> bool:

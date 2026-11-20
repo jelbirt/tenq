@@ -197,12 +197,16 @@ def test_streamed_lines_are_timestamped_as_they_arrive(fake_claude: Path) -> Non
 def test_xerj_sees_none_of_the_run_secrets(monkeypatch: pytest.MonkeyPatch) -> None:
     from tenq.env import MODEL_ENV, PRIVATE_ENV, scrubbed
 
-    for k in ("SMTP_PASS", "LANGFUSE_SECRET_KEY", "RECIPIENT_EMAILS", "CLAUDE_CODE_OAUTH_TOKEN"):
+    run = ("SMTP_PASS", "LANGFUSE_SECRET_KEY", "RECIPIENT_EMAILS", "OPENROUTER_API_KEY")
+    for k in (*run, "KAIROS_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN"):
         monkeypatch.setenv(k, "x")
     env = scrubbed(PRIVATE_ENV + MODEL_ENV)
     assert "PATH" in env
-    assert not {"SMTP_PASS", "LANGFUSE_SECRET_KEY", "RECIPIENT_EMAILS"} & env.keys()
+    assert not {*run, "KAIROS_API_KEY"} & env.keys()
     assert "CLAUDE_CODE_OAUTH_TOKEN" not in env
+    # the model CLI keeps its own token, and none of the run's other secrets
+    model = scrubbed(PRIVATE_ENV)
+    assert model["CLAUDE_CODE_OAUTH_TOKEN"] == "x" and not {*run, "KAIROS_API_KEY"} & model.keys()
 
 
 def _result(**over: object) -> str:

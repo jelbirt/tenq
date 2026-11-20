@@ -1,0 +1,317 @@
+tenq daily calls, session 2026-11-04
+
+Screen screen-test: 20 of 20 stocks passed; 0 Hold by screen.
+  CRWD: picked by the test
+  DDOG: picked by the test
+  SNOW: picked by the test
+  NET: picked by the test
+  ZS: picked by the test
+  MDB: picked by the test
+  TEAM: picked by the test
+  PANW: picked by the test
+  SHOP: picked by the test
+  RBRK: picked by the test
+  FTNT: picked by the test
+  OKTA: picked by the test
+  DT: picked by the test
+  GTLB: picked by the test
+  IOT: picked by the test
+  MNDY: picked by the test
+  HUBS: picked by the test
+  NOW: picked by the test
+  PLTR: picked by the test
+  ADSK: picked by the test
+
+Stock | Jev | Opus | the two
+CRWD | Buy 80% | Hold 50% | differ
+DDOG | Buy 80% | Hold 50% | differ
+SNOW | Buy 80% | Hold 50% | differ
+NET | Buy 80% | Hold 50% | differ
+ZS | Buy 80% | Hold 50% | differ
+MDB | Buy 80% | Hold 50% | differ
+TEAM | Buy 80% | Hold 50% | differ
+PANW | Buy 80% | Hold 50% | differ
+SHOP | Buy 80% | Hold 50% | differ
+RBRK | Buy 80% | Hold 50% | differ
+FTNT | Buy 80% | Hold 50% | differ
+OKTA | Buy 80% | Hold 50% | differ
+DT | Buy 80% | Hold 50% | differ
+GTLB | Buy 80% | Hold 50% | differ
+IOT | Buy 80% | Hold 50% | differ
+MNDY | Buy 80% | Hold 50% | differ
+HUBS | Buy 80% | Hold 50% | differ
+NOW | Buy 80% | Hold 50% | differ
+PLTR | no call | Hold 50% | 
+ADSK | no call | Hold 50% | 
+
+CRWD (CrowdStrike), close $241.00
+  Jev: Buy, confidence 80%
+    news: +0.32 (good +0.90, material 80%, evidence 1.00; weight 0.45, certainty 100%)
+    guidance: +0.25 (most likely raised; weight 0.25, certainty 100%)
+    risk: -0.01 (risk event 10%, 100% of it not already in news; weight 0.15, certainty 100%)
+    score +0.56: Buy (confidence 80%)
+    Why (written by Opus for Jev's call, checked by code):
+    - The rules read the news as good.
+      <b>Outlook</b> raised (reuters.com): https://www.reuters.com/a?b=1&c=2
+  Opus: Hold, confidence 50%, lean +0.10
+    - The outlook was raised <script>.
+      <b>Outlook</b> raised (reuters.com): https://www.reuters.com/a?b=1&c=2
+  1 reason(s) failed the checks and were left out.
+
+DDOG (Datadog), close $241.00
+  Jev: Buy, confidence 80%
+    news: +0.32 (good +0.90, material 80%, evidence 1.00; weight 0.45, certainty 100%)
+    guidance: +0.25 (most likely raised; weight 0.25, certainty 100%)
+    risk: -0.01 (risk event 10%, 100% of it not already in news; weight 0.15, certainty 100%)
+    score +0.56: Buy (confidence 80%)
+    Why (written by Opus for Jev's call, checked by code):
+    - The rules read the news as good.
+      <b>Outlook</b> raised (reuters.com): https://www.reuters.com/a?b=1&c=2
+  Opus: Hold, confidence 50%, lean +0.10
+    - The outlook was raised <script>.
+      <b>Outlook</b> raised (reuters.com): https://www.reuters.com/a?b=1&c=2
+  1 reason(s) failed the checks and were left out.
+
+SNOW (Snowflake), close $241.00
+  Jev: Buy, confidence 80%
+    news: +0.32 (good +0.90, material 80%, evidence 1.00; weight 0.45, certainty 100%)
+    guidance: +0.25 (most likely raised; weight 0.25, certainty 100%)
+    risk: -0.01 (risk event 10%, 100% of it not already in news; weight 0.15, certainty 100%)
+    score +0.56: Buy (confidence 80%)
+    Why (written by Opus for Jev's call, checked by code):
+    - The rules read the news as good.
+      <b>Outlook</b> raised (reuters.com): https://www.reuters.com/a?b=1&c=2
+  Opus: Hold, confidence 50%, lean +0.10
+    - The outlook was raised <script>.
+      <b>Outlook</b> raised (reuters.com): https://www.reuters.com/a?b=1&c=2
+  1 reason(s) failed the checks and were left out.
+
+NET (Cloudflare), close $241.00
+  Jev: Buy, confidence 80%
+    news: +0.32 (good +0.90, material 80%, evidence 1.00; weight 0.45, certainty 100%)
+    guidance: +0.25 (most likely raised; weight 0.25, certainty 100%)
+    risk: -0.01 (risk event 10%, 100% of it not already in news; weight 0.15, certainty 100%)
+    score +0.56: Buy (confidence 80%)
+    Why (written by Opus for Jev's call, checked by code):
+    - The rules read the news as good.
+      <b>Outlook</b> raised (reuters.com): https://www.reuters.com/a?b=1&c=2
+  Opus: Hold, confidence 50%, lean +0.10
+    - The outlook was raised <script>.
+      <b>Outlook</b> raised (reuters.com): https://www.reuters.com/a?b=1&c=2
+  1 reason(s) failed the checks and were left out.
+
+ZS (Zscaler), close $241.00
+  Jev: Buy, confidence 80%
+    news: +0.32 (good +0.90, material 80%, evidence 1.00; weight 0.45, certainty 100%)
+    guidance: +0.25 (most likely raised; weight 0.25, certainty 100%)
+    risk: -0.01 (risk event 10%, 100% of it not already in news; weight 0.15, certainty 100%)
+    score +0.56: Buy (confidence 80%)
+    Why (written by Opus for Jev's call, checked by code):
+    - The rules read the news as good.
+      <b>Outlook</b> raised (reuters.com): https://www.reuters.com/a?b=1&c=2
+  Opus: Hold, confidence 50%, lean +0.10
+    - The outlook was raised <script>.
+      <b>Outlook</b> raised (reuters.com): https://www.reuters.com/a?b=1&c=2
+  1 reason(s) failed the checks and were left out.
+
+MDB (MongoDB), close $241.00
+  Jev: Buy, confidence 80%
+    news: +0.32 (good +0.90, material 80%, evidence 1.00; weight 0.45, certainty 100%)
+    guidance: +0.25 (most likely raised; weight 0.25, certainty 100%)
+    risk: -0.01 (risk event 10%, 100% of it not already in news; weight 0.15, certainty 100%)
+    score +0.56: Buy (confidence 80%)
+    Why (written by Opus for Jev's call, checked by code):
+    - The rules read the news as good.
+      <b>Outlook</b> raised (reuters.com): https://www.reuters.com/a?b=1&c=2
+  Opus: Hold, confidence 50%, lean +0.10
+    - The outlook was raised <script>.
+      <b>Outlook</b> raised (reuters.com): https://www.reuters.com/a?b=1&c=2
+  1 reason(s) failed the checks and were left out.
+
+TEAM (Atlassian), close $241.00
+  Jev: Buy, confidence 80%
+    news: +0.32 (good +0.90, material 80%, evidence 1.00; weight 0.45, certainty 100%)
+    guidance: +0.25 (most likely raised; weight 0.25, certainty 100%)
+    risk: -0.01 (risk event 10%, 100% of it not already in news; weight 0.15, certainty 100%)
+    score +0.56: Buy (confidence 80%)
+    Why (written by Opus for Jev's call, checked by code):
+    - The rules read the news as good.
+      <b>Outlook</b> raised (reuters.com): https://www.reuters.com/a?b=1&c=2
+  Opus: Hold, confidence 50%, lean +0.10
+    - The outlook was raised <script>.
+      <b>Outlook</b> raised (reuters.com): https://www.reuters.com/a?b=1&c=2
+  1 reason(s) failed the checks and were left out.
+
+PANW (Palo Alto Networks), close $241.00
+  Jev: Buy, confidence 80%
+    news: +0.32 (good +0.90, material 80%, evidence 1.00; weight 0.45, certainty 100%)
+    guidance: +0.25 (most likely raised; weight 0.25, certainty 100%)
+    risk: -0.01 (risk event 10%, 100% of it not already in news; weight 0.15, certainty 100%)
+    score +0.56: Buy (confidence 80%)
+    Why (written by Opus for Jev's call, checked by code):
+    - The rules read the news as good.
+      <b>Outlook</b> raised (reuters.com): https://www.reuters.com/a?b=1&c=2
+  Opus: Hold, confidence 50%, lean +0.10
+    - The outlook was raised <script>.
+      <b>Outlook</b> raised (reuters.com): https://www.reuters.com/a?b=1&c=2
+  1 reason(s) failed the checks and were left out.
+
+SHOP (Shopify), close $241.00
+  Jev: Buy, confidence 80%
+    news: +0.32 (good +0.90, material 80%, evidence 1.00; weight 0.45, certainty 100%)
+    guidance: +0.25 (most likely raised; weight 0.25, certainty 100%)
+    risk: -0.01 (risk event 10%, 100% of it not already in news; weight 0.15, certainty 100%)
+    score +0.56: Buy (confidence 80%)
+    Why (written by Opus for Jev's call, checked by code):
+    - The rules read the news as good.
+      <b>Outlook</b> raised (reuters.com): https://www.reuters.com/a?b=1&c=2
+  Opus: Hold, confidence 50%, lean +0.10
+    - The outlook was raised <script>.
+      <b>Outlook</b> raised (reuters.com): https://www.reuters.com/a?b=1&c=2
+  1 reason(s) failed the checks and were left out.
+
+RBRK (Rubrik), close $241.00
+  Jev: Buy, confidence 80%
+    news: +0.32 (good +0.90, material 80%, evidence 1.00; weight 0.45, certainty 100%)
+    guidance: +0.25 (most likely raised; weight 0.25, certainty 100%)
+    risk: -0.01 (risk event 10%, 100% of it not already in news; weight 0.15, certainty 100%)
+    score +0.56: Buy (confidence 80%)
+    Why (written by Opus for Jev's call, checked by code):
+    - The rules read the news as good.
+      <b>Outlook</b> raised (reuters.com): https://www.reuters.com/a?b=1&c=2
+  Opus: Hold, confidence 50%, lean +0.10
+    - The outlook was raised <script>.
+      <b>Outlook</b> raised (reuters.com): https://www.reuters.com/a?b=1&c=2
+  1 reason(s) failed the checks and were left out.
+
+FTNT (Fortinet), close $241.00
+  Jev: Buy, confidence 80%
+    news: +0.32 (good +0.90, material 80%, evidence 1.00; weight 0.45, certainty 100%)
+    guidance: +0.25 (most likely raised; weight 0.25, certainty 100%)
+    risk: -0.01 (risk event 10%, 100% of it not already in news; weight 0.15, certainty 100%)
+    score +0.56: Buy (confidence 80%)
+    Why (written by Opus for Jev's call, checked by code):
+    - The rules read the news as good.
+      <b>Outlook</b> raised (reuters.com): https://www.reuters.com/a?b=1&c=2
+  Opus: Hold, confidence 50%, lean +0.10
+    - The outlook was raised <script>.
+      <b>Outlook</b> raised (reuters.com): https://www.reuters.com/a?b=1&c=2
+  1 reason(s) failed the checks and were left out.
+
+OKTA (Okta), close $241.00
+  Jev: Buy, confidence 80%
+    news: +0.32 (good +0.90, material 80%, evidence 1.00; weight 0.45, certainty 100%)
+    guidance: +0.25 (most likely raised; weight 0.25, certainty 100%)
+    risk: -0.01 (risk event 10%, 100% of it not already in news; weight 0.15, certainty 100%)
+    score +0.56: Buy (confidence 80%)
+    Why (written by Opus for Jev's call, checked by code):
+    - The rules read the news as good.
+      <b>Outlook</b> raised (reuters.com): https://www.reuters.com/a?b=1&c=2
+  Opus: Hold, confidence 50%, lean +0.10
+    - The outlook was raised <script>.
+      <b>Outlook</b> raised (reuters.com): https://www.reuters.com/a?b=1&c=2
+  1 reason(s) failed the checks and were left out.
+
+DT (Dynatrace), close $241.00
+  Jev: Buy, confidence 80%
+    news: +0.32 (good +0.90, material 80%, evidence 1.00; weight 0.45, certainty 100%)
+    guidance: +0.25 (most likely raised; weight 0.25, certainty 100%)
+    risk: -0.01 (risk event 10%, 100% of it not already in news; weight 0.15, certainty 100%)
+    score +0.56: Buy (confidence 80%)
+    Why (written by Opus for Jev's call, checked by code):
+    - The rules read the news as good.
+      <b>Outlook</b> raised (reuters.com): https://www.reuters.com/a?b=1&c=2
+  Opus: Hold, confidence 50%, lean +0.10
+    - The outlook was raised <script>.
+      <b>Outlook</b> raised (reuters.com): https://www.reuters.com/a?b=1&c=2
+  1 reason(s) failed the checks and were left out.
+
+GTLB (GitLab), close $241.00
+  Jev: Buy, confidence 80%
+    news: +0.32 (good +0.90, material 80%, evidence 1.00; weight 0.45, certainty 100%)
+    guidance: +0.25 (most likely raised; weight 0.25, certainty 100%)
+    risk: -0.01 (risk event 10%, 100% of it not already in news; weight 0.15, certainty 100%)
+    score +0.56: Buy (confidence 80%)
+    Why (written by Opus for Jev's call, checked by code):
+    - The rules read the news as good.
+      <b>Outlook</b> raised (reuters.com): https://www.reuters.com/a?b=1&c=2
+  Opus: Hold, confidence 50%, lean +0.10
+    - The outlook was raised <script>.
+      <b>Outlook</b> raised (reuters.com): https://www.reuters.com/a?b=1&c=2
+  1 reason(s) failed the checks and were left out.
+
+IOT (Samsara), close $241.00
+  Jev: Buy, confidence 80%
+    news: +0.32 (good +0.90, material 80%, evidence 1.00; weight 0.45, certainty 100%)
+    guidance: +0.25 (most likely raised; weight 0.25, certainty 100%)
+    risk: -0.01 (risk event 10%, 100% of it not already in news; weight 0.15, certainty 100%)
+    score +0.56: Buy (confidence 80%)
+    Why (written by Opus for Jev's call, checked by code):
+    - The rules read the news as good.
+      <b>Outlook</b> raised (reuters.com): https://www.reuters.com/a?b=1&c=2
+  Opus: Hold, confidence 50%, lean +0.10
+    - The outlook was raised <script>.
+      <b>Outlook</b> raised (reuters.com): https://www.reuters.com/a?b=1&c=2
+  1 reason(s) failed the checks and were left out.
+
+MNDY (monday.com), close $241.00
+  Jev: Buy, confidence 80%
+    news: +0.32 (good +0.90, material 80%, evidence 1.00; weight 0.45, certainty 100%)
+    guidance: +0.25 (most likely raised; weight 0.25, certainty 100%)
+    risk: -0.01 (risk event 10%, 100% of it not already in news; weight 0.15, certainty 100%)
+    score +0.56: Buy (confidence 80%)
+    Why (written by Opus for Jev's call, checked by code):
+    - The rules read the news as good.
+      <b>Outlook</b> raised (reuters.com): https://www.reuters.com/a?b=1&c=2
+  Opus: Hold, confidence 50%, lean +0.10
+    - The outlook was raised <script>.
+      <b>Outlook</b> raised (reuters.com): https://www.reuters.com/a?b=1&c=2
+  1 reason(s) failed the checks and were left out.
+
+HUBS (HubSpot), close $241.00
+  Jev: Buy, confidence 80%
+    news: +0.32 (good +0.90, material 80%, evidence 1.00; weight 0.45, certainty 100%)
+    guidance: +0.25 (most likely raised; weight 0.25, certainty 100%)
+    risk: -0.01 (risk event 10%, 100% of it not already in news; weight 0.15, certainty 100%)
+    score +0.56: Buy (confidence 80%)
+    Why (written by Opus for Jev's call, checked by code):
+    - The rules read the news as good.
+      <b>Outlook</b> raised (reuters.com): https://www.reuters.com/a?b=1&c=2
+  Opus: Hold, confidence 50%, lean +0.10
+    - The outlook was raised <script>.
+      <b>Outlook</b> raised (reuters.com): https://www.reuters.com/a?b=1&c=2
+  1 reason(s) failed the checks and were left out.
+
+NOW (ServiceNow), close $241.00
+  Jev: Buy, confidence 80%
+    news: +0.32 (good +0.90, material 80%, evidence 1.00; weight 0.45, certainty 100%)
+    guidance: +0.25 (most likely raised; weight 0.25, certainty 100%)
+    risk: -0.01 (risk event 10%, 100% of it not already in news; weight 0.15, certainty 100%)
+    score +0.56: Buy (confidence 80%)
+    Why (written by Opus for Jev's call, checked by code):
+    - The rules read the news as good.
+      <b>Outlook</b> raised (reuters.com): https://www.reuters.com/a?b=1&c=2
+  Opus: Hold, confidence 50%, lean +0.10
+    - The outlook was raised <script>.
+      <b>Outlook</b> raised (reuters.com): https://www.reuters.com/a?b=1&c=2
+  1 reason(s) failed the checks and were left out.
+
+PLTR (Palantir), close $241.00
+  Opus: Hold, confidence 50%, lean +0.10
+    - The outlook was raised <script>.
+      <b>Outlook</b> raised (reuters.com): https://www.reuters.com/a?b=1&c=2
+  Jev made no call (HTTP 503).
+  1 reason(s) failed the checks and were left out.
+
+ADSK (Autodesk), close $241.00
+  Opus: Hold, confidence 50%, lean +0.10
+    - The outlook was raised <script>.
+      <b>Outlook</b> raised (reuters.com): https://www.reuters.com/a?b=1&c=2
+  Jev made no call (not asked: Jev was down earlier in this run).
+  1 reason(s) failed the checks and were left out.
+
+balance, Jev over 18: mean before the reaction cut +0.56, mean score +0.56, Buy 18, Hold 0, Sell 0, Short 0
+balance, Opus over 20: Buy 0, Hold 20, Sell 0, Short 0
+
+Not investment advice. Two methods each make a call on each stock the day's screen picked, from the same public facts: Jev answers questions and fixed rules turn the answers into a call; Opus makes its own. This is an experiment, and both are scored against prices later. Every figure in a reason was written by code from the facts sheet.
+Run e50ad723-8fa9-4454-91fa-2b9dd9e82ec9: questions jev-q9, rules rules-v9, prompts call-v12 and why-v12.
