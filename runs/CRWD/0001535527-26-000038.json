@@ -1,7 +1,7 @@
 {
  "run_id": "a5d86b8d-1b98-41b5-a97f-fb080b5bee6f",
  "started_at": 1795473534.887312,
- "ended_at": 1795473561.3574622,
+ "ended_at": 1795473566.5205352,
  "filing": {
   "ticker": "CRWD",
   "cik": 1535527,
@@ -477,8 +477,8 @@
   "dropped": []
  },
  "email": {
-  "sent": null,
-  "status": "sending",
+  "sent": true,
+  "status": "email sent to 1 recipient(s)",
   "subject": "tenq: CRWD 10-Q for the quarter ended 2026-10-31: revenue +28.3% YoY"
  },
  "steps": [
@@ -525,10 +525,17 @@
     "dropped": []
    },
    "error": null
+  },
+  {
+   "name": "email",
+   "start": 1795473561.3576787,
+   "end": 1795473566.5205333,
+   "output": "email sent to 1 recipient(s)",
+   "error": null
   }
  ],
  "trace": {
-  "sent": false,
-  "status": "trace pending"
+  "sent": true,
+  "status": "trace stored: 4e3c2ff467e863706e67c2d49e5941d9"
  }
 }
