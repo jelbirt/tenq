@@ -1,0 +1,534 @@
+{
+ "run_id": "a5d86b8d-1b98-41b5-a97f-fb080b5bee6f",
+ "started_at": 1795473534.887312,
+ "ended_at": 1795473561.3574622,
+ "filing": {
+  "ticker": "CRWD",
+  "cik": 1535527,
+  "company": "CrowdStrike Holdings, Inc.",
+  "form": "10-Q",
+  "accession": "0001535527-26-000038",
+  "filed": "2026-11-23",
+  "period": "2026-10-31",
+  "url": "https://www.sec.gov/Archives/edgar/data/1535527/000153552726000038/0001535527-26-000038-index.html",
+  "items": "",
+  "accepted": "2026-11-23T16:33:04-05:00"
+ },
+ "mode": "brief",
+ "model": "opus",
+ "prompt_version": "brief-v4",
+ "code": "0a86c2282b4654da633140b2a8e94b2781c526f3",
+ "prompt_input": "Write the brief for CrowdStrike Holdings, Inc. (CRWD), 10-Q for the period ended 2026-10-31, accession 0001535527-26-000038.",
+ "metrics": {
+  "ticker": "CRWD",
+  "company": "CrowdStrike Holdings, Inc.",
+  "form": "10-Q",
+  "accession": "0001535527-26-000038",
+  "period": "2026-10-31",
+  "prior_period": "2026-07-31",
+  "year_ago_period": "2025-10-31",
+  "prior_year_ago_period": "2025-07-31",
+  "metrics": {
+   "revenue": {
+    "label": "Revenue",
+    "unit": "usd",
+    "current": 1583419000.0,
+    "prior_quarter": 1470897000.0,
+    "year_ago": 1234244000.0,
+    "qoq_change": 112522000.0,
+    "qoq_pct": 0.07649889829131476,
+    "yoy_change": 349175000.0,
+    "yoy_pct": 0.28290597321113164,
+    "prior_yoy_pct": 0.25830401932671315,
+    "growth_change": 0.0246
+   },
+   "gross_profit": {
+    "label": "Gross profit",
+    "unit": "usd",
+    "current": 1202154000.0,
+    "prior_quarter": 1096895000.0,
+    "year_ago": 927654000.0,
+    "qoq_change": 105259000.0,
+    "qoq_pct": 0.09596087136872718,
+    "yoy_change": 274500000.0,
+    "yoy_pct": 0.295907741463951,
+    "prior_yoy_pct": 0.274864859524803,
+    "growth_change": 0.021
+   },
+   "operating_income": {
+    "label": "Operating income",
+    "unit": "usd",
+    "current": -756000.0,
+    "prior_quarter": -33232000.0,
+    "year_ago": -62222000.0,
+    "qoq_change": 32476000.0,
+    "qoq_pct": null,
+    "yoy_change": 61466000.0,
+    "yoy_pct": null,
+    "prior_yoy_pct": null,
+    "growth_change": null
+   },
+   "net_income": {
+    "label": "Net income",
+    "unit": "usd",
+    "current": 24856000.0,
+    "prior_quarter": 5306000.0,
+    "year_ago": -26776000.0,
+    "qoq_change": 19550000.0,
+    "qoq_pct": 3.68450810403317,
+    "yoy_change": 51632000.0,
+    "yoy_pct": null,
+    "prior_yoy_pct": null,
+    "growth_change": null
+   },
+   "operating_cash_flow": {
+    "label": "Operating cash flow",
+    "unit": "usd",
+    "current": 665176000.0,
+    "prior_quarter": 530268000.0,
+    "year_ago": 397541000.0,
+    "qoq_change": 134908000.0,
+    "qoq_pct": 0.25441474876854725,
+    "yoy_change": 267635000.0,
+    "yoy_pct": 0.6732261578051069,
+    "prior_yoy_pct": 0.5932001730602827,
+    "growth_change": 0.08
+   },
+   "capex": {
+    "label": "Capital expenditures",
+    "unit": "usd",
+    "current": 162756000.0,
+    "prior_quarter": 124413000.0,
+    "year_ago": 83395000.0,
+    "qoq_change": 38343000.0,
+    "qoq_pct": 0.3081912661860095,
+    "yoy_change": 79361000.0,
+    "yoy_pct": 0.9516277954313808,
+    "prior_yoy_pct": 3.0795160179689804,
+    "growth_change": -2.1279
+   },
+   "deferred_revenue_current": {
+    "label": "Deferred revenue, current",
+    "unit": "usd",
+    "current": 3651063000.0,
+    "prior_quarter": 3497144000.0,
+    "year_ago": 2851488000.0,
+    "qoq_change": 153919000.0,
+    "qoq_pct": 0.04401277156445374,
+    "yoy_change": 799575000.0,
+    "yoy_pct": 0.28040623001043663,
+    "prior_yoy_pct": 0.2574245037027236,
+    "growth_change": 0.023
+   },
+   "deferred_revenue_noncurrent": {
+    "label": "Deferred revenue, noncurrent",
+    "unit": "usd",
+    "current": 1448759000.0,
+    "prior_quarter": 1345066000.0,
+    "year_ago": 1211762000.0,
+    "qoq_change": 103693000.0,
+    "qoq_pct": 0.07709138436329518,
+    "yoy_change": 236997000.0,
+    "yoy_pct": 0.1955804852768118,
+    "prior_yoy_pct": 0.2765642839585028,
+    "growth_change": -0.081
+   },
+   "cash": {
+    "label": "Cash and cash equivalents",
+    "unit": "usd",
+    "current": 5366651000.0,
+    "prior_quarter": 5013847000.0,
+    "year_ago": 4801083000.0,
+    "qoq_change": 352804000.0,
+    "qoq_pct": 0.07036592859734252,
+    "yoy_change": 565568000.0,
+    "yoy_pct": 0.11780008802180675,
+    "prior_yoy_pct": 0.008328111211486683,
+    "growth_change": 0.10949999999999999
+   },
+   "free_cash_flow": {
+    "label": "Free cash flow (operating cash flow less capex)",
+    "unit": "usd",
+    "current": 502420000.0,
+    "prior_quarter": 405855000.0,
+    "year_ago": 314146000.0,
+    "qoq_change": 96565000.0,
+    "qoq_pct": 0.23792980251567677,
+    "yoy_change": 188274000.0,
+    "yoy_pct": 0.5993200613727375,
+    "prior_yoy_pct": 0.34240164056427475,
+    "growth_change": 0.2569
+   },
+   "deferred_revenue": {
+    "label": "Deferred revenue, total",
+    "unit": "usd",
+    "current": 5099822000.0,
+    "prior_quarter": 4842210000.0,
+    "year_ago": 4063250000.0,
+    "qoq_change": 257612000.0,
+    "qoq_pct": 0.05320132749302488,
+    "yoy_change": 1036572000.0,
+    "yoy_pct": 0.2551090875530671,
+    "prior_yoy_pct": 0.2626833282179753,
+    "growth_change": -0.0076
+   },
+   "gross_margin": {
+    "label": "Gross margin",
+    "unit": "ratio",
+    "current": 0.7592140804171227,
+    "prior_quarter": 0.7457320261037993,
+    "year_ago": 0.7515969289702846,
+    "qoq_change": 0.013482054313323388,
+    "qoq_pct": null,
+    "yoy_change": 0.007617151446838055,
+    "yoy_pct": null,
+    "prior_yoy_pct": null,
+    "growth_change": null
+   },
+   "operating_margin": {
+    "label": "Operating margin",
+    "unit": "ratio",
+    "current": -0.0004774478517688622,
+    "prior_quarter": -0.022593016370282895,
+    "year_ago": -0.05041304636684481,
+    "qoq_change": 0.022115568518514032,
+    "qoq_pct": null,
+    "yoy_change": 0.049935598515075945,
+    "yoy_pct": null,
+    "prior_yoy_pct": null,
+    "growth_change": null
+   }
+  }
+ },
+ "agent": {
+  "model": "opus",
+  "text": "Need specific MD&A comparison passages in the new filing.{\"claims\": [{\"claim\": \"{fin:CRWD:revenue:yoy_pct}, and management says subscription revenue growth came mainly from adding new customers and selling more sensors and modules to existing customers.\", \"passage_id\": \"CRWD-0001535527-26-000038:1527\"}, {\"claim\": \"{fin:CRWD:gross_margin:yoy_change}, and the filing says its subscription gross margin improved slightly, mainly because of hiring efficiencies.\", \"passage_id\": \"CRWD-0001535527-26-000038:1568\"}, {\"claim\": \"Subscription cost of revenue still rose. The filing points mainly to higher cloud hosting costs, more staff, depreciation of data center equipment, and amortization of intangible assets and internal-use software.\", \"passage_id\": \"CRWD-0001535527-26-000038:1544\"}, {\"claim\": \"{fin:CRWD:operating_income:yoy_change}; sales and marketing spending kept rising, which the filing attributes mainly to more staff, marketing programs and stock-based compensation.\", \"passage_id\": \"CRWD-0001535527-26-000038:1585\"}, {\"claim\": \"{fin:CRWD:operating_cash_flow:yoy_pct}; for the year to date, the filing says operating cash was helped by large non-cash charges such as stock-based compensation, along with lower accounts receivable and higher deferred revenue.\", \"passage_id\": \"CRWD-0001535527-26-000038:1810\"}]}",
+  "error": null,
+  "failure": null,
+  "usage_limit": false,
+  "tools_offered": [
+   "mcp__tenq__get_metrics",
+   "mcp__tenq__read_passage",
+   "mcp__tenq__search_filing"
+  ],
+  "tool_calls": [
+   {
+    "id": "toolu_01BdzJsUtrYPH1rGeuPSVoJL",
+    "name": "mcp__tenq__get_metrics",
+    "input": {},
+    "output": "{\"ticker\":\"CRWD\",\"company\":\"CrowdStrike Holdings, Inc.\",\"form\":\"10-Q\",\"accession\":\"0001535527-26-000038\",\"period\":\"2026-10-31\",\"prior_period\":\"2026-07-31\",\"year_ago_period\":\"2025-10-31\",\"numbers\":[{\"id\":\"fin:CRWD:revenue:current\",\"label\":\"Revenue, latest quarter\",\"code_writes\":\"CRWD's revenue was $1.583 billion in the quarter ended 2026-10-31\"},{\"id\":\"fin:CRWD:revenue:prior_quarter\",\"label\":\"Revenue, prior quarter\",\"code_writes\":\"CRWD's revenue was $1.471 billion in the quarter ended 2026-07-31\"},{\"id\":\"fin:CRWD:revenue:year_ago\",\"label\":\"Revenue, same quarter a year ago\",\"code_writes\":\"CRWD's revenue was $1.234 billion in the quarter ended 2025-10-31\"},{\"id\":\"fin:CRWD:revenue:qoq_change\",\"label\":\"Revenue, change from the prior quarter\",\"code_writes\":\"CRWD's revenue for the quarter ended 2026-10-31 rose by $112.5 million from the prior quarter\"},{\"id\":\"fin:CRWD:revenue:qoq_pct\",\"label\":\"Revenue, change from the prior quarter, percent\",\"code_writes\":\"CRWD's revenue for the quarter ended 2026-10-31 rose 7.65% from the prior quarter\"},{\"id\":\"fin:CRWD:revenue:yoy_change\",\"label\":\"Revenue, change from a year ago\",\"code_writes\":\"CRWD's revenue for the quarter ended 2026-10-31 rose by $349.2 million from a year earlier\"},{\"id\":\"fin:CRWD:revenue:yoy_pct\",\"label\":\"Revenue, change from a year ago, percent\",\"code_writes\":\"CRWD's revenue for the quarter ended 2026-10-31 rose 28.29% from a year earlier\"},{\"id\":\"fin:CRWD:revenue:prior_yoy_pct\",\"label\":\"Revenue, prior quarter's change from a year before it, percent\",\"code_writes\":\"CRWD's revenue for the quarter ended 2026-07-31 rose 25.83% from a year earlier\"},{\"id\":\"fin:CRWD:revenue:growth_change\",\"label\":\"Revenue, growth from a year ago less the prior quarter's growth, points\",\"code_writes\":\"CRWD's revenue growth from a year earlier was 2.46 points faster for the quarter ended 2026-10-31 than for the quarter ended 2026-07-31\"},{\"id\":\"fin:CRWD:gross_profit:current\",\"label\":\"Gross profit, latest quarter\",\"code_writes\":\"CRWD's gro",
+    "is_error": false,
+    "at": 1795473536.9337115,
+    "done_at": 1795473536.97084
+   },
+   {
+    "id": "toolu_01F7vjsuoRBTvGrejfqYWNtk",
+    "name": "mcp__tenq__search_filing",
+    "input": {
+     "query": "subscription revenue increased primarily due to new customers expansion"
+    },
+    "output": "{\"result\":[{\"passage_id\":\"CRWD-0001535527-26-000010:1465\",\"score\":15.783,\"text\":\"As new customers subscribe to our platform and existing subscription customers increase the number of endpoints on our Falcon platform, our cost of revenue will increase due to greater cloud hosting costs related to powering new cloud modules and the incremental costs for storing additional data collected for such cloud modules and employee-related costs. We intend to continue to invest additional resources in our cloud platform and our customer support organizations as we grow our business. The level and timing of investment in these areas could affect our cost of revenue in the future.\"},{\"passage_id\":\"CRWD-0001535527-25-000025:1244\",\"score\":15.17,\"text\":\"As new customers subscribe to our platform and existing subscription customers increase the number of endpoints on our Falcon platform, our cost of revenue will increase due to greater cloud hosting costs related to powering new cloud modules and the incremental costs for storing additional data collected for such cloud modules and employee-related costs. We intend to continue to invest additional resources in our cloud platform and our customer support organizations as we grow our business. The level and timing of investment in these areas could affect our cost of revenue in the future.\"},{\"passage_id\":\"CRWD-0001535527-26-000025:1283\",\"score\":15.17,\"text\":\"As new customers subscribe to our platform and existing subscription customers increase the number of endpoints on our Falcon platform, our cost of revenue will increase due to greater cloud hosting costs related to powering new cloud modules and the incremental costs for storing additional data collected for such cloud modules and employee-related costs. We intend to continue to invest additional resources in our cloud platform and our customer support organizations as we grow our business. The level and timing of investment in these areas could affect our cost of revenue in the ",
+    "is_error": false,
+    "at": 1795473538.8905733,
+    "done_at": 1795473538.9348917
+   },
+   {
+    "id": "toolu_017xyz24aHrAogmCYWqxNqkv",
+    "name": "mcp__tenq__search_filing",
+    "input": {
+     "query": "net cash provided by operating activities increased"
+    },
+    "output": "{\"result\":[{\"passage_id\":\"CRWD-0001535527-26-000010:1695\",\"score\":16.375,\"text\":\"                                                                   Year Ended January 31,\\n                                                                   2026                                       2025                     2024\\n \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\\n  Net cash provided by operating activities                        $                           1,612,349      $         1,381,727      $         1,166,207\\n  Net cash used in investing activities                  \"},{\"passage_id\":\"CRWD-0001535527-26-000038:1810\",\"score\":14.837,\"text\":\"Net cash provided by operating activities during the nine months ended October 31, 2026 was $1.8 billion, which resulted from net income of $75.7 million, adjusted for non-cash charges of $1.6 billion and a net cash inflow of $107.4 million from changes in operating assets and liabilities. Non-cash charges primarily consisted of $1.0 billion of stock-based compensation expense, $320.3 million of amortization of deferred contract acquisition costs, $240.1 million of depreciation and amortization, $45.5 million of amortization of intangible assets, $15.9 million of non-cash operating lease costs\"},{\"passage_id\":\"CRWD-0001535527-26-000031:1776\",\"score\":14.837,\"text\":\"Net cash provided by operating activities during the six months ended July 31, 2026 was $1.1 billion, which resulted from net income of $51.3 million, adjusted for non-cash charges of $1.0 billion and a net cash inflow of $37.1 million from changes in operating assets and liabilities. Non-cash charges primarily consisted of $674.6 million in stock-based compensation expense, $207.1 million of amortization of deferred contract acquisition costs, $157.6 million of depreciation and amortization, $25.7 million of amortization of intangible assets, $10.4 million of no",
+    "is_error": false,
+    "at": 1795473539.2925377,
+    "done_at": 1795473539.3241272
+   },
+   {
+    "id": "toolu_01GvjPk9ch6v3yCBC3QHx1EZ",
+    "name": "mcp__tenq__search_filing",
+    "input": {
+     "query": "purchases of property and equipment data center"
+    },
+    "output": "{\"result\":[{\"passage_id\":\"CRWD-0001535527-26-000010:2629\",\"score\":17.512,\"text\":\"                                                                       January 31,\\n                                                                       2026                            2025\\n \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\\n  Data center and other computer equipment                             $                1,058,690      $           755,728\\n  Capitalized internal-use software and website development costs                         383,119                  265,987\\n  Leasehold improvements             \"},{\"passage_id\":\"CRWD-0001535527-25-000025:679\",\"score\":17.381,\"text\":\"                                                                       July 31, 2025                     January 31, 2025\\n \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\\n  Data center and other computer equipment                             $                    896,236      $                       755,728\\n  Capitalized internal-use software and website development costs                           327,606                              265,987\\n  Leasehold improvements                                        \"},{\"passage_id\":\"CRWD-0001535527-25-000033:687\",\"score\":17.381,\"text\":\"                                                                       October 31, 2025                     January 31, 2025\\n \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\\n  Data center and other computer equipment                             $                       969,716      $                       755,728\\n  Capitalized internal-use software and website development costs                              352,415                              265,987\\n  Leasehold im",
+    "is_error": false,
+    "at": 1795473539.6936316,
+    "done_at": 1795473539.761659
+   },
+   {
+    "id": "toolu_01WnFAje9bzY29Sukbqr8JBg",
+    "name": "mcp__tenq__search_filing",
+    "input": {
+     "query": "gross margin cost of revenue increased"
+    },
+    "output": "{\"result\":[{\"passage_id\":\"CRWD-0001535527-25-000025:1250\",\"score\":15.038,\"text\":\"Gross profit and gross margin have been and will continue to be affected by various factors, including the timing of our acquisition of new subscription customers, renewals from existing subscription customers, sales of additional modules to existing subscription customers, the data center and bandwidth costs associated with operating our cloud platform, the extent to which we expand our customer support and cloud operations organizations, and the extent to which we can increase the efficiency of our technology, infrastructure, and data centers through technological improvements. We expect our\"},{\"passage_id\":\"CRWD-0001535527-26-000025:1289\",\"score\":15.038,\"text\":\"Gross profit and gross margin have been and will continue to be affected by various factors, including the timing of our acquisition of new subscription customers, renewals from existing subscription customers, sales of additional modules to existing subscription customers, the data center and bandwidth costs associated with operating our cloud platform, the extent to which we expand our customer support and cloud operations organizations, and the extent to which we can increase the efficiency of our technology, infrastructure, and data centers through technological improvements. We expect our\"},{\"passage_id\":\"CRWD-0001535527-26-000038:1419\",\"score\":15.038,\"text\":\"Gross profit and gross margin have been and will continue to be affected by various factors, including the timing of our acquisition of new subscription customers, renewals from existing subscription customers, sales of additional modules to existing subscription customers, the data center and bandwidth costs associated with operating our cloud platform, the extent to which we expand our customer support and cloud operations organizations, and the extent to which we can increase the efficiency of our technology, infrastructure, and data centers through technological ",
+    "is_error": false,
+    "at": 1795473539.9918182,
+    "done_at": 1795473540.0240378
+   },
+   {
+    "id": "toolu_01APX3x49rPBbNiHy4xBeMXT",
+    "name": "mcp__tenq__search_filing",
+    "input": {
+     "query": "Subscription revenue increased three months ended October 31, 2026 compared",
+     "k": 8
+    },
+    "output": "{\"result\":[{\"passage_id\":\"CRWD-0001535527-26-000038:1525\",\"score\":28.031,\"text\":\"Total revenue increased by $349.2 million, or 28%, for the three months ended October 31, 2026 compared to the three months ended October 31, 2025. Subscription revenue accounted for 95% of total revenue for each of the three months ended October 31, 2026 and October 31, 2025. Professional services revenue accounted for 5% of our total revenue for each of the three months ended October 31, 2026 and October 31, 2025.\"},{\"passage_id\":\"CRWD-0001535527-26-000038:1544\",\"score\":26.788,\"text\":\"Total cost of revenue increased by $74.7 million, or 24%, for the three months ended October 31, 2026 compared to the three months ended October 31, 2025. Subscription cost of revenue increased by $56.9 million, or 22%, for the three months ended October 31, 2026, compared to the three months ended October 31, 2025. The increase in subscription cost of revenue was primarily due to an increase in cloud hosting and related services costs of $11.0 million, an increase in employee-related expenses of $10.1 million driven by a 10% increase in average headcount, an increase in depreciation of data c\"},{\"passage_id\":\"CRWD-0001535527-25-000033:1396\",\"score\":25.894,\"text\":\"Total revenue increased by $224.1 million, or 22%, for the three months ended October 31, 2025 compared to the three months ended October 31, 2024. Subscription revenue accounted for 95% of total revenue for each of the three months ended October 31, 2025 and October 31, 2024. Professional services revenue accounted for 5% of our total revenue for each of the three months ended October 31, 2025 and October 31, 2024.\"},{\"passage_id\":\"CRWD-0001535527-26-000038:1568\",\"score\":25.776,\"text\":\"Subscription gross margin slightly increased by one percentage point for the three months ended October 31, 2026, compared to the three months ended October 31, 2025. The increase in subscription gross margin was primarily attributable to hiring efficiencies.\"},",
+    "is_error": false,
+    "at": 1795473542.4112327,
+    "done_at": 1795473542.4599833
+   },
+   {
+    "id": "toolu_01AJpSBQPs4sb51fyKkrwP22",
+    "name": "mcp__tenq__search_filing",
+    "input": {
+     "query": "deferred revenue increased billings remaining performance obligations October 31, 2026"
+    },
+    "output": "{\"result\":[{\"passage_id\":\"CRWD-0001535527-26-000038:1047\",\"score\":23.061,\"text\":\"                                       Three Months Ended October 31,                                                  Nine Months Ended October 31,\\n                                       2026                                                 2025                       2026                                                2025\\n \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\\n  Beginning balance                    $                                     4,\"},{\"passage_id\":\"CRWD-0001535527-26-000038:1041\",\"score\":21.478,\"text\":\"Contract liabilities consist of deferred revenue and include payments received in advance of performance under the contract. Such amounts are recognized as revenue over the contractual period. The Company recognized revenue of $ 1.3 billion and $ 1.1 billion for the three months ended October 31, 2026 and October 31, 2025, respectively, and $ 2.9 billion and $ 2.3 billion during the nine months ended October 31, 2026 and October 31, 2025, respectively, which was included in the corresponding contract liability balance at the beginning of the period.\"},{\"passage_id\":\"CRWD-0001535527-25-000033:969\",\"score\":21.119,\"text\":\"The Company receives payments from customers based upon contractual billing schedules. Accounts receivable are recorded when the right to consideration becomes unconditional. Payment terms on invoiced amounts are typically 30 - 60 days. Contract assets include amounts related to the contractual right to consideration for both completed and partially completed performance obligations that may not have been invoiced.\"},{\"passage_id\":\"CRWD-0001535527-26-000010:3154\",\"score\":20.651,\"text\":\"The Company\u2019s subscription contracts with its customers have a typical term of one to three years, and most subscription cont",
+    "is_error": false,
+    "at": 1795473542.8605897,
+    "done_at": 1795473542.8927863
+   },
+   {
+    "id": "toolu_01CWLy2vbymQcR2oBSCNreKj",
+    "name": "mcp__tenq__search_filing",
+    "input": {
+     "query": "increase in subscription revenue was primarily due to new subscription customers net new ARR"
+    },
+    "output": "{\"result\":[{\"passage_id\":\"CRWD-0001535527-26-000010:1422\",\"score\":31.578,\"text\":\"July 19 Incident. On July 19, 2024, we released a content configuration update for our Falcon sensor that resulted in system crashes for certain Windows systems (the \u201cJuly 19 Incident\u201d). As a result of the July 19 Incident, we are subject to lawsuits, claims and inquiries as described in Note 10, Commitments and Contingencies, in Part II, Item 8 of this Annual Report on Form 10-K. We have incurred, and expect to continue to incur, significant legal and professional services and other general and administrative expenses associated with the July 19 Incident in future periods. It is not reasonabl\"},{\"passage_id\":\"CRWD-0001535527-26-000025:1245\",\"score\":30.975,\"text\":\"July 19 Incident. On July 19, 2024, we released a content configuration update for our Falcon sensor that resulted in system crashes for certain Windows systems (the \u201cJuly 19 Incident\u201d). As a result of the July 19 Incident, we are subject to lawsuits, claims and inquiries as described in Note 10, \u201cCommitments and Contingencies,\u201d to our condensed consolidated financial statements in Part I, Item 1 of this Quarterly Report on Form 10-Q. We have incurred, and expect to continue to incur, significant legal and professional services and other general and administrative expenses associated with the \"},{\"passage_id\":\"CRWD-0001535527-25-000025:1206\",\"score\":30.536,\"text\":\"July 19 Incident. On July 19, 2024, we released a content configuration update for our Falcon sensor that resulted in system crashes for certain Windows systems (the \u201cJuly 19 Incident\u201d). As a result of the July 19 Incident, we are subject to lawsuits, claims and inquiries as described in Note 10, \u201cCommitments and Contingencies,\u201d to our condensed consolidated financial statements in Part I, Item 1 of this Quarterly Report on Form 10-Q. We have incurred, and expect to continue to incur, significant legal and professional services and other general and administrative ex",
+    "is_error": false,
+    "at": 1795473544.7151158,
+    "done_at": 1795473544.748083
+   },
+   {
+    "id": "toolu_01PPauqALP1duisHAGzSKS4j",
+    "name": "mcp__tenq__read_passage",
+    "input": {
+     "passage_id": "CRWD-0001535527-26-000038:1568"
+    },
+    "output": "{\"passage_id\":\"CRWD-0001535527-26-000038:1568\",\"found\":true,\"text\":\"Subscription gross margin slightly increased by one percentage point for the three months ended October 31, 2026, compared to the three months ended October 31, 2025. The increase in subscription gross margin was primarily attributable to hiring efficiencies.\"}",
+    "is_error": false,
+    "at": 1795473545.1637402,
+    "done_at": 1795473545.1747532
+   },
+   {
+    "id": "toolu_01A3pXe3DDkAHtArgFktjLxm",
+    "name": "mcp__tenq__read_passage",
+    "input": {
+     "passage_id": "CRWD-0001535527-26-000038:1810"
+    },
+    "output": "{\"passage_id\":\"CRWD-0001535527-26-000038:1810\",\"found\":true,\"text\":\"Net cash provided by operating activities during the nine months ended October 31, 2026 was $1.8 billion, which resulted from net income of $75.7 million, adjusted for non-cash charges of $1.6 billion and a net cash inflow of $107.4 million from changes in operating assets and liabilities. Non-cash charges primarily consisted of $1.0 billion of stock-based compensation expense, $320.3 million of amortization of deferred contract acquisition costs, $240.1 million of depreciation and amortization, $45.5 million of amortization of intangible assets, $15.9 million of non-cash operating lease costs, and $1.3 million of non-cash interest expense, partially offset by $35.4 million of realized gains on strategic investments, and $9.1 million of deferred income taxes. The net cash inflow from changes in operating assets and liabilities was primarily due to a $298.7 million decrease in accounts receivable, a $340.9 million increase in deferred revenue, a $105.8 million increase in accrued payroll and benefits, and a $51.9 million increase in accrued expenses and other liabilities, partially offset by a $525.5 million increase in deferred contract acquisition costs, a $102.3 million increase in prepaid expenses and other assets, a $49.7 million decrease in accounts payable, and a $12.4 million decrease in operating lease liabilities.\"}",
+    "is_error": false,
+    "at": 1795473545.616287,
+    "done_at": 1795473545.6262949
+   },
+   {
+    "id": "toolu_01LP6nL4WwjEEN97oiJAjiCz",
+    "name": "mcp__tenq__search_filing",
+    "input": {
+     "query": "sales and marketing expenses increased three months ended October 31, 2026",
+     "k": 4
+    },
+    "output": "{\"result\":[{\"passage_id\":\"CRWD-0001535527-26-000038:1585\",\"score\":24.921,\"text\":\"Sales and marketing expenses increased by $77.8 million, or 16%, for the three months ended October 31, 2026 compared to the three months ended October 31, 2025. The increase in sales and marketing expenses was primarily due to an increase in employee-related expenses of $25.9 million driven by a 16% increase in average headcount, an increase in marketing programs of $18.1 million, an increase in stock-based compensation expense of $12.7 million, an increase in employee benefits of $6.2 million, an increase in allocated overhead costs of $6.0 million, an increase in travel expenses of $4.6 mil\"},{\"passage_id\":\"CRWD-0001535527-26-000038:1576\",\"score\":24.305,\"text\":\"The following shows sales and marketing expenses for the three months ended October 31, 2026 as compared to the three months ended October 31, 2025 (in thousands, except percentages):\"},{\"passage_id\":\"CRWD-0001535527-25-000033:1447\",\"score\":23.146,\"text\":\"The following shows sales and marketing expenses for the three months ended October 31, 2025 as compared to the three months ended October 31, 2024 (in thousands, except percentages):\"},{\"passage_id\":\"CRWD-0001535527-25-000033:1456\",\"score\":22.404,\"text\":\"Sales and marketing expenses increased by $72.8 million, or 18%, for the three months ended October 31, 2025 compared to the three months ended October 31, 2024. The increase in sales and marketing expenses was primarily due to an increase in employee-related expenses of $36.6 million driven by a 10% increase in average headcount, an increase in stock-based compensation expense of $17.5 million, an increase in marketing programs of $9.0 million, an increase in allocated overhead costs of $5.3 million, an increase in employee benefits of $4.5 million, an increase in cloud hosting and related se\"}]}",
+    "is_error": false,
+    "at": 1795473546.0667102,
+    "done_at": 1795473546.0934005
+   },
+   {
+    "id": "toolu_013RJfAcWphVyTbWjtiHpuaS",
+    "name": "mcp__tenq__search_filing",
+    "input": {
+     "query": "increase in subscription revenue attributable existing customers new customers October 31, 2026",
+     "k": 6
+    },
+    "output": "{\"result\":[{\"passage_id\":\"CRWD-0001535527-26-000038:1527\",\"score\":24.309,\"text\":\"Subscription revenue increased by $334.2 million, or 29%, for the three months ended October 31, 2026 compared to the three months ended October 31, 2025, which was primarily driven by a combination of the addition of new customers and the sale of additional sensors and modules to existing customers.\"},{\"passage_id\":\"CRWD-0001535527-26-000038:1664\",\"score\":24.207,\"text\":\"Subscription revenue increased by $901.7 million, or 27%, for the nine months ended October 31, 2026 compared to the nine months ended October 31, 2025, which was primarily driven by a combination of the addition of new customers and the sale of additional sensors and modules to existing customers.\"},{\"passage_id\":\"CRWD-0001535527-25-000033:1533\",\"score\":22.274,\"text\":\"Subscription revenue increased by $569.3 million, or 21%, for the nine months ended October 31, 2025, compared to the nine months ended October 31, 2024, which was primarily driven by a combination of the addition of new customers and the sale of additional sensors and modules to existing customers.\"},{\"passage_id\":\"CRWD-0001535527-25-000033:1398\",\"score\":22.172,\"text\":\"Subscription revenue increased by $206.0 million, or 21%, for the three months ended October 31, 2025 compared to the three months ended October 31, 2024, which was primarily driven by a combination of the addition of new customers and the sale of additional sensors and modules to existing customers.\"},{\"passage_id\":\"CRWD-0001535527-26-000010:1577\",\"score\":21.236,\"text\":\"Subscription revenue increased by $803.2 million, or 21% in fiscal 2026, as compared to fiscal 2025, which was primarily driven by a combination of the addition of new customers and the sale of additional sensors and modules to existing customers.\"},{\"passage_id\":\"CRWD-0001535527-26-000031:1632\",\"score\":20.615,\"text\":\"Subscription revenue increased by $567.4 million, or 26%, for the six months ended July 31, 2026 compared ",
+    "is_error": false,
+    "at": 1795473548.3630486,
+    "done_at": 1795473548.4046013
+   },
+   {
+    "id": "toolu_01RPVxawH61yNxH5aXMpUYQS",
+    "name": "mcp__tenq__read_passage",
+    "input": {
+     "passage_id": "CRWD-0001535527-26-000038:1544"
+    },
+    "output": "{\"passage_id\":\"CRWD-0001535527-26-000038:1544\",\"found\":true,\"text\":\"Total cost of revenue increased by $74.7 million, or 24%, for the three months ended October 31, 2026 compared to the three months ended October 31, 2025. Subscription cost of revenue increased by $56.9 million, or 22%, for the three months ended October 31, 2026, compared to the three months ended October 31, 2025. The increase in subscription cost of revenue was primarily due to an increase in cloud hosting and related services costs of $11.0 million, an increase in employee-related expenses of $10.1 million driven by a 10% increase in average headcount, an increase in depreciation of data center equipment of $9.1 million, an increase in amortization of intangible assets of $7.2 million, an increase in amortization of internal-use software of $6.3 million, an increase in stock-based compensation expense of $3.4 million, an increase in employee benefits of $3.2 million, an increase in allocated overhead costs of $2.3 million, and an increase in other labor expenses of $1.3 million.\"}",
+    "is_error": false,
+    "at": 1795473548.8620782,
+    "done_at": 1795473548.8734393
+   },
+   {
+    "id": "toolu_01GLY7SFYi8mP7ucveRNYdCG",
+    "name": "mcp__tenq__search_filing",
+    "input": {
+     "query": "net cash used in investing activities purchases of property and equipment nine months ended October 31, 2026",
+     "k": 4
+    },
+    "output": "{\"result\":[{\"passage_id\":\"CRWD-0001535527-26-000038:767\",\"score\":31.627,\"text\":\"There was no impairment of property and equipment during the three and nine months ended October 31, 2026 and October 31, 2025. The Company capitalized $ 43.9 million and $ 29.5 million in internal-use software and website development costs during the three months ended October 31, 2026 and October 31, 2025, respectively, and $ 125.4 million and $ 90.0 million during the nine months ended October 31, 2026 and October 31, 2025, respectively. Amortization expense associated with internal-use software and website development costs totaled $ 27.2 million and $ 20.6 million during the three months \"},{\"passage_id\":\"CRWD-0001535527-26-000038:1814\",\"score\":30.867,\"text\":\"Net cash used in investing activities of $1.5 billion during the nine months ended October 31, 2026 was primarily due to business acquisitions, net of cash acquired, of $881.4 million, which was related to the Seraphic and SGNL acquisitions, purchases of property and equipment of $384.8 million, purchases of intangible assets of $125.9 million, capitalized internal-use software and website development costs of $75.0 million, purchases of deferred compensation of $6.5 million, and purchases of strategic investments of $3.4 million, partially offset by proceeds from sales of strategic investment\"},{\"passage_id\":\"CRWD-0001535527-25-000033:1681\",\"score\":30.321,\"text\":\"Net cash used in investing activities of $641.5 million during the nine months ended October 31, 2025 was primarily due to business acquisitions, net of cash acquired, of $380.9 million, purchases of property and equipment of $199.6 million, capitalized internal-use software and website development costs of $51.5 million, purchases of strategic investments of $10.3 million, and purchases of deferred compensation investments of $4.3 million, partially offset by proceeds from sales of strategic investments of $4.9 million.\"},{\"passage_id\":\"CRWD-0001535527-25-000033:703\"",
+    "is_error": false,
+    "at": 1795473549.3675473,
+    "done_at": 1795473549.3952334
+   },
+   {
+    "id": "toolu_01KhRBtKQdtU1C2apgBC9XmL",
+    "name": "mcp__tenq__read_passage",
+    "input": {
+     "passage_id": "CRWD-0001535527-26-000038:1527"
+    },
+    "output": "{\"passage_id\":\"CRWD-0001535527-26-000038:1527\",\"found\":true,\"text\":\"Subscription revenue increased by $334.2 million, or 29%, for the three months ended October 31, 2026 compared to the three months ended October 31, 2025, which was primarily driven by a combination of the addition of new customers and the sale of additional sensors and modules to existing customers.\"}",
+    "is_error": false,
+    "at": 1795473552.9984412,
+    "done_at": 1795473553.0088317
+   },
+   {
+    "id": "toolu_01KUV1JQxc6wdAbcAuoiYtnM",
+    "name": "mcp__tenq__read_passage",
+    "input": {
+     "passage_id": "CRWD-0001535527-26-000038:1585"
+    },
+    "output": "{\"passage_id\":\"CRWD-0001535527-26-000038:1585\",\"found\":true,\"text\":\"Sales and marketing expenses increased by $77.8 million, or 16%, for the three months ended October 31, 2026 compared to the three months ended October 31, 2025. The increase in sales and marketing expenses was primarily due to an increase in employee-related expenses of $25.9 million driven by a 16% increase in average headcount, an increase in marketing programs of $18.1 million, an increase in stock-based compensation expense of $12.7 million, an increase in employee benefits of $6.2 million, an increase in allocated overhead costs of $6.0 million, an increase in travel expenses of $4.6 million, and an increase in legal expenses of $1.1 million unrelated to the July 19 Incident or related matters.\"}",
+    "is_error": false,
+    "at": 1795473554.314687,
+    "done_at": 1795473554.3256435
+   }
+  ],
+  "usage": {
+   "input_tokens": 16,
+   "cache_creation_input_tokens": 25742,
+   "cache_read_input_tokens": 124596,
+   "output_tokens": 2129,
+   "output_tokens_details": {
+    "thinking_tokens": 382
+   },
+   "server_tool_use": {
+    "web_search_requests": 0,
+    "web_fetch_requests": 0
+   },
+   "service_tier": "standard",
+   "cache_creation": {
+    "ephemeral_1h_input_tokens": 25742,
+    "ephemeral_5m_input_tokens": 0
+   },
+   "inference_geo": "global",
+   "iterations": [
+    {
+     "input_tokens": 2,
+     "output_tokens": 668,
+     "cache_read_input_tokens": 25369,
+     "cache_creation_input_tokens": 373,
+     "cache_creation": {
+      "ephemeral_5m_input_tokens": 0,
+      "ephemeral_1h_input_tokens": 373
+     },
+     "type": "message"
+    }
+   ],
+   "speed": "standard",
+   "fallback_credit": null
+  },
+  "num_turns": 17,
+  "duration_ms": 24896,
+  "api_duration_ms": 24792,
+  "resolved_model": "claude-opus-5-5",
+  "started_at": 1795473534.9034657,
+  "ended_at": 1795473561.33966
+ },
+ "draft_error": null,
+ "check": {
+  "kept": [
+   {
+    "claim": "CRWD's revenue for the quarter ended 2026-10-31 rose 28.29% from a year earlier, and management says subscription revenue growth came mainly from adding new customers and selling more sensors and modules to existing customers.",
+    "passage_id": "CRWD-0001535527-26-000038:1527",
+    "numbers": [
+     "fin:CRWD:revenue:yoy_pct"
+    ],
+    "draft": "{fin:CRWD:revenue:yoy_pct}, and management says subscription revenue growth came mainly from adding new customers and selling more sensors and modules to existing customers."
+   },
+   {
+    "claim": "CRWD's gross margin for the quarter ended 2026-10-31 rose 0.76 points from a year earlier, and the filing says its subscription gross margin improved slightly, mainly because of hiring efficiencies.",
+    "passage_id": "CRWD-0001535527-26-000038:1568",
+    "numbers": [
+     "fin:CRWD:gross_margin:yoy_change"
+    ],
+    "draft": "{fin:CRWD:gross_margin:yoy_change}, and the filing says its subscription gross margin improved slightly, mainly because of hiring efficiencies."
+   },
+   {
+    "claim": "Subscription cost of revenue still rose. The filing points mainly to higher cloud hosting costs, more staff, depreciation of data center equipment, and amortization of intangible assets and internal-use software.",
+    "passage_id": "CRWD-0001535527-26-000038:1544",
+    "numbers": [],
+    "draft": "Subscription cost of revenue still rose. The filing points mainly to higher cloud hosting costs, more staff, depreciation of data center equipment, and amortization of intangible assets and internal-use software."
+   },
+   {
+    "claim": "CRWD's operating income for the quarter ended 2026-10-31 rose by $61.47 million from a year earlier; sales and marketing spending kept rising, which the filing attributes mainly to more staff, marketing programs and stock-based compensation.",
+    "passage_id": "CRWD-0001535527-26-000038:1585",
+    "numbers": [
+     "fin:CRWD:operating_income:yoy_change"
+    ],
+    "draft": "{fin:CRWD:operating_income:yoy_change}; sales and marketing spending kept rising, which the filing attributes mainly to more staff, marketing programs and stock-based compensation."
+   },
+   {
+    "claim": "CRWD's operating cash flow for the quarter ended 2026-10-31 rose 67.32% from a year earlier; for the year to date, the filing says operating cash was helped by large non-cash charges such as stock-based compensation, along with lower accounts receivable and higher deferred revenue.",
+    "passage_id": "CRWD-0001535527-26-000038:1810",
+    "numbers": [
+     "fin:CRWD:operating_cash_flow:yoy_pct"
+    ],
+    "draft": "{fin:CRWD:operating_cash_flow:yoy_pct}; for the year to date, the filing says operating cash was helped by large non-cash charges such as stock-based compensation, along with lower accounts receivable and higher deferred revenue."
+   }
+  ],
+  "dropped": []
+ },
+ "email": {
+  "sent": null,
+  "status": "sending",
+  "subject": "tenq: CRWD 10-Q for the quarter ended 2026-10-31: revenue +28.3% YoY"
+ },
+ "steps": [
+  {
+   "name": "fetch",
+   "start": 1795473526.6485658,
+   "end": 1795473533.3885388,
+   "output": {
+    "new": [
+     "0001535527-26-000038",
+     "0001535527-26-000031",
+     "0001535527-26-000025",
+     "0001535527-26-000010",
+     "0001535527-25-000033",
+     "0001535527-25-000025"
+    ]
+   },
+   "error": null
+  },
+  {
+   "name": "index",
+   "start": 1795473533.3890245,
+   "end": 1795473534.8872774,
+   "output": {
+    "url": "http://127.0.0.1:47785"
+   },
+   "error": null
+  },
+  {
+   "name": "claude",
+   "start": 1795473534.9033766,
+   "end": 1795473561.33984,
+   "output": {
+    "claims": 5
+   },
+   "error": null
+  },
+  {
+   "name": "check",
+   "start": 1795473561.3398414,
+   "end": 1795473561.3495913,
+   "output": {
+    "kept": 5,
+    "dropped": []
+   },
+   "error": null
+  }
+ ],
+ "trace": {
+  "sent": false,
+  "status": "trace pending"
+ }
+}
